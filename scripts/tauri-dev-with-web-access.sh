@@ -2,17 +2,6 @@
 
 set -euo pipefail
 
-# Ensure bun is on PATH when invoked from Windows (Tauri spawns bash without login profile)
-for bun_dir in "$HOME/.bun/bin" "${USERPROFILE:-}/.bun/bin" "/c/Users/${USERNAME:-}/.bun/bin"; do
-  if [[ -n "$bun_dir" && -d "$bun_dir" ]]; then
-    export PATH="$bun_dir:$PATH"
-    break
-  fi
-done
-
-echo "DEBUG: HOME=$HOME USERPROFILE=${USERPROFILE:-unset}"
-echo "DEBUG: which bun -> $(which bun 2>&1 || echo notfound)"
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_BUILD_STARTED_AT="$(date +%s)"
 WEB_WATCHER_PID=""
