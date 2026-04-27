@@ -29,7 +29,7 @@ interface MagicCommandHandlers {
   handleResolveConflicts: (override?: InvestigateOverride) => void
   handleInvestigateWorkflowRun: (detail: WorkflowRunDetail) => void
   handleInvestigate: (
-    type: 'issue' | 'pr',
+    type: 'issue' | 'pr' | 'advisory',
     override?: InvestigateOverride
   ) => void
   handleReviewComments: (prompt: string) => void
@@ -160,8 +160,12 @@ export function useMagicCommands({
           break
         case 'investigate':
           handlers.handleInvestigate(
-            (rest as { type: 'issue' | 'pr'; override?: InvestigateOverride })
-              .type ?? 'issue',
+            (
+              rest as {
+                type: 'issue' | 'pr' | 'advisory'
+                override?: InvestigateOverride
+              }
+            ).type ?? 'issue',
             (rest as { override?: InvestigateOverride }).override
           )
           break

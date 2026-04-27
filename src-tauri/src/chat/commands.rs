@@ -2596,36 +2596,154 @@ pub async fn send_chat_message(
                     }
                 }
             }
-            Backend::Cursor => match super::cursor::execute_cursor(
-                &thread_app,
-                &thread_session_id,
-                &thread_worktree_id,
-                std::path::Path::new(&thread_working_dir),
-                thread_cursor_chat_id.as_deref(),
-                thread_model.as_deref(),
-                thread_execution_mode.as_deref(),
-                &thread_message,
-                thread_mcp_config.as_deref(),
-                Some(make_pid_callback()),
-            ) {
-                Ok(response) => Ok((
-                    0,
-                    UnifiedResponse {
-                        content: response.content,
-                        resume_id: response.chat_id,
-                        tool_calls: response.tool_calls,
-                        content_blocks: response.content_blocks,
-                        cancelled: response.cancelled,
-                        error_emitted: false,
-                        usage: response.usage,
-                        backend: Backend::Cursor,
-                    },
-                )),
-                Err(e) => {
-                    log::error!("execute_cursor FAILED: {e}");
-                    Err(e)
+            Backend::Cursor => {
+                let cursor_linked_project_paths: Vec<String> =
+                    crate::projects::storage::load_projects_data(&thread_app)
+                        .ok()
+                        .and_then(|data| {
+                            let worktree = data.find_worktree(&thread_worktree_id)?;
+                            let project = data.find_project(&worktree.project_id)?;
+                            Some(
+                                project
+                                    .linked_project_ids
+                                    .iter()
+                                    .filter_map(|id| data.find_project(id))
+                                    .filter(|p| !p.path.trim().is_empty())
+                                    .map(|p| p.path.clone())
+                                    .collect(),
+                            )
+                        })
+                        .unwrap_or_default();
+
+                let cursor_system_prompt: Option<String> = {
+                    use crate::projects::storage::load_projects_data;
+
+                    let mut parts: Vec<String> = Vec::new();
+
+                    if let Some(lang) = &thread_ai_language {
+                        let lang = lang.trim();
+                        if !lang.is_empty() {
+                            parts.push(format!("Respond to the user in {lang}."));
+                        }
+                    }
+
+                    if let Ok(prefs_path) = crate::get_preferences_path(&thread_app) {
+                        if let Ok(contents) = std::fs::read_to_string(&prefs_path) {
+                            if let Ok(prefs) =
+                                serde_json::from_str::<crate::AppPreferences>(&contents)
+                            {
+                                if let Some(prompt) = prefs
+                                    .magic_prompts
+                                    .global_system_prompt
+                                    .as_deref()
+                                    .map(|s| s.trim())
+                                    .filter(|s| !s.is_empty())
+                                {
+                                    parts.push(prompt.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(prompt) = &thread_parallel_prompt {
+                        let prompt = prompt.trim();
+                        if !prompt.is_empty() {
+                            parts.push(prompt.to_string());
+                        }
+                    }
+
+                    if let Ok(data) = load_projects_data(&thread_app) {
+                        if let Some(worktree) = data.find_worktree(&thread_worktree_id) {
+                            if let Some(project) = data.find_project(&worktree.project_id) {
+                                if let Some(prompt) = &project.custom_system_prompt {
+                                    let prompt = prompt.trim();
+                                    if !prompt.is_empty() {
+                                        parts.push(prompt.to_string());
+                                    }
+                                }
+
+                                if !cursor_linked_project_paths.is_empty() {
+                                    let dirs_list = cursor_linked_project_paths
+                                        .iter()
+                                        .map(|p| format!("- {p}"))
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    parts.push(format!(
+                                        "This project is linked to other projects for cross-project context. \
+                                         Check the following directories for additional instructions and documentation \
+                                         (e.g., CLAUDE.md, AGENTS.md, docs/):\n{dirs_list}"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    let gh_binary = crate::gh_cli::config::resolve_gh_binary(&thread_app);
+                    if gh_binary != std::path::PathBuf::from("gh") {
+                        parts.push(format!(
+                            "When running GitHub CLI commands, use the full path to the embedded binary: {}\n\
+                             Do NOT use bare `gh` — always use the full path above.",
+                            gh_binary.display()
+                        ));
+                    }
+                    if let Ok(claude_binary) = crate::claude_cli::get_cli_binary_path(&thread_app) {
+                        if claude_binary.exists() {
+                            parts.push(format!(
+                                "When running Claude CLI commands, use the full path to the embedded binary: {}\n\
+                                 Do NOT use bare `claude` — always use the full path above.",
+                                claude_binary.display()
+                            ));
+                        }
+                    }
+                    if let Ok(codex_binary) = crate::codex_cli::get_cli_binary_path(&thread_app) {
+                        if codex_binary.exists() {
+                            parts.push(format!(
+                                "When running Codex CLI commands, use the full path to the embedded binary: {}\n\
+                                 Do NOT use bare `codex` — always use the full path above.",
+                                codex_binary.display()
+                            ));
+                        }
+                    }
+
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join("\n\n"))
+                    }
+                };
+
+                match super::cursor::execute_cursor(
+                    &thread_app,
+                    &thread_session_id,
+                    &thread_worktree_id,
+                    std::path::Path::new(&thread_working_dir),
+                    thread_cursor_chat_id.as_deref(),
+                    thread_model.as_deref(),
+                    thread_execution_mode.as_deref(),
+                    &thread_message,
+                    thread_mcp_config.as_deref(),
+                    cursor_system_prompt.as_deref(),
+                    Some(make_pid_callback()),
+                ) {
+                    Ok(response) => Ok((
+                        0,
+                        UnifiedResponse {
+                            content: response.content,
+                            resume_id: response.chat_id,
+                            tool_calls: response.tool_calls,
+                            content_blocks: response.content_blocks,
+                            cancelled: response.cancelled,
+                            error_emitted: false,
+                            usage: response.usage,
+                            backend: Backend::Cursor,
+                        },
+                    )),
+                    Err(e) => {
+                        log::error!("execute_cursor FAILED: {e}");
+                        Err(e)
+                    }
                 }
-            },
+            }
         };
         let _ = tx.send(result);
     });

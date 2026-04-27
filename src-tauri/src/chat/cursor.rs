@@ -117,11 +117,25 @@ fn parse_enabled_mcp_names(mcp_config: Option<&str>) -> HashSet<String> {
         .unwrap_or_default()
 }
 
-fn build_cursor_message(message: &str, execution_mode: &str) -> String {
-    match execution_mode {
-        "build" | "yolo" => format!("<end_plan_mode/>\n\n{message}"),
-        _ => message.to_string(),
-    }
+fn build_cursor_message(
+    message: &str,
+    execution_mode: &str,
+    system_prompt: Option<&str>,
+) -> String {
+    let prefix = match system_prompt {
+        Some(sp) if !sp.trim().is_empty() => {
+            format!(
+                "<system_instructions>\n{}\n</system_instructions>\n\n",
+                sp.trim()
+            )
+        }
+        _ => String::new(),
+    };
+    let mode_marker = match execution_mode {
+        "build" | "yolo" => "<end_plan_mode/>\n\n",
+        _ => "",
+    };
+    format!("{prefix}{mode_marker}{message}")
 }
 
 fn create_cursor_chat(app: &AppHandle, working_dir: &Path) -> Result<String, String> {
@@ -1066,6 +1080,7 @@ pub fn execute_cursor(
     execution_mode: Option<&str>,
     message: &str,
     mcp_config: Option<&str>,
+    system_prompt: Option<&str>,
     pid_callback: Option<Box<dyn FnOnce(u32) + Send>>,
 ) -> Result<CursorResponse, String> {
     let cli_path = crate::cursor_cli::resolve_cli_binary(app);
@@ -1073,10 +1088,10 @@ pub fn execute_cursor(
         return Err("Cursor CLI not installed".to_string());
     }
 
-    let chat_id = if let Some(id) = existing_chat_id.filter(|id| !id.is_empty()) {
-        id.to_string()
+    let (chat_id, is_new_chat) = if let Some(id) = existing_chat_id.filter(|id| !id.is_empty()) {
+        (id.to_string(), false)
     } else {
-        create_cursor_chat(app, working_dir)?
+        (create_cursor_chat(app, working_dir)?, true)
     };
 
     let enabled_mcp_names = parse_enabled_mcp_names(mcp_config);
@@ -1107,7 +1122,11 @@ pub fn execute_cursor(
         }
     }
 
-    let prepared_message = build_cursor_message(message, effective_mode);
+    let prepared_message = build_cursor_message(
+        message,
+        effective_mode,
+        if is_new_chat { system_prompt } else { None },
+    );
     cmd.arg(&prepared_message)
         .current_dir(working_dir)
         .stdout(Stdio::piped())
@@ -2005,18 +2024,42 @@ mod tests {
 
     #[test]
     fn build_cursor_message_passes_through_in_plan_mode() {
-        assert_eq!(build_cursor_message("Add tests", "plan"), "Add tests");
+        assert_eq!(build_cursor_message("Add tests", "plan", None), "Add tests");
     }
 
     #[test]
     fn build_cursor_message_prepends_end_plan_mode_for_yolo() {
         assert_eq!(
-            build_cursor_message("Add tests", "yolo"),
+            build_cursor_message("Add tests", "yolo", None),
             "<end_plan_mode/>\n\nAdd tests"
         );
         assert_eq!(
-            build_cursor_message("Add tests", "build"),
+            build_cursor_message("Add tests", "build", None),
             "<end_plan_mode/>\n\nAdd tests"
+        );
+    }
+
+    #[test]
+    fn build_cursor_message_prepends_system_prompt_for_new_chat() {
+        assert_eq!(
+            build_cursor_message("Add tests", "plan", Some("Always reply in French.")),
+            "<system_instructions>\nAlways reply in French.\n</system_instructions>\n\nAdd tests"
+        );
+        assert_eq!(
+            build_cursor_message("Add tests", "yolo", Some("Always reply in French.")),
+            "<system_instructions>\nAlways reply in French.\n</system_instructions>\n\n<end_plan_mode/>\n\nAdd tests"
+        );
+    }
+
+    #[test]
+    fn build_cursor_message_skips_system_prompt_when_empty() {
+        assert_eq!(
+            build_cursor_message("Add tests", "plan", Some("   ")),
+            "Add tests"
+        );
+        assert_eq!(
+            build_cursor_message("Add tests", "plan", Some("")),
+            "Add tests"
         );
     }
 }

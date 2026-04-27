@@ -1227,10 +1227,9 @@ pub fn tail_claude_output(
                                                                 }),
                                                                 ts_ms: now_ms,
                                                             };
-                                                            if let Err(e) = app.emit_all(
-                                                                "chat:tool_event",
-                                                                &evt,
-                                                            ) {
+                                                            if let Err(e) = app
+                                                                .emit_all("chat:tool_event", &evt)
+                                                            {
                                                                 log::error!(
                                                                     "Failed to emit tool_event (assistant-line): {e}"
                                                                 );
@@ -1251,9 +1250,7 @@ pub fn tail_claude_output(
                                                     worktree_id: worktree_id.to_string(),
                                                     content: chat_buf,
                                                 };
-                                                if let Err(e) =
-                                                    app.emit_all("chat:chunk", &chunk)
-                                                {
+                                                if let Err(e) = app.emit_all("chat:chunk", &chunk) {
                                                     log::error!("Failed to emit chunk: {e}");
                                                 }
                                             }
@@ -1691,10 +1688,8 @@ pub fn tail_claude_output(
                             .and_then(|v| v.as_str())
                             .filter(|s| armed_monitors.contains_key(*s))
                             .map(|s| s.to_string());
-                        let via_task_id = msg
-                            .get("task_id")
-                            .and_then(|v| v.as_str())
-                            .and_then(|tid| {
+                        let via_task_id =
+                            msg.get("task_id").and_then(|v| v.as_str()).and_then(|tid| {
                                 armed_monitors
                                     .iter()
                                     .find(|(_, a)| a.task_id.as_deref() == Some(tid))
@@ -1705,9 +1700,7 @@ pub fn tail_claude_output(
                         if let Some(tool_id) = target_tool_id {
                             // Record task_id on the first task_started.
                             if subtype == "task_started" {
-                                if let Some(tid) =
-                                    msg.get("task_id").and_then(|v| v.as_str())
-                                {
+                                if let Some(tid) = msg.get("task_id").and_then(|v| v.as_str()) {
                                     if let Some(arm) = armed_monitors.get_mut(&tool_id) {
                                         arm.task_id = Some(tid.to_string());
                                     }
@@ -1719,10 +1712,8 @@ pub fn tail_claude_output(
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(0);
 
-                            let status_val = msg
-                                .get("status")
-                                .and_then(|v| v.as_str())
-                                .or_else(|| {
+                            let status_val =
+                                msg.get("status").and_then(|v| v.as_str()).or_else(|| {
                                     msg.get("patch")
                                         .and_then(|p| p.get("status"))
                                         .and_then(|v| v.as_str())

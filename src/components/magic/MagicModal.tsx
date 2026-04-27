@@ -17,6 +17,7 @@ import {
   Sparkles,
   Undo2,
   Link2,
+  ShieldAlert,
 } from 'lucide-react'
 import {
   Dialog,
@@ -38,7 +39,11 @@ import { useUIStore } from '@/store/ui-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
 import { useWorktree, useProjects } from '@/services/projects'
-import { useLoadedIssueContexts, useLoadedPRContexts } from '@/services/github'
+import {
+  useLoadedIssueContexts,
+  useLoadedPRContexts,
+  useLoadedAdvisoryContexts,
+} from '@/services/github'
 import { usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { invoke } from '@/lib/transport'
@@ -99,6 +104,7 @@ type MagicOption =
   | 'release-notes'
   | 'investigate-issue'
   | 'investigate-pr'
+  | 'investigate-advisory'
   | 'merge-pr'
   | 'review-comments'
   | 'revert-last-commit'
@@ -143,23 +149,26 @@ interface MagicColumns {
   all: MagicSection[]
 }
 
-type InvestigateType = 'issue' | 'pr'
+type InvestigateType = 'issue' | 'pr' | 'advisory'
 type InvestigateSelectionMode = 'settings-default' | 'custom'
 type ResolveSelectionMode = 'settings-default' | 'custom'
 
 const INVESTIGATE_MODEL_KEYS = {
   issue: 'investigate_issue_model',
   pr: 'investigate_pr_model',
+  advisory: 'investigate_advisory_model',
 } as const
 
 const INVESTIGATE_PROVIDER_KEYS = {
   issue: 'investigate_issue_provider',
   pr: 'investigate_pr_provider',
+  advisory: 'investigate_advisory_provider',
 } as const
 
 const INVESTIGATE_BACKEND_KEYS = {
   issue: 'investigate_issue_backend',
   pr: 'investigate_pr_backend',
+  advisory: 'investigate_advisory_backend',
 } as const
 
 const RESOLVE_CONFLICTS_MODEL_KEY = 'resolve_conflicts_model'
@@ -278,6 +287,12 @@ function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
           icon: GitPullRequestArrow,
           key: 'A',
         },
+        {
+          id: 'investigate-advisory',
+          label: 'Advisory',
+          icon: ShieldAlert,
+          key: 'Y',
+        },
       ],
     },
     {
@@ -316,6 +331,7 @@ const KEY_TO_OPTION: Record<string, MagicOption> = {
   g: 'release-notes',
   i: 'investigate-issue',
   a: 'investigate-pr',
+  y: 'investigate-advisory',
   n: 'merge-pr',
   z: 'revert-last-commit',
 }
@@ -370,8 +386,13 @@ export function MagicModal() {
     activeSessionId ?? selectedWorktreeId,
     selectedWorktreeId
   )
+  const { data: advisoryContexts } = useLoadedAdvisoryContexts(
+    activeSessionId ?? selectedWorktreeId,
+    selectedWorktreeId
+  )
   const hasIssueContexts = (issueContexts?.length ?? 0) > 0
   const hasPrContexts = (prContexts?.length ?? 0) > 0
+  const hasAdvisoryContexts = (advisoryContexts?.length ?? 0) > 0
 
   const sessionModalOpen = useUIStore(state => state.sessionChatModalOpen)
   // Whether MagicModal was opened from ProjectCanvasView (no active chat session)
@@ -1437,15 +1458,29 @@ ${resolveInstructions}`
       }
 
       // Investigate options: guard against missing contexts
-      if (option === 'investigate-issue' || option === 'investigate-pr') {
-        const type = option === 'investigate-issue' ? 'issue' : 'pr'
-        const hasContexts = type === 'issue' ? hasIssueContexts : hasPrContexts
+      if (
+        option === 'investigate-issue' ||
+        option === 'investigate-pr' ||
+        option === 'investigate-advisory'
+      ) {
+        const type: InvestigateType =
+          option === 'investigate-issue'
+            ? 'issue'
+            : option === 'investigate-pr'
+              ? 'pr'
+              : 'advisory'
+        const hasContexts =
+          type === 'issue'
+            ? hasIssueContexts
+            : type === 'pr'
+              ? hasPrContexts
+              : hasAdvisoryContexts
         if (!hasContexts) {
-          notify(
-            `No ${type === 'issue' ? 'issue' : 'PR'} context loaded for this worktree`,
-            undefined,
-            { type: 'error' }
-          )
+          const label =
+            type === 'pr' ? 'PR' : type === 'advisory' ? 'advisory' : 'issue'
+          notify(`No ${label} context loaded for this worktree`, undefined, {
+            type: 'error',
+          })
           setMagicModalOpen(false)
           return
         }
@@ -1544,6 +1579,7 @@ ${resolveInstructions}`
       executeGitDirectly,
       hasIssueContexts,
       hasPrContexts,
+      hasAdvisoryContexts,
       activeSessionId,
       worktree?.path,
       worktree?.pr_number,
@@ -1645,6 +1681,8 @@ ${resolveInstructions}`
                           (option.id === 'investigate-issue' &&
                             !hasIssueContexts) ||
                           (option.id === 'investigate-pr' && !hasPrContexts) ||
+                          (option.id === 'investigate-advisory' &&
+                            !hasAdvisoryContexts) ||
                           (option.id === 'review-comments' && !hasOpenPr) ||
                           (option.id === 'merge-pr' && !hasOpenPr)
 
@@ -1703,7 +1741,12 @@ ${resolveInstructions}`
         >
           <DialogHeader>
             <DialogTitle>
-              Investigate {investigateType === 'pr' ? 'PR' : 'Issue'}
+              Investigate{' '}
+              {investigateType === 'pr'
+                ? 'PR'
+                : investigateType === 'advisory'
+                  ? 'Advisory'
+                  : 'Issue'}
             </DialogTitle>
           </DialogHeader>
 

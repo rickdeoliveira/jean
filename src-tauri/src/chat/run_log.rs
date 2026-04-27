@@ -636,9 +636,7 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                 // Text-routing gate (mirrors live-stream logic): if ANY armed
                 // Monitor has initial_turn_finished=true, this assistant turn
                 // is a per-notification wake-up, so skip its text from chat.
-                let in_monitor_wakeup = armed_monitors
-                    .values()
-                    .any(|a| a.initial_turn_finished);
+                let in_monitor_wakeup = armed_monitors.values().any(|a| a.initial_turn_finished);
 
                 if let Some(message) = msg.get("message") {
                     if let Some(blocks) = message.get("content").and_then(|c| c.as_array()) {
@@ -670,15 +668,13 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                                         // (`[Monitor notification]`,
                                         // `[Monitor notification: <payload>]`, …);
                                         // prefix match without closing bracket catches all.
-                                        let monitor_target =
-                                            if !armed_monitors.is_empty() || in_monitor_wakeup {
-                                                armed_monitors
-                                                    .iter()
-                                                    .next()
-                                                    .map(|(id, _)| id.clone())
-                                            } else {
-                                                None
-                                            };
+                                        let monitor_target = if !armed_monitors.is_empty()
+                                            || in_monitor_wakeup
+                                        {
+                                            armed_monitors.iter().next().map(|(id, _)| id.clone())
+                                        } else {
+                                            None
+                                        };
 
                                         let mut chat_buf = String::new();
                                         for raw_line in text.split_inclusive('\n') {
@@ -710,9 +706,8 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                                         }
                                         if !chat_buf.is_empty() {
                                             content.push_str(&chat_buf);
-                                            content_blocks.push(ContentBlock::Text {
-                                                text: chat_buf,
-                                            });
+                                            content_blocks
+                                                .push(ContentBlock::Text { text: chat_buf });
                                         }
                                     }
                                 }
@@ -866,10 +861,8 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                                     .get("status")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("update");
-                                let summary = msg
-                                    .get("summary")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
+                                let summary =
+                                    msg.get("summary").and_then(|v| v.as_str()).unwrap_or("");
                                 if summary.is_empty() {
                                     s.to_string()
                                 } else {

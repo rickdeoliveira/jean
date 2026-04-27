@@ -1483,8 +1483,18 @@ pub async fn dispatch_command(
             let cols: u16 = from_field(&args, "cols")?;
             let rows: u16 = from_field(&args, "rows")?;
             let command: Option<String> = from_field_opt(&args, "command")?;
-            let command_args: Option<Vec<String>> = field_opt(&args, "commandArgs", "command_args")?;
-            crate::terminal::start_terminal(app.clone(), terminal_id, worktree_path, cols, rows, command, command_args).await?;
+            let command_args: Option<Vec<String>> =
+                field_opt(&args, "commandArgs", "command_args")?;
+            crate::terminal::start_terminal(
+                app.clone(),
+                terminal_id,
+                worktree_path,
+                cols,
+                rows,
+                command,
+                command_args,
+            )
+            .await?;
             Ok(Value::Null)
         }
         "terminal_write" => {

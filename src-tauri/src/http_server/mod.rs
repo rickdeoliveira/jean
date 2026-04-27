@@ -164,11 +164,7 @@ pub trait EmitExt {
     fn emit_all<S: Serialize + Clone>(&self, event: &str, payload: &S) -> Result<(), String>;
     /// Like `emit_all` but takes ownership of the payload, avoiding a caller-side clone
     /// on the hot path (e.g. high-frequency terminal output chunks).
-    fn emit_all_owned<S: Serialize + Clone>(
-        &self,
-        event: &str,
-        payload: S,
-    ) -> Result<(), String>;
+    fn emit_all_owned<S: Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), String>;
 }
 
 impl EmitExt for AppHandle {
@@ -186,11 +182,7 @@ impl EmitExt for AppHandle {
         Ok(())
     }
 
-    fn emit_all_owned<S: Serialize + Clone>(
-        &self,
-        event: &str,
-        payload: S,
-    ) -> Result<(), String> {
+    fn emit_all_owned<S: Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), String> {
         // Broadcast to WebSocket clients first (borrows payload, no clone needed here).
         if let Some(ws) = self.try_state::<WsBroadcaster>() {
             ws.broadcast(event, &payload);
