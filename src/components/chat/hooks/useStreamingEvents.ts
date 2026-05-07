@@ -1647,6 +1647,11 @@ export default function useStreamingEvents({
           // once streamingContents has been wiped by cancelSession().
           useChatStore.getState().clearLastSentAttachments(session_id)
           useChatStore.getState().clearLastSentMessage(session_id)
+          // Mark session as "cancelling" so concurrent cache:invalidate events
+          // skip the single-session refetch and don't overwrite the optimistic
+          // message before save_cancelled_message reconciles disk state.
+          // Cleared in the .finally() below once disk reconcile completes.
+          useChatStore.getState().addCancellingSession(session_id)
           // Preserve partial response as optimistic message BEFORE clearing streaming state
           queryClient.setQueryData<Session>(
             chatQueryKeys.session(session_id),
@@ -1669,20 +1674,40 @@ export default function useStreamingEvents({
           )
           // Persist partial content to JSONL so it survives app reload.
           // The backend command handler may not have finished writing yet
-          // (e.g., OpenCode POST still in-flight).
-          invoke('save_cancelled_message', {
+          // (e.g., OpenCode POST still in-flight, or web access WebSocket RTT
+          // exceeds the 250ms cache:invalidate debounce window).
+          // After resolution, clear the cancelling flag and refetch the single
+          // session so the now-reconciled disk state becomes authoritative.
+          void invoke('save_cancelled_message', {
             sessionId: session_id,
             worktreeId: sessionWorktreeId ?? eventWorktreeId,
             worktreePath: '',
             content: content ?? '',
             toolCalls: toolCalls ?? [],
             contentBlocks: contentBlocks ?? [],
-          }).catch(err =>
-            console.debug(
-              '[useStreamingEvents] Failed to persist partial cancelled content:',
-              err
+          })
+            .catch(err =>
+              console.debug(
+                '[useStreamingEvents] Failed to persist partial cancelled content:',
+                err
+              )
             )
-          )
+            .finally(() => {
+              useChatStore.getState().removeCancellingSession(session_id)
+              queryClient.invalidateQueries({
+                queryKey: chatQueryKeys.session(session_id),
+              })
+            })
+          // Safety timeout: if save_cancelled_message hangs (e.g., WebSocket
+          // disconnect), don't keep the session in cancelling state forever.
+          setTimeout(() => {
+            if (useChatStore.getState().cancellingSessionIds[session_id]) {
+              useChatStore.getState().removeCancellingSession(session_id)
+              queryClient.invalidateQueries({
+                queryKey: chatQueryKeys.session(session_id),
+              })
+            }
+          }, 5000)
         }
 
         // NOW batch-clear all streaming state in a single Zustand set()

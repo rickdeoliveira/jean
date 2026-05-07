@@ -1,7 +1,6 @@
 import {
   Archive,
   Code,
-  FileJson,
   FolderOpen,
   Play,
   Sparkles,
@@ -62,7 +61,6 @@ export function WorktreeContextMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
-    handleOpenJeanConfig,
     handleGenerateRecap,
   } = useWorktreeMenuActions({ worktree, projectId })
 
@@ -98,11 +96,6 @@ export function WorktreeContextMenu({
             </ContextMenuSubContent>
           </ContextMenuSub>
         )}
-
-        <ContextMenuItem onClick={handleOpenJeanConfig}>
-          <FileJson className="mr-2 h-4 w-4" />
-          Edit jean.json
-        </ContextMenuItem>
 
         {hasMessages && (
           <ContextMenuItem onClick={handleGenerateRecap}>

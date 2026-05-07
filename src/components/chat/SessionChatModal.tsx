@@ -10,15 +10,11 @@ import {
 import {
   Archive,
   ChevronDown,
-  Code,
   Eye,
   EyeOff,
   FileText,
-  FolderOpen,
   GitBranchPlus,
   GitPullRequestArrow,
-  Github,
-  MoreHorizontal,
   Pencil,
   Sparkles,
   Tag,
@@ -78,25 +74,16 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import {
-  useOpenWorktreeInEditor,
-  useOpenWorktreeInTerminal,
-  useOpenWorktreeInFinder,
-  useOpenBranchOnGitHub,
-} from '@/services/projects'
-import { getOpenInDefaultLabel } from '@/types/preferences'
 import { DEFAULT_KEYBINDINGS, formatShortcutDisplay } from '@/types/keybindings'
 import {
+  computeSessionCardData,
   getResumeCommand,
   statusConfig,
-  type SessionStatus,
+  type SessionCardData,
 } from './session-card-utils'
+import { useCanvasStoreState } from './hooks/useCanvasStoreState'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -108,6 +95,7 @@ import { WorktreeDropdownMenu } from '@/components/projects/WorktreeDropdownMenu
 import { LabelModal } from './LabelModal'
 import { useSessionArchive } from './hooks/useSessionArchive'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useIsTouchDevice } from '@/hooks/use-touch-device'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
 import {
   MODAL_TERMINAL_PRIMARY_ROW_CLASS,
@@ -116,13 +104,7 @@ import {
 
 /** Track whether any waiting tabs are off-screen to the left or right */
 function useOffScreenWaiting(
-  sortedSessions: Session[],
-  storeState: {
-    sendingSessionIds: Record<string, boolean>
-    executionModes: Record<string, string>
-    executingModes: Record<string, string>
-    reviewingSessions: Record<string, boolean>
-  },
+  sortedCards: SessionCardData[],
   viewportRef: RefObject<HTMLDivElement | null>
 ) {
   const [hasLeft, setHasLeft] = useState(false)
@@ -132,9 +114,9 @@ function useOffScreenWaiting(
     const viewport = viewportRef.current
     if (!viewport) return
 
-    const waitingIds = sortedSessions
-      .filter(s => getSessionStatus(s, storeState) === 'waiting')
-      .map(s => s.id)
+    const waitingIds = sortedCards
+      .filter(c => c.status === 'waiting')
+      .map(c => c.session.id)
 
     if (waitingIds.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -167,7 +149,7 @@ function useOffScreenWaiting(
       viewport.removeEventListener('scroll', check)
       ro.disconnect()
     }
-  }, [sortedSessions, storeState, viewportRef])
+  }, [sortedCards, viewportRef])
 
   return { hasLeft, hasRight }
 }
@@ -179,55 +161,6 @@ interface SessionChatModalProps {
   onClose: () => void
 }
 
-function getSessionStatus(
-  session: Session,
-  storeState: {
-    sendingSessionIds: Record<string, boolean>
-    executionModes: Record<string, string>
-    executingModes: Record<string, string>
-    reviewingSessions: Record<string, boolean>
-  }
-): SessionStatus {
-  const isSending = storeState.sendingSessionIds[session.id]
-  const executionMode = isSending
-    ? (storeState.executingModes[session.id] ??
-      storeState.executionModes[session.id] ??
-      session.selected_execution_mode ??
-      'plan')
-    : (storeState.executionModes[session.id] ??
-      session.selected_execution_mode ??
-      'plan')
-  const isReviewing =
-    storeState.reviewingSessions[session.id] || !!session.review_results
-
-  if (isSending) {
-    if (executionMode === 'plan') return 'planning'
-    if (executionMode === 'yolo') return 'yoloing'
-    return 'vibing'
-  }
-
-  if (session.waiting_for_input) {
-    return 'waiting'
-  }
-
-  if (isReviewing) return 'review'
-
-  // Check for running/resumable processes (detected on app restart recovery)
-  if (
-    session.last_run_status === 'running' ||
-    session.last_run_status === 'resumable'
-  ) {
-    const mode = session.last_run_execution_mode ?? 'plan'
-    if (mode === 'plan') return 'planning'
-    if (mode === 'yolo') return 'yoloing'
-    return 'vibing'
-  }
-
-  if (session.last_run_status === 'completed') return 'completed'
-
-  return 'idle'
-}
-
 export function SessionChatModal({
   worktreeId,
   worktreePath,
@@ -235,9 +168,10 @@ export function SessionChatModal({
   onClose,
 }: SessionChatModalProps) {
   const isMobile = useIsMobile()
+  const isTouch = useIsTouchDevice()
   const swipe = useSwipeBack({
     onSwipeBack: onClose,
-    enabled: isMobile && isOpen,
+    enabled: isTouch && isOpen,
   })
   const { data: sessionsData } = useSessions(
     worktreeId || null,
@@ -305,27 +239,26 @@ export function SessionChatModal({
   const currentSessionId = activeSessionId ?? sessions[0]?.id ?? null
   const currentSession = sessions.find(s => s.id === currentSessionId) ?? null
 
-  // Store state for tab status indicators
-  const sendingSessionIds = useChatStore(state => state.sendingSessionIds)
-  const executionModes = useChatStore(state => state.executionModes)
-  const executingModes = useChatStore(state => state.executingModes)
-  const reviewingSessions = useChatStore(state => state.reviewingSessions)
+  // Canonical store state shared with canvas for consistent status derivation.
+  const storeState = useCanvasStoreState()
   const planFilePaths = useChatStore(state => state.planFilePaths)
   const sessionDigests = useChatStore(state => state.sessionDigests)
-  const storeState = useMemo(
-    () => ({
-      sendingSessionIds,
-      executionModes,
-      executingModes,
-      reviewingSessions,
-    }),
-    [sendingSessionIds, executionModes, executingModes, reviewingSessions]
+
+  // Compute card data once per session — same derivation as ProjectCanvasView,
+  // so canvas badges and modal tab badges stay in sync.
+  const cards = useMemo(
+    () => sessions.map(s => computeSessionCardData(s, storeState)),
+    [sessions, storeState]
+  )
+
+  const cardForSession = useCallback(
+    (id: string | null | undefined) =>
+      id ? cards.find(c => c.session.id === id) ?? null : null,
+    [cards]
   )
 
   // Track focused session's status so scroll fires when it changes position
-  const currentSessionStatus = currentSession
-    ? getSessionStatus(currentSession, storeState)
-    : null
+  const currentSessionStatus = cardForSession(currentSession?.id)?.status ?? null
 
   // Auto-scroll active tab into view, including when modal opens or status changes
   useEffect(() => {
@@ -347,17 +280,6 @@ export function SessionChatModal({
     })
     return () => cancelAnimationFrame(scrollId)
   }, [isOpen, currentSessionId, sessions.length, currentSessionStatus])
-
-  // Plan/recap indicators for tab bar buttons
-  const hasPlan =
-    (currentSessionId ? !!planFilePaths[currentSessionId] : false) ||
-    !!currentSession?.plan_file_path
-  const hasRecap =
-    (currentSessionId ? !!sessionDigests[currentSessionId] : false) ||
-    !!currentSession?.digest
-  const currentResumeCommand = currentSession
-    ? getResumeCommand(currentSession)
-    : null
 
   // Git status for header badges
   const { data: worktree } = useWorktree(worktreeId)
@@ -385,12 +307,6 @@ export function SessionChatModal({
   const branchDiffRemoved =
     gitStatus?.branch_diff_removed ?? worktree?.cached_branch_diff_removed ?? 0
   const defaultBranch = project?.default_branch ?? 'main'
-
-  // Open-in actions for mobile overflow menu
-  const openInEditor = useOpenWorktreeInEditor()
-  const openInTerminal = useOpenWorktreeInTerminal()
-  const openInFinder = useOpenWorktreeInFinder()
-  const openOnGitHub = useOpenBranchOnGitHub()
 
   const hasSetActiveRef = useRef<string | null>(null)
 
@@ -596,21 +512,26 @@ export function SessionChatModal({
     )
   }, [worktreeId, worktreePath, createSession])
 
-  // Sorted sessions for tab order (waiting → review → idle)
-  const sortedSessions = useMemo(() => {
+  // Sorted tab order: waiting/permission pinned (need user attention),
+  // everything else stays in chronological order so click never reorders.
+  const sortedCards = useMemo(() => {
     const priority: Record<string, number> = {
       waiting: 0,
       permission: 0,
-      review: 1,
     }
-    return [...sessions].sort((a, b) => {
-      const pa = priority[getSessionStatus(a, storeState)] ?? 2
-      const pb = priority[getSessionStatus(b, storeState)] ?? 2
+    return [...cards].sort((a, b) => {
+      const pa = priority[a.status] ?? 1
+      const pb = priority[b.status] ?? 1
       if (pa !== pb) return pa - pb
       // Stable secondary sort: oldest first (consistent across refetches)
-      return a.created_at - b.created_at
+      return a.session.created_at - b.session.created_at
     })
-  }, [sessions, storeState])
+  }, [cards])
+
+  const sortedSessions = useMemo(
+    () => sortedCards.map(c => c.session),
+    [sortedCards]
+  )
 
   // Keep ref in sync for selectVisualNeighbor (declared above sortedSessions)
   useEffect(() => {
@@ -619,17 +540,17 @@ export function SessionChatModal({
 
   // Off-screen waiting tab indicators
   const { hasLeft: hasWaitingLeft, hasRight: hasWaitingRight } =
-    useOffScreenWaiting(sortedSessions, storeState, modalTabScrollRef)
+    useOffScreenWaiting(sortedCards, modalTabScrollRef)
 
   const scrollToFirstWaiting = useCallback(
     (direction: 'left' | 'right') => {
       const viewport = modalTabScrollRef.current
       if (!viewport) return
       const { scrollLeft, clientWidth } = viewport
-      for (const session of sortedSessions) {
-        if (getSessionStatus(session, storeState) !== 'waiting') continue
+      for (const card of sortedCards) {
+        if (card.status !== 'waiting') continue
         const el = viewport.querySelector(
-          `[data-session-id="${session.id}"]`
+          `[data-session-id="${card.session.id}"]`
         ) as HTMLElement | null
         if (!el) continue
         const isLeft = el.offsetLeft + el.offsetWidth <= scrollLeft
@@ -643,12 +564,12 @@ export function SessionChatModal({
             block: 'nearest',
             inline: 'nearest',
           })
-          handleTabClick(session.id)
+          handleTabClick(card.session.id)
           return
         }
       }
     },
-    [sortedSessions, storeState, handleTabClick]
+    [sortedCards, handleTabClick]
   )
 
   // Listen for switch-session events from the global keybinding system (OPT+CMD+LEFT/RIGHT)
@@ -796,7 +717,7 @@ export function SessionChatModal({
     <>
       <div
         key={worktreeId}
-        ref={isMobile ? swipe.containerRef : undefined}
+        ref={isTouch ? swipe.containerRef : undefined}
         className={cn(
           'absolute inset-0 z-10 flex min-w-0 overflow-hidden bg-background pt-[3px]',
           !isMobile && 'pb-2',
@@ -1043,149 +964,6 @@ export function SessionChatModal({
                     </div>
                   )}
                 </div>
-                {/* Mobile: overflow menu */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0 flex sm:hidden"
-                      aria-label="More actions"
-                    >
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {isNativeApp() && (
-                      <>
-                        <DropdownMenuItem
-                          onSelect={() =>
-                            openInEditor.mutate({
-                              worktreePath,
-                              editor: preferences?.editor,
-                            })
-                          }
-                        >
-                          <Code className="h-4 w-4" />
-                          {getOpenInDefaultLabel(
-                            'editor',
-                            preferences?.editor,
-                            preferences?.terminal
-                          )}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onSelect={() =>
-                            openInTerminal.mutate({
-                              worktreePath,
-                              terminal: preferences?.terminal,
-                            })
-                          }
-                        >
-                          <Terminal className="h-4 w-4" />
-                          {getOpenInDefaultLabel(
-                            'terminal',
-                            preferences?.editor,
-                            preferences?.terminal
-                          )}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onSelect={() => openInFinder.mutate(worktreePath)}
-                        >
-                          <FolderOpen className="h-4 w-4" />
-                          Finder
-                        </DropdownMenuItem>
-                      </>
-                    )}
-                    {worktree?.branch && (
-                      <DropdownMenuItem
-                        onSelect={() =>
-                          openOnGitHub.mutate({
-                            repoPath: worktreePath,
-                            branch: worktree.branch,
-                          })
-                        }
-                      >
-                        <Github className="h-4 w-4" />
-                        GitHub
-                      </DropdownMenuItem>
-                    )}
-                    {(isNativeApp() || worktree?.branch) && (
-                      <DropdownMenuSeparator />
-                    )}
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        useTerminalStore
-                          .getState()
-                          .toggleModalTerminal(worktreeId)
-                      }
-                    >
-                      <Terminal className="h-4 w-4" />
-                      Terminal
-                    </DropdownMenuItem>
-                    {runScripts.length === 1 && (
-                      <DropdownMenuItem onSelect={handleRun}>
-                        <Play
-                          className={`h-4 w-4 ${hasFailedTerminal ? 'text-red-500' : hasRunningTerminal ? 'text-amber-500 dark:text-yellow-400 animate-icon-glow' : ''}`}
-                        />
-                        Run
-                      </DropdownMenuItem>
-                    )}
-                    {runScripts.length > 1 && (
-                      <DropdownMenuSub>
-                        <DropdownMenuSubTrigger>
-                          <Play
-                            className={`h-4 w-4 ${hasFailedTerminal ? 'text-red-500' : hasRunningTerminal ? 'text-amber-500 dark:text-yellow-400 animate-icon-glow' : ''}`}
-                          />
-                          Run
-                        </DropdownMenuSubTrigger>
-                        <DropdownMenuSubContent>
-                          {runScripts.map((cmd, i) => (
-                            <DropdownMenuItem
-                              key={i}
-                              onSelect={() => handleRunCommand(cmd)}
-                              className="font-mono text-xs"
-                            >
-                              {cmd}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuSubContent>
-                      </DropdownMenuSub>
-                    )}
-                    {currentResumeCommand && (
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          void copyToClipboard(currentResumeCommand)
-                            .then(() => toast.success('Resume command copied'))
-                            .catch(() =>
-                              toast.error('Failed to copy resume command')
-                            )
-                        }}
-                      >
-                        <Terminal className="h-4 w-4" />
-                        Copy Resume Command
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      disabled={!hasRecap}
-                      onSelect={() =>
-                        window.dispatchEvent(new CustomEvent('open-recap'))
-                      }
-                    >
-                      <Sparkles className="h-4 w-4" />
-                      Recap
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!hasPlan}
-                      onSelect={() =>
-                        window.dispatchEvent(new CustomEvent('open-plan'))
-                      }
-                    >
-                      <FileText className="h-4 w-4" />
-                      Plan
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
                 <ModalCloseButton onClick={handleClose} />
               </div>
             </div>
@@ -1221,9 +999,10 @@ export function SessionChatModal({
                 viewportRef={modalTabScrollRef}
               >
                 <div className="flex min-w-max items-center gap-1.5 py-1 px-3">
-                  {sortedSessions.map((session, idx) => {
+                  {sortedCards.map((card, idx) => {
+                    const session = card.session
                     const isActive = session.id === currentSessionId
-                    const status = getSessionStatus(session, storeState)
+                    const status = card.status
                     const config = statusConfig[status]
                     const chatState = useChatStore.getState()
                     const sessionLabel = chatState.sessionLabels[session.id]

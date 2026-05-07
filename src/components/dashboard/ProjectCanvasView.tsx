@@ -19,6 +19,9 @@ import {
   Plus,
   FileJson,
   Clock3,
+  Activity,
+  AlertCircle,
+  CircleDot,
   GitBranch,
   GitBranchPlus,
   GitPullRequestArrow,
@@ -64,7 +67,14 @@ import {
   useCreateSession,
   cancelChatMessage,
 } from '@/services/chat'
-import { useGitHubPRs } from '@/services/github'
+import {
+  useDependabotAlerts,
+  useGitHubIssues,
+  useGitHubPRs,
+  useRepositoryAdvisories,
+  useWorkflowRuns,
+} from '@/services/github'
+import { useGhCliAuth } from '@/services/gh-cli'
 import { useGitStatus } from '@/services/git-status'
 import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
@@ -612,6 +622,46 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
 
   // Open PRs: used to link a worktree's base_branch to a PR number in row badges
   const { data: openPRs } = useGitHubPRs(project?.path ?? null, 'open')
+
+  // Mobile-only: GitHub status counts for project dropdown menu items.
+  // Trigger gh auth query directly so it works on web/mobile access (App.tsx
+  // only runs it in native mode).
+  useGhCliAuth({ enabled: isMobile })
+  const mobileGitHubEnabled = isMobile
+  const BADGE_STALE_TIME = 5 * 60 * 1000
+  const { data: mobileIssueResult } = useGitHubIssues(
+    project?.path ?? null,
+    'open',
+    { enabled: mobileGitHubEnabled, staleTime: BADGE_STALE_TIME }
+  )
+  const { data: mobileOpenPRs } = useGitHubPRs(project?.path ?? null, 'open', {
+    enabled: mobileGitHubEnabled,
+    staleTime: BADGE_STALE_TIME,
+  })
+  const { data: mobileAlerts } = useDependabotAlerts(
+    project?.path ?? null,
+    'open',
+    { enabled: mobileGitHubEnabled, staleTime: BADGE_STALE_TIME }
+  )
+  const { data: mobileAdvisories } = useRepositoryAdvisories(
+    project?.path ?? null,
+    undefined,
+    { enabled: mobileGitHubEnabled, staleTime: BADGE_STALE_TIME }
+  )
+  const { data: mobileWorkflowRuns } = useWorkflowRuns(
+    project?.path ?? null,
+    undefined,
+    { enabled: mobileGitHubEnabled, staleTime: BADGE_STALE_TIME }
+  )
+  const mobileIssueCount = mobileIssueResult?.totalCount ?? 0
+  const mobilePRCount = mobileOpenPRs?.length ?? 0
+  const mobileSecurityCount =
+    (mobileAlerts?.length ?? 0) +
+    (mobileAdvisories?.filter(
+      a => a.state === 'draft' || a.state === 'triage'
+    ).length ?? 0)
+  const mobileWorkflowRunCount = mobileWorkflowRuns?.runs?.length ?? 0
+  const mobileFailedWorkflowCount = mobileWorkflowRuns?.failedCount ?? 0
 
   // Get worktrees
   const { data: worktrees = [], isLoading: worktreesLoading } =
@@ -1974,16 +2024,21 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
           <div className="flex flex-col shrink-0">
             <div className="flex items-center gap-2">
               <h2 className="truncate text-lg font-semibold">{project.name}</h2>
-              <NewIssuesBadge
-                projectPath={project.path}
-                projectId={projectId}
-              />
-              <OpenPRsBadge projectPath={project.path} projectId={projectId} />
-              <SecurityAlertsBadge
-                projectPath={project.path}
-                projectId={projectId}
-              />
-              <FailedRunsBadge projectPath={project.path} />
+              <div className="hidden md:flex items-center gap-2">
+                <NewIssuesBadge
+                  projectPath={project.path}
+                  projectId={projectId}
+                />
+                <OpenPRsBadge
+                  projectPath={project.path}
+                  projectId={projectId}
+                />
+                <SecurityAlertsBadge
+                  projectPath={project.path}
+                  projectId={projectId}
+                />
+                <FailedRunsBadge projectPath={project.path} />
+              </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -2025,6 +2080,76 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                     <Plus className="h-4 w-4" />
                     New Worktree
                   </DropdownMenuItem>
+
+                  {mobileGitHubEnabled && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          useProjectsStore.getState().selectProject(projectId)
+                          const {
+                            setNewWorktreeModalDefaultTab,
+                            setNewWorktreeModalOpen,
+                          } = useUIStore.getState()
+                          setNewWorktreeModalDefaultTab('issues')
+                          setNewWorktreeModalOpen(true)
+                        }}
+                      >
+                        <CircleDot className="h-4 w-4 text-green-600" />
+                        {mobileIssueCount > 0
+                          ? `${mobileIssueCount} Issues`
+                          : 'Issues'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          useProjectsStore.getState().selectProject(projectId)
+                          const {
+                            setNewWorktreeModalDefaultTab,
+                            setNewWorktreeModalOpen,
+                          } = useUIStore.getState()
+                          setNewWorktreeModalDefaultTab('prs')
+                          setNewWorktreeModalOpen(true)
+                        }}
+                      >
+                        <GitPullRequestArrow className="h-4 w-4 text-blue-600" />
+                        {mobilePRCount > 0 ? `${mobilePRCount} PRs` : 'PRs'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          useUIStore
+                            .getState()
+                            .setWorkflowRunsModalOpen(true, project.path)
+                        }
+                      >
+                        {mobileFailedWorkflowCount > 0 ? (
+                          <AlertCircle className="h-4 w-4 text-red-600" />
+                        ) : (
+                          <Activity className="h-4 w-4" />
+                        )}
+                        {mobileFailedWorkflowCount > 0
+                          ? `${mobileFailedWorkflowCount} Failed Workflows`
+                          : mobileWorkflowRunCount > 0
+                            ? `${mobileWorkflowRunCount} Workflows`
+                            : 'Workflows'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          useProjectsStore.getState().selectProject(projectId)
+                          const {
+                            setNewWorktreeModalDefaultTab,
+                            setNewWorktreeModalOpen,
+                          } = useUIStore.getState()
+                          setNewWorktreeModalDefaultTab('security')
+                          setNewWorktreeModalOpen(true)
+                        }}
+                      >
+                        <ShieldAlert className="h-4 w-4 text-orange-600" />
+                        {mobileSecurityCount > 0
+                          ? `${mobileSecurityCount} Security`
+                          : 'Security'}
+                      </DropdownMenuItem>
+                    </>
+                  )}
 
                   <DropdownMenuSeparator />
 

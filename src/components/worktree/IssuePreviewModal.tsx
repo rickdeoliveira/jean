@@ -9,19 +9,16 @@ import {
   XCircle,
   AlertCircle,
   Clock,
-  ExternalLink,
   ShieldAlert,
   Package,
   FileCode,
 } from 'lucide-react'
-import { openExternal } from '@/lib/platform'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Markdown } from '@/components/ui/markdown'
 import { cn } from '@/lib/utils'
 import {
@@ -620,17 +617,6 @@ export function IssuePreviewModal({
   const isLoading = activeQuery.isLoading
   const error = activeQuery.error
 
-  const githubUrl =
-    type === 'issue'
-      ? issueQuery.data?.url
-      : type === 'pr'
-        ? prQuery.data?.url
-        : type === 'advisory'
-          ? advisoryQuery.data?.htmlUrl
-          : securityQuery.data?.ghsaId
-            ? `https://github.com/advisories/${securityQuery.data.ghsaId}`
-            : securityQuery.data?.htmlUrl
-
   return (
     <Dialog
       open={open}
@@ -639,24 +625,15 @@ export function IssuePreviewModal({
         onOpenChange(open)
       }}
     >
-      <DialogContent className="!fixed !inset-0 !translate-x-0 !translate-y-0 !w-screen !h-[100dvh] !max-w-none !max-h-none !rounded-none sm:!inset-auto sm:!top-[50%] sm:!left-[50%] sm:!translate-x-[-50%] sm:!translate-y-[-50%] sm:!w-[90vw] sm:!max-w-4xl sm:!h-[85vh] sm:!max-h-[85vh] sm:!rounded-lg flex flex-col overflow-hidden z-[80] [&>[data-slot=dialog-close]]:top-6">
-        <DialogHeader className="flex-shrink-0 pr-10">
-          <DialogTitle className="text-lg flex items-center gap-2 flex-wrap">
+      <DialogContent className="!fixed !inset-0 !translate-x-0 !translate-y-0 !w-screen !h-[100dvh] !max-w-none !max-h-none !rounded-none !p-4 sm:!p-6 sm:!inset-auto sm:!top-[50%] sm:!left-[50%] sm:!translate-x-[-50%] sm:!translate-y-[-50%] sm:!w-[90vw] sm:!max-w-4xl sm:!h-[85vh] sm:!max-h-[85vh] sm:!rounded-lg flex flex-col overflow-hidden z-[80] [&>[data-slot=dialog-close]]:top-4 sm:[&>[data-slot=dialog-close]]:top-6">
+        <DialogHeader className="flex-shrink-0 pr-10 text-left">
+          <DialogTitle className="text-lg">
             {TYPE_LABELS[type]} {type === 'advisory' ? ghsaId : `#${number}`}
-            {githubUrl && (
-              <button
-                onClick={() => openExternal(githubUrl)}
-                className="p-1 rounded hover:bg-accent transition-colors"
-                title="Open on GitHub"
-              >
-                <ExternalLink className="h-4 w-4 text-muted-foreground" />
-              </button>
-            )}
           </DialogTitle>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="select-text space-y-4 pr-4 pb-4">
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="select-text space-y-4 pb-4">
             {isLoading && (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -693,7 +670,7 @@ export function IssuePreviewModal({
                 <AdvisoryContent advisory={advisoryQuery.data} />
               )}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   )

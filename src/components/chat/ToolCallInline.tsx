@@ -98,7 +98,7 @@ export function ToolCallInline({
           isOpen && 'bg-muted/50'
         )}
       >
-        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
+        <CollapsibleTrigger className="flex h-9 w-full items-center gap-1.5 px-2.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
           {icon}
           <span className="font-medium">{label}</span>
           {detail && filePath && onFileClick ? (
@@ -110,13 +110,13 @@ export function ToolCallInline({
                 e.key === 'Enter' &&
                 handleFileClick(e as unknown as React.MouseEvent)
               }
-              className="inline-flex items-center gap-1 truncate rounded bg-muted/50 px-1.5 py-0.5 text-xs hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 truncate rounded bg-muted/50 px-1.5 text-xs font-sans leading-none hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer"
             >
               <span className="truncate">{detail}</span>
               <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
             </code>
           ) : detail ? (
-            <code className="truncate rounded bg-muted/50 px-1.5 py-0.5 text-xs">
+            <code className="truncate rounded bg-muted/50 px-1.5 text-xs font-sans leading-none">
               {detail}
             </code>
           ) : null}
@@ -202,13 +202,13 @@ export function TaskCallInline({
           isOpen && 'bg-muted/50'
         )}
       >
-        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
+        <CollapsibleTrigger className="flex h-9 w-full items-center gap-1.5 px-2.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
           <Bot className="h-3.5 w-3.5 shrink-0" />
           <span className="font-medium">
             {subagentType ? `Task (${subagentType})` : 'Task'}
           </span>
           {description && (
-            <code className="truncate rounded bg-muted/50 px-1.5 py-0.5 text-xs">
+            <code className="truncate rounded bg-muted/50 px-1.5 text-xs font-sans leading-none">
               {description}
             </code>
           )}
@@ -344,7 +344,7 @@ export function StackedGroup({
           isOpen && 'bg-muted/50'
         )}
       >
-        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
+        <CollapsibleTrigger className="flex h-9 w-full items-center gap-1.5 px-2.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
           <Layers className="h-3.5 w-3.5 shrink-0" />
           <span className="font-medium">{summary}</span>
           {isStreaming && isIncomplete ? (
@@ -403,7 +403,7 @@ function SubThinkingItem({ thinking }: SubThinkingItemProps) {
           isOpen && 'bg-muted/30'
         )}
       >
-        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground/80 hover:bg-muted/30 select-none">
+        <CollapsibleTrigger className="flex h-7 w-full items-center gap-1.5 px-2 text-xs text-muted-foreground/80 hover:bg-muted/30 select-none">
           <Brain className="h-3 w-3 shrink-0 text-purple-500" />
           <span className="font-medium">Thinking</span>
           <ChevronRight
@@ -457,7 +457,7 @@ function SubToolItem({ toolCall, onFileClick }: SubToolItemProps) {
           isOpen && 'bg-muted/30'
         )}
       >
-        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground/80 hover:bg-muted/30 select-none">
+        <CollapsibleTrigger className="flex h-7 w-full items-center gap-1.5 px-2 text-xs text-muted-foreground/80 hover:bg-muted/30 select-none">
           <span className="[&>svg]:h-3 [&>svg]:w-3">{icon}</span>
           <span className="font-medium">{label}</span>
           {detail && filePath && onFileClick ? (
@@ -469,13 +469,13 @@ function SubToolItem({ toolCall, onFileClick }: SubToolItemProps) {
                 e.key === 'Enter' &&
                 handleFileClick(e as unknown as React.MouseEvent)
               }
-              className="inline-flex items-center gap-0.5 truncate rounded bg-muted/30 px-1 py-0.5 text-[0.625rem] hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer"
+              className="inline-flex items-center gap-0.5 truncate rounded bg-muted/30 px-1 text-[0.625rem] font-sans leading-none hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer"
             >
               <span className="truncate">{detail}</span>
               <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-60" />
             </code>
           ) : detail ? (
-            <code className="truncate rounded bg-muted/30 px-1 py-0.5 text-[0.625rem]">
+            <code className="truncate rounded bg-muted/30 px-1 text-[0.625rem] font-sans leading-none">
               {detail}
             </code>
           ) : null}

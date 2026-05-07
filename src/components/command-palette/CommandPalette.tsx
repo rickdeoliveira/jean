@@ -161,7 +161,7 @@ export function CommandPalette() {
         value={search}
         onValueChange={setSearch}
       />
-      <CommandList>
+      <CommandList className="max-h-[70dvh] sm:max-h-[300px]">
         <CommandEmpty>No results found.</CommandEmpty>
 
         {/* Projects group first (near top) */}

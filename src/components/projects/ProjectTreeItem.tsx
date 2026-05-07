@@ -188,7 +188,12 @@ export function ProjectTreeItem({ project }: ProjectTreeItemProps) {
             <span className="truncate">{project.name}</span>
             {hasWorktrees && (
               <button
-                className="flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-50 hover:!opacity-100 hover:bg-accent-foreground/10"
+                className={cn(
+                  'flex size-4 shrink-0 items-center justify-center rounded transition-opacity hover:bg-accent-foreground/10',
+                  isMobile
+                    ? 'opacity-70'
+                    : 'opacity-0 group-hover:opacity-50 hover:!opacity-100'
+                )}
                 onClick={handleChevronClick}
               >
                 <ChevronDown

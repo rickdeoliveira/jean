@@ -131,7 +131,7 @@ import {
 } from '@/components/chat/toolbar/toolbar-utils'
 import { playNotificationSound } from '@/lib/sounds'
 import type { ThinkingLevel, EffortLevel } from '@/types/chat'
-import { isNativeApp } from '@/lib/environment'
+import { hasBackend, isNativeApp } from '@/lib/environment'
 import { isNewerVersion } from '@/lib/version-utils'
 import { cn } from '@/lib/utils'
 import { copyToClipboard } from '@/lib/clipboard'
@@ -171,6 +171,10 @@ export const GeneralPane: React.FC = () => {
   const patchPreferences = usePatchPreferences()
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteCliTarget, setDeleteCliTarget] = useState<
+    'claude' | 'codex' | 'opencode' | 'gh' | null
+  >(null)
+  const [isDeletingCli, setIsDeletingCli] = useState(false)
 
   // PATH detection
   const { data: pathDetection } = useClaudePathDetection()
@@ -480,6 +484,72 @@ export const GeneralPane: React.FC = () => {
           },
         }
       )
+    }
+  }
+
+  const handleConfirmDeleteCli = async () => {
+    if (!deleteCliTarget) return
+    const target = deleteCliTarget
+    const labelMap = {
+      claude: { name: 'Claude CLI', cmd: 'uninstall_claude_cli' as const },
+      codex: { name: 'Codex CLI', cmd: 'uninstall_codex_cli' as const },
+      opencode: { name: 'OpenCode CLI', cmd: 'uninstall_opencode_cli' as const },
+      gh: { name: 'GitHub CLI', cmd: 'uninstall_gh_cli' as const },
+    }
+    const { name, cmd } = labelMap[target]
+    setIsDeletingCli(true)
+    const toastId = toast.loading(`Removing Jean-managed ${name}...`)
+    try {
+      await invoke(cmd)
+      const sourceKey =
+        target === 'claude'
+          ? 'claude_cli_source'
+          : target === 'codex'
+            ? 'codex_cli_source'
+            : target === 'opencode'
+              ? 'opencode_cli_source'
+              : 'gh_cli_source'
+      await new Promise<void>((resolve, reject) => {
+        patchPreferences.mutate(
+          { [sourceKey]: 'path' } as Partial<AppPreferences>,
+          {
+            onSuccess: () => resolve(),
+            onError: err => reject(err),
+          }
+        )
+      })
+      const queryKeys =
+        target === 'claude'
+          ? claudeCliQueryKeys.all
+          : target === 'codex'
+            ? codexCliQueryKeys.all
+            : target === 'opencode'
+              ? opencodeCliQueryKeys.all
+              : ghCliQueryKeys.all
+      queryClient.invalidateQueries({ queryKey: queryKeys })
+      const pathFound =
+        target === 'claude'
+          ? pathDetection?.found
+          : target === 'codex'
+            ? codexPathDetection?.found
+            : target === 'opencode'
+              ? opencodePathDetection?.found
+              : ghPathDetection?.found
+      if (pathFound) {
+        toast.success(`Jean-managed ${name} removed. Using system PATH.`, {
+          id: toastId,
+        })
+      } else {
+        toast.warning(
+          `Jean-managed ${name} removed. No system PATH version found — ${name} unavailable until reinstalled.`,
+          { id: toastId }
+        )
+      }
+    } catch (err) {
+      toast.error(`Failed to remove ${name}: ${err}`, { id: toastId })
+    } finally {
+      setIsDeletingCli(false)
+      setDeleteCliTarget(null)
     }
   }
 
@@ -861,7 +931,7 @@ export const GeneralPane: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {isNativeApp() && (
+      {hasBackend() && (
         <SettingsSection
           title="Claude CLI"
           anchorId="pref-general-section-claude-cli"
@@ -988,28 +1058,41 @@ export const GeneralPane: React.FC = () => {
                   </Tooltip>
                 }
               >
-                <Select
-                  value={preferences?.claude_cli_source ?? 'jean'}
-                  onValueChange={handleClaudeSourceChange}
-                >
-                  <SelectTrigger className="w-96">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="jean">Jean (managed)</SelectItem>
-                    <SelectItem value="path" disabled={!pathDetection?.found}>
-                      System PATH
-                      {!pathDetection?.found && ' (not found)'}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={preferences?.claude_cli_source ?? 'jean'}
+                    onValueChange={handleClaudeSourceChange}
+                  >
+                    <SelectTrigger className="w-96">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="jean">Jean (managed)</SelectItem>
+                      <SelectItem value="path" disabled={!pathDetection?.found}>
+                        System PATH
+                        {!pathDetection?.found && ' (not found)'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {preferences?.claude_cli_source === 'jean' &&
+                    cliStatus?.installed && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setDeleteCliTarget('claude')}
+                      >
+                        Delete managed install
+                      </Button>
+                    )}
+                </div>
               </InlineField>
             )}
           </div>
         </SettingsSection>
       )}
 
-      {isNativeApp() && (
+      {hasBackend() && (
         <SettingsSection
           title="GitHub CLI"
           anchorId="pref-general-section-github-cli"
@@ -1132,37 +1215,46 @@ export const GeneralPane: React.FC = () => {
                   </Tooltip>
                 }
               >
-                <Select
-                  value={preferences?.gh_cli_source ?? 'jean'}
-                  onValueChange={handleGhSourceChange}
-                >
-                  <SelectTrigger className="w-96">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="jean">Jean (managed)</SelectItem>
-                    <SelectItem value="path" disabled={!ghPathDetection?.found}>
-                      System PATH
-                      {!ghPathDetection?.found && ' (not found)'}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={preferences?.gh_cli_source ?? 'jean'}
+                    onValueChange={handleGhSourceChange}
+                  >
+                    <SelectTrigger className="w-96">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="jean">Jean (managed)</SelectItem>
+                      <SelectItem
+                        value="path"
+                        disabled={!ghPathDetection?.found}
+                      >
+                        System PATH
+                        {!ghPathDetection?.found && ' (not found)'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {preferences?.gh_cli_source === 'jean' &&
+                    ghStatus?.installed && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setDeleteCliTarget('gh')}
+                      >
+                        Delete managed install
+                      </Button>
+                    )}
+                </div>
               </InlineField>
             )}
           </div>
         </SettingsSection>
       )}
 
-      {isNativeApp() && (
+      {hasBackend() && (
         <SettingsSection
-          title={
-            <>
-              Codex CLI{' '}
-              <span className="ml-1 rounded bg-primary/15 px-1 py-px text-[9px] font-semibold uppercase text-primary">
-                BETA
-              </span>
-            </>
-          }
+          title="Codex CLI"
           anchorId="pref-general-section-codex-cli"
           actions={
             codexStatus?.installed ? (
@@ -1289,40 +1381,46 @@ export const GeneralPane: React.FC = () => {
                   </Tooltip>
                 }
               >
-                <Select
-                  value={preferences?.codex_cli_source ?? 'jean'}
-                  onValueChange={handleCodexSourceChange}
-                >
-                  <SelectTrigger className="w-96">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="jean">Jean (managed)</SelectItem>
-                    <SelectItem
-                      value="path"
-                      disabled={!codexPathDetection?.found}
-                    >
-                      System PATH
-                      {!codexPathDetection?.found && ' (not found)'}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={preferences?.codex_cli_source ?? 'jean'}
+                    onValueChange={handleCodexSourceChange}
+                  >
+                    <SelectTrigger className="w-96">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="jean">Jean (managed)</SelectItem>
+                      <SelectItem
+                        value="path"
+                        disabled={!codexPathDetection?.found}
+                      >
+                        System PATH
+                        {!codexPathDetection?.found && ' (not found)'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {preferences?.codex_cli_source === 'jean' &&
+                    codexStatus?.installed && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setDeleteCliTarget('codex')}
+                      >
+                        Delete managed install
+                      </Button>
+                    )}
+                </div>
               </InlineField>
             )}
           </div>
         </SettingsSection>
       )}
 
-      {isNativeApp() && (
+      {hasBackend() && (
         <SettingsSection
-          title={
-            <>
-              OpenCode CLI{' '}
-              <span className="ml-1 rounded bg-primary/15 px-1 py-px text-[9px] font-semibold uppercase text-primary">
-                BETA
-              </span>
-            </>
-          }
+          title="OpenCode CLI"
           anchorId="pref-general-section-opencode-cli"
           actions={
             opencodeStatus?.installed ? (
@@ -1451,31 +1549,44 @@ export const GeneralPane: React.FC = () => {
                   </Tooltip>
                 }
               >
-                <Select
-                  value={preferences?.opencode_cli_source ?? 'jean'}
-                  onValueChange={handleOpencodeSourceChange}
-                >
-                  <SelectTrigger className="w-96">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="jean">Jean (managed)</SelectItem>
-                    <SelectItem
-                      value="path"
-                      disabled={!opencodePathDetection?.found}
-                    >
-                      System PATH
-                      {!opencodePathDetection?.found && ' (not found)'}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={preferences?.opencode_cli_source ?? 'jean'}
+                    onValueChange={handleOpencodeSourceChange}
+                  >
+                    <SelectTrigger className="w-96">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="jean">Jean (managed)</SelectItem>
+                      <SelectItem
+                        value="path"
+                        disabled={!opencodePathDetection?.found}
+                      >
+                        System PATH
+                        {!opencodePathDetection?.found && ' (not found)'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {preferences?.opencode_cli_source === 'jean' &&
+                    opencodeStatus?.installed && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setDeleteCliTarget('opencode')}
+                      >
+                        Delete managed install
+                      </Button>
+                    )}
+                </div>
               </InlineField>
             )}
           </div>
         </SettingsSection>
       )}
 
-      {isNativeApp() && (
+      {hasBackend() && (
         <SettingsSection
           title={
             <span className="inline-flex items-center gap-2">
@@ -2883,6 +2994,58 @@ export const GeneralPane: React.FC = () => {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {isDeleting ? 'Deleting...' : 'Delete All'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={deleteCliTarget !== null}
+        onOpenChange={open => {
+          if (!open) setDeleteCliTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete Jean-managed{' '}
+              {deleteCliTarget === 'claude'
+                ? 'Claude CLI'
+                : deleteCliTarget === 'codex'
+                  ? 'Codex CLI'
+                  : deleteCliTarget === 'opencode'
+                    ? 'OpenCode CLI'
+                    : 'GitHub CLI'}
+              ?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {(() => {
+                const pathFound =
+                  deleteCliTarget === 'claude'
+                    ? pathDetection?.found
+                    : deleteCliTarget === 'codex'
+                      ? codexPathDetection?.found
+                      : deleteCliTarget === 'opencode'
+                        ? opencodePathDetection?.found
+                        : deleteCliTarget === 'gh'
+                          ? ghPathDetection?.found
+                          : false
+                return pathFound
+                  ? 'The Jean-managed binary will be removed and the source will switch to System PATH. You can reinstall it later from this page.'
+                  : 'The Jean-managed binary will be removed. No System PATH version was detected, so this backend will be unavailable until you reinstall it.'
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingCli}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDeleteCli}
+              disabled={isDeletingCli}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingCli ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

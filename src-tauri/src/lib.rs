@@ -123,6 +123,8 @@ pub struct AppPreferences {
     pub session_recap_enabled: bool, // Show session recap when returning to unfocused sessions
     #[serde(default = "default_parallel_execution_prompt_enabled")]
     pub parallel_execution_prompt_enabled: bool, // Add system prompt to encourage parallel sub-agent execution
+    #[serde(default = "default_compact_chat_view_enabled")]
+    pub compact_chat_view_enabled: bool, // Collapse intermediate tool calls into single ticker line
     #[serde(default)]
     pub magic_prompts: MagicPrompts, // Customizable prompts for AI-powered features
     #[serde(default)]
@@ -380,6 +382,10 @@ fn default_session_recap_enabled() -> bool {
 }
 
 fn default_parallel_execution_prompt_enabled() -> bool {
+    false // Disabled by default (experimental)
+}
+
+fn default_compact_chat_view_enabled() -> bool {
     false // Disabled by default (experimental)
 }
 
@@ -1423,6 +1429,7 @@ impl Default for AppPreferences {
             syntax_theme_light: default_syntax_theme_light(),
             session_recap_enabled: default_session_recap_enabled(),
             parallel_execution_prompt_enabled: default_parallel_execution_prompt_enabled(),
+            compact_chat_view_enabled: default_compact_chat_view_enabled(),
             magic_prompts: MagicPrompts::default(),
             magic_prompt_models: MagicPromptModels::default(),
             magic_prompt_providers: MagicPromptProviders::default(),
@@ -3461,6 +3468,7 @@ pub fn run() {
             claude_cli::get_claude_usage,
             claude_cli::get_available_cli_versions,
             claude_cli::install_claude_cli,
+            claude_cli::uninstall_claude_cli,
             // Codex CLI management commands
             codex_cli::check_codex_cli_installed,
             codex_cli::detect_codex_in_path,
@@ -3468,6 +3476,7 @@ pub fn run() {
             codex_cli::get_codex_usage,
             codex_cli::get_available_codex_versions,
             codex_cli::install_codex_cli,
+            codex_cli::uninstall_codex_cli,
             // Cursor CLI management commands
             cursor_cli::check_cursor_cli_installed,
             cursor_cli::detect_cursor_in_path,
@@ -3480,6 +3489,7 @@ pub fn run() {
             opencode_cli::check_opencode_cli_auth,
             opencode_cli::get_available_opencode_versions,
             opencode_cli::install_opencode_cli,
+            opencode_cli::uninstall_opencode_cli,
             opencode_cli::list_opencode_models,
             // GitHub CLI management commands
             gh_cli::check_gh_cli_installed,
@@ -3487,6 +3497,7 @@ pub fn run() {
             gh_cli::check_gh_cli_auth,
             gh_cli::get_available_gh_versions,
             gh_cli::install_gh_cli,
+            gh_cli::uninstall_gh_cli,
             // Background task commands
             background_tasks::commands::set_app_focus_state,
             background_tasks::commands::set_active_worktree_for_polling,

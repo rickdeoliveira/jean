@@ -338,4 +338,16 @@ describe('MessageItem', () => {
 
     expect(screen.getByText('Raptors')).toBeVisible()
   })
+
+  it('renders assistant duration in mm:ss format when minutes are non-zero', () => {
+    render(<MessageItem {...baseProps} durationMs={145_000} />)
+
+    expect(screen.getByText('02:25')).toBeVisible()
+  })
+
+  it('renders assistant duration as seconds only when under a minute', () => {
+    render(<MessageItem {...baseProps} durationMs={23_000} />)
+
+    expect(screen.getByText('23s')).toBeVisible()
+  })
 })

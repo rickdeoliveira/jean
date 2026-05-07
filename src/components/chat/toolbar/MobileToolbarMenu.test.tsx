@@ -25,32 +25,13 @@ beforeEach(() => {
 })
 
 describe('MobileToolbarMenu', () => {
-  it('shows a single backend/model row and opens the shared picker', async () => {
+  it('renders verb sections only and excludes settings/contexts', async () => {
     const user = userEvent.setup()
-    const onOpenBackendModelPicker = vi.fn()
 
     render(
       <MobileToolbarMenu
         isDisabled={false}
         hasOpenPr={false}
-        selectedBackend="claude"
-        selectedProvider={null}
-        backendModelLabel="Claude · Sonnet"
-        backendModelLabelText="Claude · Sonnet"
-        selectedEffortLevel="medium"
-        selectedThinkingLevel="think"
-        useAdaptiveThinking={false}
-        isCodex={false}
-        customCliProfiles={[]}
-        uncommittedAdded={0}
-        uncommittedRemoved={0}
-        branchDiffAdded={0}
-        branchDiffRemoved={0}
-        prUrl={undefined}
-        prNumber={undefined}
-        displayStatus={undefined}
-        checkStatus={undefined}
-        activeWorktreePath={undefined}
         onSaveContext={vi.fn()}
         onLoadContext={vi.fn()}
         onCommit={vi.fn()}
@@ -60,42 +41,24 @@ describe('MobileToolbarMenu', () => {
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
         onResolveConflicts={vi.fn()}
-        onOpenBackendModelPicker={onOpenBackendModelPicker}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
-        handleUncommittedDiffClick={vi.fn()}
-        handleBranchDiffClick={vi.fn()}
-        handleProviderChange={vi.fn()}
-        handleEffortLevelChange={vi.fn()}
-        handleThinkingLevelChange={vi.fn()}
-        loadedIssueContexts={[]}
-        loadedPRContexts={[]}
-        loadedSecurityContexts={[]}
-        loadedAdvisoryContexts={[]}
-        loadedLinearContexts={[]}
-        attachedSavedContexts={[]}
-        handleViewIssue={vi.fn()}
-        handleViewPR={vi.fn()}
-        handleViewSecurityAlert={vi.fn()}
-        handleViewAdvisory={vi.fn()}
-        handleViewLinear={vi.fn()}
-        handleViewSavedContext={vi.fn()}
-        availableMcpServers={[]}
-        enabledMcpServers={[]}
-        activeMcpCount={0}
-        onToggleMcpServer={vi.fn()}
       />
     )
 
     await user.click(screen.getByRole('button', { name: /more actions/i }))
 
-    expect(screen.getByText('Backend / Model')).toBeInTheDocument()
-    expect(screen.queryByText(/^Backend$/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/^Model$/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/^Mode$/)).not.toBeInTheDocument()
+    expect(screen.getByText('Save Context')).toBeInTheDocument()
+    expect(screen.getByText('Commit & Push')).toBeInTheDocument()
+    expect(screen.getByText('Pull')).toBeInTheDocument()
+    expect(screen.getByText('Push')).toBeInTheDocument()
+    expect(screen.getByText('Review')).toBeInTheDocument()
+    expect(screen.getByText('Merge to Base')).toBeInTheDocument()
 
-    await user.click(screen.getByText('Backend / Model'))
-
-    expect(onOpenBackendModelPicker).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Backend / Model')).not.toBeInTheDocument()
+    expect(screen.queryByText('MCP')).not.toBeInTheDocument()
+    expect(screen.queryByText('Provider')).not.toBeInTheDocument()
+    expect(screen.queryByText('Uncommitted')).not.toBeInTheDocument()
+    expect(screen.queryByText('Branch diff')).not.toBeInTheDocument()
   })
 })

@@ -435,6 +435,10 @@ function App() {
       )
     }
 
+    const isTransientTransportError = (msg: string): boolean => {
+      return msg.includes('WebSocket disconnected')
+    }
+
     const handleRejection = (event: PromiseRejectionEvent) => {
       const reason = event.reason
       const message =
@@ -447,7 +451,10 @@ function App() {
         message,
         stack: reason instanceof Error ? reason.stack : undefined,
       })
-      if (!isAlreadySurfacedAuthError(message)) {
+      if (
+        !isAlreadySurfacedAuthError(message) &&
+        !isTransientTransportError(message)
+      ) {
         toast.error(`Unexpected error: ${truncate(message, 200)}`)
       }
       event.preventDefault()
@@ -460,7 +467,10 @@ function App() {
         stack: event.error?.stack,
         filename: event.filename,
       })
-      if (!isAlreadySurfacedAuthError(message)) {
+      if (
+        !isAlreadySurfacedAuthError(message) &&
+        !isTransientTransportError(message)
+      ) {
         toast.error(`Unexpected error: ${truncate(message, 200)}`)
       }
     }

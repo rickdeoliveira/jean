@@ -19,13 +19,18 @@ import {
   verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable'
-import { Folder } from 'lucide-react'
+import { ChevronsDownUp, ChevronsUpDown, Folder } from 'lucide-react'
 import { isFolder, type Project } from '@/types/projects'
 import { ProjectTreeItem } from './ProjectTreeItem'
 import { FolderTreeItem } from './FolderTreeItem'
 import { useReorderItems, useMoveItem } from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { Separator } from '@/components/ui/separator'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 const MAX_NESTING_DEPTH = 3
@@ -230,7 +235,14 @@ function RootDropZone({ isOver }: { isOver: boolean }) {
 export function ProjectTree({ projects }: ProjectTreeProps) {
   const reorderItems = useReorderItems()
   const moveItem = useMoveItem()
-  const { expandFolder, expandedFolderIds } = useProjectsStore()
+  const {
+    expandFolder,
+    expandedFolderIds,
+    expandAllFolders,
+    collapseAllFolders,
+    expandAllProjects,
+    collapseAllProjects,
+  } = useProjectsStore()
   const [activeId, setActiveId] = useState<string | null>(null)
   const [overFolderId, setOverFolderId] = useState<string | null>(null)
   const [isOverRoot, setIsOverRoot] = useState(false)
@@ -253,6 +265,16 @@ export function ProjectTree({ projects }: ProjectTreeProps) {
 
   // All items flattened for the SortableContext
   const allItemIds = flattenItems(projects)
+
+  // IDs for bulk expand/collapse actions (across all nesting levels)
+  const allFolderIds = useMemo(
+    () => projects.filter(isFolder).map(p => p.id),
+    [projects]
+  )
+  const allProjectIds = useMemo(
+    () => projects.filter(p => !isFolder(p)).map(p => p.id),
+    [projects]
+  )
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -492,10 +514,38 @@ export function ProjectTree({ projects }: ProjectTreeProps) {
         onDragEnd={handleDragEnd}
       >
         {rootFolders.length > 0 && (
-          <div className="px-3 pb-1 pt-2">
+          <div className="group/header flex items-center justify-between pl-3 pr-2 pb-1 pt-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
               Folders
             </span>
+            <div className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex size-4 shrink-0 items-center justify-center rounded opacity-50 hover:bg-accent-foreground/10 hover:opacity-100"
+                    onClick={() => expandAllFolders(allFolderIds)}
+                    aria-label="Expand all folders"
+                  >
+                    <ChevronsUpDown className="size-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Expand all</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex size-4 shrink-0 items-center justify-center rounded opacity-50 hover:bg-accent-foreground/10 hover:opacity-100"
+                    onClick={collapseAllFolders}
+                    aria-label="Collapse all folders"
+                  >
+                    <ChevronsDownUp className="size-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Collapse all</TooltipContent>
+              </Tooltip>
+            </div>
           </div>
         )}
         <SortableContext
@@ -520,10 +570,38 @@ export function ProjectTree({ projects }: ProjectTreeProps) {
             </div>
           )}
           {rootProjects.length > 0 && (
-            <div className="px-3 pb-1 pt-2">
+            <div className="group/header flex items-center justify-between pl-3 pr-2 pb-1 pt-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
                 Projects
               </span>
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex size-4 shrink-0 items-center justify-center rounded opacity-50 hover:bg-accent-foreground/10 hover:opacity-100"
+                      onClick={() => expandAllProjects(allProjectIds)}
+                      aria-label="Expand all projects"
+                    >
+                      <ChevronsUpDown className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Expand all</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex size-4 shrink-0 items-center justify-center rounded opacity-50 hover:bg-accent-foreground/10 hover:opacity-100"
+                      onClick={collapseAllProjects}
+                      aria-label="Collapse all projects"
+                    >
+                      <ChevronsDownUp className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Collapse all</TooltipContent>
+                </Tooltip>
+              </div>
             </div>
           )}
           {rootProjects.map(item => (

@@ -4,7 +4,6 @@ import {
   AlertCircle,
   CircleDot,
   Code,
-  FileJson,
   FolderOpen,
   GitBranch,
   GitPullRequestArrow,
@@ -43,7 +42,7 @@ import {
 import { Button } from '@/components/ui/button'
 import type { Worktree } from '@/types/projects'
 import { getEditorLabel, getTerminalLabel } from '@/types/preferences'
-import { ghCliQueryKeys } from '@/services/gh-cli'
+import { ghCliQueryKeys, useGhCliAuth } from '@/services/gh-cli'
 import {
   useDependabotAlerts,
   useGitHubIssues,
@@ -98,9 +97,12 @@ export function WorktreeDropdownMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
-    handleOpenJeanConfig,
     handleGenerateRecap,
   } = useWorktreeMenuActions({ worktree, projectId })
+  const isMobile = useIsMobile()
+  // On native desktop the auth query runs in App.tsx; on web/mobile access it doesn't.
+  // Trigger it here on mobile so counts populate without depending on cache.
+  useGhCliAuth({ enabled: isMobile })
   const authData = queryClient.getQueryData<GhAuthStatus>(ghCliQueryKeys.auth())
   const isGitHubAuthenticated = authData?.authenticated ?? false
   const { data: issueResult } = useGitHubIssues(projectPath, 'open', {
@@ -131,11 +133,11 @@ export function WorktreeDropdownMenu({
       .length ?? 0)
   const workflowRunCount = workflowRuns?.runs?.length ?? 0
   const failedWorkflowCount = workflowRuns?.failedCount ?? 0
-  const isMobile = useIsMobile()
   const hasDiff = uncommittedAdded > 0 || uncommittedRemoved > 0
   const hasBranchDiff = branchDiffAdded > 0 || branchDiffRemoved > 0
+  const showMobileGitHubItems = isMobile
   const hasGitHubStatusItems =
-    (isMobile && (issueCount > 0 || prCount > 0)) ||
+    showMobileGitHubItems ||
     securityCount > 0 ||
     workflowRunCount > 0 ||
     (isMobile && (hasDiff || hasBranchDiff))
@@ -217,11 +219,6 @@ export function WorktreeDropdownMenu({
             </DropdownMenuSub>
           )}
 
-          <DropdownMenuItem onClick={handleOpenJeanConfig}>
-            <FileJson className="mr-2 h-4 w-4" />
-            Edit jean.json
-          </DropdownMenuItem>
-
           <DropdownMenuItem
             onClick={() =>
               useProjectsStore.getState().openProjectSettings(projectId)
@@ -263,28 +260,21 @@ export function WorktreeDropdownMenu({
             </DropdownMenuItem>
           )}
 
-          {isMobile && issueCount > 0 && (
+          {showMobileGitHubItems && (
             <DropdownMenuItem onClick={handleOpenIssues}>
               <CircleDot className="mr-2 h-4 w-4 text-green-600" />
-              {issueCount} Open Issue{issueCount === 1 ? '' : 's'}
+              {issueCount > 0 ? `${issueCount} Issues` : 'Issues'}
             </DropdownMenuItem>
           )}
 
-          {isMobile && prCount > 0 && (
+          {showMobileGitHubItems && (
             <DropdownMenuItem onClick={handleOpenPRs}>
               <GitPullRequestArrow className="mr-2 h-4 w-4 text-blue-600" />
-              {prCount} Open PR{prCount === 1 ? '' : 's'}
+              {prCount > 0 ? `${prCount} PRs` : 'PRs'}
             </DropdownMenuItem>
           )}
 
-          {securityCount > 0 && (
-            <DropdownMenuItem onClick={handleOpenSecurity}>
-              <ShieldAlert className="mr-2 h-4 w-4 text-orange-600" />
-              {securityCount} Security Alert{securityCount === 1 ? '' : 's'}
-            </DropdownMenuItem>
-          )}
-
-          {workflowRunCount > 0 && (
+          {(showMobileGitHubItems || workflowRunCount > 0) && (
             <DropdownMenuItem onClick={handleOpenWorkflowRuns}>
               {failedWorkflowCount > 0 ? (
                 <AlertCircle className="mr-2 h-4 w-4 text-red-600" />
@@ -292,8 +282,17 @@ export function WorktreeDropdownMenu({
                 <Activity className="mr-2 h-4 w-4" />
               )}
               {failedWorkflowCount > 0
-                ? `${failedWorkflowCount} Failed Workflow Run${failedWorkflowCount === 1 ? '' : 's'}`
-                : 'Workflow Runs'}
+                ? `${failedWorkflowCount} Failed Workflows`
+                : workflowRunCount > 0
+                  ? `${workflowRunCount} Workflows`
+                  : 'Workflows'}
+            </DropdownMenuItem>
+          )}
+
+          {(showMobileGitHubItems || securityCount > 0) && (
+            <DropdownMenuItem onClick={handleOpenSecurity}>
+              <ShieldAlert className="mr-2 h-4 w-4 text-orange-600" />
+              {securityCount > 0 ? `${securityCount} Security` : 'Security'}
             </DropdownMenuItem>
           )}
 

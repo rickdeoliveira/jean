@@ -106,6 +106,23 @@ export const ExperimentalPane: React.FC = () => {
       </SettingsSection>
 
       <SettingsSection
+        title="Chat UI"
+        anchorId="pref-experimental-section-chat-ui"
+      >
+        <InlineField
+          label="Compact chat view"
+          description="Collapse intermediate tool calls and replies into a single ticker line that shows only the latest activity. Plan messages and the final assistant message still render in full. Click the ticker to expand."
+        >
+          <Switch
+            checked={preferences?.compact_chat_view_enabled ?? false}
+            onCheckedChange={checked => {
+              patchPreferences.mutate({ compact_chat_view_enabled: checked })
+            }}
+          />
+        </InlineField>
+      </SettingsSection>
+
+      <SettingsSection
         title="Developer Tools"
         anchorId="pref-experimental-section-developer-tools"
       >

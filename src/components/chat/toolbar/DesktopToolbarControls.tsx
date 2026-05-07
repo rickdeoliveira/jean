@@ -170,7 +170,7 @@ export function DesktopToolbarControls({
   onOpenProjectSettings: _onOpenProjectSettings,
   onResolvePrConflicts,
   onLoadContext,
-  onAttach,
+  onAttach: _onAttach,
   installedBackends,
   onSetExecutionMode,
   availableExecutionModes,
@@ -206,7 +206,6 @@ export function DesktopToolbarControls({
     <>
       <DockBurgerButton
         activeMcpCount={activeMcpCount}
-        onAttach={onAttach}
         className="hidden @xl:flex"
       />
 

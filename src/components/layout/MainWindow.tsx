@@ -10,6 +10,7 @@ import {
 import { cn } from '@/lib/utils'
 import { TitleBar } from '@/components/titlebar/TitleBar'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useIsTouchDevice } from '@/hooks/use-touch-device'
 import { useSwipeDown } from '@/hooks/useSwipeDown'
 import { DevModeBanner } from './DevModeBanner'
 import { SidebarWidthProvider } from './SidebarWidthContext'
@@ -226,11 +227,12 @@ export function MainWindow() {
   )
 
   const isMobile = useIsMobile()
+  const isTouch = useIsTouchDevice()
   const swipeDown = useSwipeDown({
     onSwipeDown: useCallback(() => {
       useUIStore.getState().setCommandPaletteOpen(true)
     }, []),
-    enabled: isMobile,
+    enabled: isTouch,
   })
 
   // Fetch worktree data for polling initialization
@@ -417,14 +419,14 @@ export function MainWindow() {
 
   return (
     <div
-      ref={isMobile ? swipeDown.containerRef : undefined}
+      ref={isTouch ? swipeDown.containerRef : undefined}
       className={cn(
         'flex h-dvh w-full flex-col overflow-hidden bg-background',
         roundedClass
       )}
     >
-      {/* Mobile swipe-down pull indicator */}
-      {isMobile && swipeDown.isSwiping && (
+      {/* Touch swipe-down pull indicator */}
+      {isTouch && swipeDown.isSwiping && (
         <div
           className="pointer-events-none absolute left-1/2 z-[60] flex -translate-x-1/2 items-center justify-center"
           style={{ top: swipeDown.translateY - 8 }}

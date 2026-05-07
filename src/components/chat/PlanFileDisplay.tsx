@@ -132,42 +132,44 @@ export function PlanDisplay({
       open={isOpen}
       onOpenChange={setIsOpen}
       className={cn(
-        'relative rounded-md border border-border/50 bg-muted/30',
+        'rounded-md border border-border/50 bg-muted/30',
         className
       )}
     >
-      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted/50">
-        <FileText className="h-4 w-4 shrink-0" />
-        <span className="font-medium">Plan</span>
-        {filename && (
-          <code className="truncate rounded bg-muted/50 px-1.5 py-0.5 text-xs">
-            {filename}
-          </code>
-        )}
-        <ChevronRight
-          className={cn(
-            'ml-auto h-3.5 w-3.5 shrink-0 transition-transform duration-200',
-            isOpen && 'rotate-90'
+      <div className="relative">
+        <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted/50">
+          <FileText className="h-4 w-4 shrink-0" />
+          <span className="font-medium">Plan</span>
+          {filename && (
+            <code className="truncate rounded bg-muted/50 px-1.5 py-0.5 text-xs">
+              {filename}
+            </code>
           )}
-        />
-      </CollapsibleTrigger>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={handleCopy}
-            aria-label="Copy plan markdown"
-            className="absolute right-8 top-1/2 -translate-y-1/2 opacity-50 hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-background/80 text-muted-foreground hover:text-foreground cursor-pointer"
-          >
-            {copied ? (
-              <Check className="size-3.5" />
-            ) : (
-              <Copy className="size-3.5" />
+          <ChevronRight
+            className={cn(
+              'ml-auto h-3.5 w-3.5 shrink-0 transition-transform duration-200',
+              isOpen && 'rotate-90'
             )}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>Copy markdown</TooltipContent>
-      </Tooltip>
+          />
+        </CollapsibleTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleCopy}
+              aria-label="Copy plan markdown"
+              className="absolute right-8 top-1/2 -translate-y-1/2 opacity-50 hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-background/80 text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              {copied ? (
+                <Check className="size-3.5" />
+              ) : (
+                <Copy className="size-3.5" />
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Copy markdown</TooltipContent>
+        </Tooltip>
+      </div>
       {isOpen && (
         <div className="border-t border-border/50 px-3 py-3">
           <div>

@@ -25,6 +25,7 @@ import { useUnreadCount } from './useUnreadCount'
 import { formatShortcutDisplay } from '@/types/keybindings'
 import type { Session } from '@/types/chat'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { isNativeApp } from '@/lib/environment'
 
 function isUnread(session: Session): boolean {
   if (session.archived_at) return false
@@ -215,37 +216,25 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
       const { setActiveSession, clearActiveWorktree, setLastOpenedForProject } =
         useChatStore.getState()
 
-      const crossProject = selectedProjectId !== item.projectId
-      if (crossProject) {
+      if (selectedProjectId !== item.projectId) {
         selectProject(item.projectId)
       }
 
-      // Navigate to ProjectCanvasView
+      // Navigate to ProjectCanvasView (no-op if already there)
       clearActiveWorktree()
       setActiveSession(item.worktreeId, item.session.id)
       setLastOpenedForProject(item.projectId, item.worktreeId, item.session.id)
+
+      // Queue auto-open via store so it survives lazy-mount + Suspense + remount.
+      // ProjectCanvasView consumes pendingAutoOpenSessionIds in its own effect.
+      useUIStore
+        .getState()
+        .markWorktreeForAutoOpenSession(item.worktreeId, item.session.id)
+
+      // Mark read AFTER auto-open is queued so unreadCount->0 unmount can't race
+      // the modal-open path. Bell popover closes via the unreadCount===0 check.
       markSessionsReadOptimistically([item.session.id])
       setOpen(false)
-
-      if (crossProject) {
-        // Component remounts with new projectId key — use store-based auto-open
-        useUIStore
-          .getState()
-          .markWorktreeForAutoOpenSession(item.worktreeId, item.session.id)
-      } else {
-        // Same project, component stays mounted — use event
-        setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent('open-session-modal', {
-              detail: {
-                sessionId: item.session.id,
-                worktreeId: item.worktreeId,
-                worktreePath: item.worktreePath,
-              },
-            })
-          )
-        }, 50)
-      }
     },
     [markSessionsReadOptimistically]
   )
@@ -309,7 +298,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
           >
             <BellDot className="h-3.5 w-3.5 shrink-0 animate-[bell-ring_2s_ease-in-out_infinite]" />
             {unreadCount} finished {unreadCount === 1 ? 'session' : 'sessions'}
-            {!isMobile && (
+            {isNativeApp() && !isMobile && (
               <Kbd className="ml-1 h-4 px-1 text-[10px] opacity-60">
                 {formatShortcutDisplay('mod+shift+f')}
               </Kbd>

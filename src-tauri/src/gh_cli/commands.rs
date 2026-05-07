@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-use super::config::{ensure_gh_cli_dir, get_gh_cli_binary_path, resolve_gh_binary};
+use super::config::{
+    ensure_gh_cli_dir, get_gh_cli_binary_path, get_gh_cli_dir, resolve_gh_binary,
+};
 use crate::http_server::EmitExt;
 
 /// Emergency fallback version when API fails AND no cache exists.
@@ -492,6 +494,20 @@ pub async fn install_gh_cli(app: AppHandle, version: Option<String>) -> Result<(
     emit_progress(&app, "complete", "Installation complete!", 100);
 
     log::trace!("GitHub CLI installed successfully at {:?}", binary_path);
+    Ok(())
+}
+
+/// Uninstall the Jean-managed GitHub CLI by deleting its directory.
+///
+/// Idempotent: returns `Ok(())` if the directory does not exist.
+#[tauri::command]
+pub async fn uninstall_gh_cli(app: AppHandle) -> Result<(), String> {
+    let cli_dir = get_gh_cli_dir(&app)?;
+    if cli_dir.exists() {
+        std::fs::remove_dir_all(&cli_dir)
+            .map_err(|e| format!("Failed to remove GitHub CLI directory: {e}"))?;
+        log::info!("Removed Jean-managed GitHub CLI at {:?}", cli_dir);
+    }
     Ok(())
 }
 

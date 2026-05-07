@@ -113,6 +113,8 @@ import { FloatingButtons } from './FloatingButtons'
 import { PlanDialog } from './PlanDialog'
 import { RecapDialog } from './RecapDialog'
 import { StreamingMessage } from './StreamingMessage'
+import { CompactStreamingTicker } from './CompactStreamingTicker'
+import { CompactMessageList } from './CompactMessageList'
 import { StreamingStatusBar } from './StreamingStatusBar'
 import { ChatErrorFallback } from './ChatErrorFallback'
 import { logger } from '@/lib/logger'
@@ -2377,71 +2379,139 @@ export function ChatWindow({
                                       projectId={worktree?.project_id}
                                     />
                                   )}
-                                <VirtualizedMessageList
-                                  ref={virtualizedListRef}
-                                  messages={messages}
-                                  scrollContainerRef={scrollViewportRef}
-                                  totalMessages={messages.length}
-                                  lastPlanMessageIndex={lastPlanMessageIndex}
-                                  sessionId={deferredSessionId ?? ''}
-                                  worktreePath={activeWorktreePath ?? ''}
-                                  approveShortcut={approveShortcut}
-                                  approveShortcutYolo={approveShortcutYolo}
-                                  approveShortcutClearContext={
-                                    approveShortcutClearContext
-                                  }
-                                  approveShortcutClearContextBuild={
-                                    approveShortcutClearContextBuild
-                                  }
-                                  approveButtonRef={approveButtonRef}
-                                  isSending={isSending}
-                                  onPlanApproval={
-                                    isCursorBackend
-                                      ? handleClearContextApprovalBuild
-                                      : handlePlanApproval
-                                  }
-                                  onPlanApprovalYolo={
-                                    isCursorBackend
-                                      ? handleClearContextApproval
-                                      : handlePlanApprovalYolo
-                                  }
-                                  onClearContextApproval={
-                                    handleClearContextApproval
-                                  }
-                                  onClearContextApprovalBuild={
-                                    handleClearContextApprovalBuild
-                                  }
-                                  onWorktreeBuildApproval={
-                                    worktree?.project_id
-                                      ? handleWorktreeBuildApproval
-                                      : undefined
-                                  }
-                                  onWorktreeYoloApproval={
-                                    worktree?.project_id
-                                      ? handleWorktreeYoloApproval
-                                      : undefined
-                                  }
-                                  onQuestionAnswer={handleQuestionAnswer}
-                                  onQuestionSkip={handleSkipQuestion}
-                                  onFileClick={setViewingFilePath}
-                                  onEditedFileClick={setViewingFilePath}
-                                  onFixFinding={handleFixFinding}
-                                  onFixAllFindings={handleFixAllFindings}
-                                  isQuestionAnswered={isQuestionAnswered}
-                                  getSubmittedAnswers={getSubmittedAnswers}
-                                  areQuestionsSkipped={areQuestionsSkipped}
-                                  isFindingFixed={isFindingFixed}
-                                  onCopyToInput={handleCopyToInput}
-                                  shouldScrollToBottom={isAtBottom}
-                                  onScrollToBottomHandled={
-                                    handleScrollToBottomHandled
-                                  }
-                                  completedDurationMs={completedDurationMs}
-                                  hasOlderOnDisk={hasOlderOnDisk}
-                                  isLoadingOlder={loadOlderMessages.isPending}
-                                  onLoadOlderRuns={handleLoadOlderRuns}
-                                  loadedRunStartIndex={loadedRunStartIndex}
-                                />
+                                {preferences?.compact_chat_view_enabled ? (
+                                  <CompactMessageList
+                                    ref={virtualizedListRef}
+                                    messages={messages}
+                                    scrollContainerRef={scrollViewportRef}
+                                    totalMessages={messages.length}
+                                    lastPlanMessageIndex={lastPlanMessageIndex}
+                                    sessionId={deferredSessionId ?? ''}
+                                    worktreePath={activeWorktreePath ?? ''}
+                                    approveShortcut={approveShortcut}
+                                    approveShortcutYolo={approveShortcutYolo}
+                                    approveShortcutClearContext={
+                                      approveShortcutClearContext
+                                    }
+                                    approveShortcutClearContextBuild={
+                                      approveShortcutClearContextBuild
+                                    }
+                                    approveButtonRef={approveButtonRef}
+                                    isSending={isSending}
+                                    onPlanApproval={
+                                      isCursorBackend
+                                        ? handleClearContextApprovalBuild
+                                        : handlePlanApproval
+                                    }
+                                    onPlanApprovalYolo={
+                                      isCursorBackend
+                                        ? handleClearContextApproval
+                                        : handlePlanApprovalYolo
+                                    }
+                                    onClearContextApproval={
+                                      handleClearContextApproval
+                                    }
+                                    onClearContextApprovalBuild={
+                                      handleClearContextApprovalBuild
+                                    }
+                                    onWorktreeBuildApproval={
+                                      worktree?.project_id
+                                        ? handleWorktreeBuildApproval
+                                        : undefined
+                                    }
+                                    onWorktreeYoloApproval={
+                                      worktree?.project_id
+                                        ? handleWorktreeYoloApproval
+                                        : undefined
+                                    }
+                                    onQuestionAnswer={handleQuestionAnswer}
+                                    onQuestionSkip={handleSkipQuestion}
+                                    onFileClick={setViewingFilePath}
+                                    onEditedFileClick={setViewingFilePath}
+                                    onFixFinding={handleFixFinding}
+                                    onFixAllFindings={handleFixAllFindings}
+                                    isQuestionAnswered={isQuestionAnswered}
+                                    getSubmittedAnswers={getSubmittedAnswers}
+                                    areQuestionsSkipped={areQuestionsSkipped}
+                                    isFindingFixed={isFindingFixed}
+                                    onCopyToInput={handleCopyToInput}
+                                    shouldScrollToBottom={isAtBottom}
+                                    onScrollToBottomHandled={
+                                      handleScrollToBottomHandled
+                                    }
+                                    completedDurationMs={completedDurationMs}
+                                    hasOlderOnDisk={hasOlderOnDisk}
+                                    isLoadingOlder={loadOlderMessages.isPending}
+                                    onLoadOlderRuns={handleLoadOlderRuns}
+                                    loadedRunStartIndex={loadedRunStartIndex}
+                                  />
+                                ) : (
+                                  <VirtualizedMessageList
+                                    ref={virtualizedListRef}
+                                    messages={messages}
+                                    scrollContainerRef={scrollViewportRef}
+                                    totalMessages={messages.length}
+                                    lastPlanMessageIndex={lastPlanMessageIndex}
+                                    sessionId={deferredSessionId ?? ''}
+                                    worktreePath={activeWorktreePath ?? ''}
+                                    approveShortcut={approveShortcut}
+                                    approveShortcutYolo={approveShortcutYolo}
+                                    approveShortcutClearContext={
+                                      approveShortcutClearContext
+                                    }
+                                    approveShortcutClearContextBuild={
+                                      approveShortcutClearContextBuild
+                                    }
+                                    approveButtonRef={approveButtonRef}
+                                    isSending={isSending}
+                                    onPlanApproval={
+                                      isCursorBackend
+                                        ? handleClearContextApprovalBuild
+                                        : handlePlanApproval
+                                    }
+                                    onPlanApprovalYolo={
+                                      isCursorBackend
+                                        ? handleClearContextApproval
+                                        : handlePlanApprovalYolo
+                                    }
+                                    onClearContextApproval={
+                                      handleClearContextApproval
+                                    }
+                                    onClearContextApprovalBuild={
+                                      handleClearContextApprovalBuild
+                                    }
+                                    onWorktreeBuildApproval={
+                                      worktree?.project_id
+                                        ? handleWorktreeBuildApproval
+                                        : undefined
+                                    }
+                                    onWorktreeYoloApproval={
+                                      worktree?.project_id
+                                        ? handleWorktreeYoloApproval
+                                        : undefined
+                                    }
+                                    onQuestionAnswer={handleQuestionAnswer}
+                                    onQuestionSkip={handleSkipQuestion}
+                                    onFileClick={setViewingFilePath}
+                                    onEditedFileClick={setViewingFilePath}
+                                    onFixFinding={handleFixFinding}
+                                    onFixAllFindings={handleFixAllFindings}
+                                    isQuestionAnswered={isQuestionAnswered}
+                                    getSubmittedAnswers={getSubmittedAnswers}
+                                    areQuestionsSkipped={areQuestionsSkipped}
+                                    isFindingFixed={isFindingFixed}
+                                    onCopyToInput={handleCopyToInput}
+                                    shouldScrollToBottom={isAtBottom}
+                                    onScrollToBottomHandled={
+                                      handleScrollToBottomHandled
+                                    }
+                                    completedDurationMs={completedDurationMs}
+                                    hasOlderOnDisk={hasOlderOnDisk}
+                                    isLoadingOlder={loadOlderMessages.isPending}
+                                    onLoadOlderRuns={handleLoadOlderRuns}
+                                    loadedRunStartIndex={loadedRunStartIndex}
+                                  />
+                                )}
                               </>
                             )}
                             {/* Streaming response + elapsed timer in one wrapper to avoid space-y-4 gap */}
@@ -2449,23 +2519,40 @@ export function ChatWindow({
                               <div>
                                 {(currentStreamingContentBlocks.length > 0 ||
                                   currentToolCalls.length > 0 ||
-                                  streamingContent.trim().length > 0) && (
-                                  <StreamingMessage
-                                    sessionId={activeSessionId}
-                                    contentBlocks={
-                                      currentStreamingContentBlocks
-                                    }
-                                    toolCalls={currentToolCalls}
-                                    streamingContent={streamingContent}
-                                    onQuestionAnswer={handleQuestionAnswer}
-                                    onQuestionSkip={handleSkipQuestion}
-                                    onFileClick={setViewingFilePath}
-                                    onEditedFileClick={setViewingFilePath}
-                                    isQuestionAnswered={isQuestionAnswered}
-                                    getSubmittedAnswers={getSubmittedAnswers}
-                                    areQuestionsSkipped={areQuestionsSkipped}
-                                  />
-                                )}
+                                  streamingContent.trim().length > 0) &&
+                                  (preferences?.compact_chat_view_enabled ? (
+                                    <CompactStreamingTicker
+                                      sessionId={activeSessionId}
+                                      contentBlocks={
+                                        currentStreamingContentBlocks
+                                      }
+                                      toolCalls={currentToolCalls}
+                                      streamingContent={streamingContent}
+                                      onQuestionAnswer={handleQuestionAnswer}
+                                      onQuestionSkip={handleSkipQuestion}
+                                      onFileClick={setViewingFilePath}
+                                      onEditedFileClick={setViewingFilePath}
+                                      isQuestionAnswered={isQuestionAnswered}
+                                      getSubmittedAnswers={getSubmittedAnswers}
+                                      areQuestionsSkipped={areQuestionsSkipped}
+                                    />
+                                  ) : (
+                                    <StreamingMessage
+                                      sessionId={activeSessionId}
+                                      contentBlocks={
+                                        currentStreamingContentBlocks
+                                      }
+                                      toolCalls={currentToolCalls}
+                                      streamingContent={streamingContent}
+                                      onQuestionAnswer={handleQuestionAnswer}
+                                      onQuestionSkip={handleSkipQuestion}
+                                      onFileClick={setViewingFilePath}
+                                      onEditedFileClick={setViewingFilePath}
+                                      isQuestionAnswered={isQuestionAnswered}
+                                      getSubmittedAnswers={getSubmittedAnswers}
+                                      areQuestionsSkipped={areQuestionsSkipped}
+                                    />
+                                  ))}
                                 <StreamingStatusBar
                                   isSending={isSending}
                                   sendStartedAt={sendStartedAt}

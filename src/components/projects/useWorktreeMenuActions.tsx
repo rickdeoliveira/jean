@@ -13,7 +13,6 @@ import {
 } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
 import { useSessions } from '@/services/chat'
-import { useProjectsStore } from '@/store/projects-store'
 import { useTerminalStore } from '@/store/terminal-store'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
@@ -108,10 +107,6 @@ export function useWorktreeMenuActions({
     setShowDeleteConfirm(false)
   }, [deleteWorktree, worktree.id, projectId])
 
-  const handleOpenJeanConfig = useCallback(() => {
-    useProjectsStore.getState().openProjectSettings(projectId, 'jean-json')
-  }, [projectId])
-
   const handleGenerateRecap = useCallback(async () => {
     const sessions = sessionsData?.sessions ?? []
     const sessionWithMessages = sessions.find(s => s.messages.length >= 2)
@@ -170,7 +165,6 @@ export function useWorktreeMenuActions({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
-    handleOpenJeanConfig,
     handleGenerateRecap,
   }
 }

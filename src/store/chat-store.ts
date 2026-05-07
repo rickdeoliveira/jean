@@ -246,6 +246,11 @@ interface ChatUIState {
   // Sessions marked as "reviewing" (persisted)
   reviewingSessions: Record<string, boolean>
 
+  // Sessions currently being cancelled — suppresses session-level refetches
+  // until the cancel handler's save_cancelled_message resolves and disk is
+  // reconciled with the optimistic message in the TanStack Query cache.
+  cancellingSessionIds: Record<string, boolean>
+
   // Plan file paths per session (persisted)
   planFilePaths: Record<string, string | null>
 
@@ -315,6 +320,11 @@ interface ChatUIState {
   // Actions - Reviewing status management (persisted)
   setSessionReviewing: (sessionId: string, reviewing: boolean) => void
   isSessionReviewing: (sessionId: string) => boolean
+
+  // Actions - Cancelling status management (transient)
+  addCancellingSession: (sessionId: string) => void
+  removeCancellingSession: (sessionId: string) => void
+  isSessionCancelling: (sessionId: string) => boolean
 
   // Actions - Session label management (persisted)
   setSessionLabel: (sessionId: string, label: LabelData | null) => void
@@ -711,6 +721,7 @@ export const useChatStore = create<ChatUIState>()(
       lastCompaction: {},
       compactingSessions: {},
       reviewingSessions: {},
+      cancellingSessionIds: {},
       planFilePaths: {},
       pendingPlanMessageIds: {},
       savingContext: {},
@@ -740,35 +751,9 @@ export const useChatStore = create<ChatUIState>()(
         )
 
         if (options?.markOpened !== false) {
-          // Update last_opened_at on the backend; for non-Claude waiting sessions
-          // this also transitions to review (returns true when transitioned).
-          invoke<boolean>('set_session_last_opened', { sessionId })
-            .then(transitioned => {
+          invoke<void>('set_session_last_opened', { sessionId })
+            .then(() => {
               window.dispatchEvent(new CustomEvent('session-opened'))
-              if (transitioned) {
-                // Sync Zustand state to match the backend transition
-                const s = get()
-                set(
-                  {
-                    reviewingSessions: {
-                      ...s.reviewingSessions,
-                      [sessionId]: true,
-                    },
-                    waitingForInputSessionIds: Object.fromEntries(
-                      Object.entries(s.waitingForInputSessionIds).filter(
-                        ([k]) => k !== sessionId
-                      )
-                    ),
-                    pendingPlanMessageIds: Object.fromEntries(
-                      Object.entries(s.pendingPlanMessageIds).filter(
-                        ([k]) => k !== sessionId
-                      )
-                    ),
-                  },
-                  undefined,
-                  'autoTransitionToReview'
-                )
-              }
             })
             .catch(() => undefined)
         }
@@ -982,6 +967,36 @@ export const useChatStore = create<ChatUIState>()(
 
       isSessionReviewing: sessionId =>
         get().reviewingSessions[sessionId] ?? false,
+
+      // Cancelling status management (transient)
+      addCancellingSession: sessionId =>
+        set(
+          state => {
+            if (state.cancellingSessionIds[sessionId]) return state
+            return {
+              cancellingSessionIds: {
+                ...state.cancellingSessionIds,
+                [sessionId]: true,
+              },
+            }
+          },
+          undefined,
+          'addCancellingSession'
+        ),
+
+      removeCancellingSession: sessionId =>
+        set(
+          state => {
+            if (!(sessionId in state.cancellingSessionIds)) return state
+            const { [sessionId]: _, ...rest } = state.cancellingSessionIds
+            return { cancellingSessionIds: rest }
+          },
+          undefined,
+          'removeCancellingSession'
+        ),
+
+      isSessionCancelling: sessionId =>
+        get().cancellingSessionIds[sessionId] ?? false,
 
       // Session label management (persisted)
       setSessionLabel: (sessionId, label) =>

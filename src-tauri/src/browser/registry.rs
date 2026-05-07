@@ -36,4 +36,3 @@ pub fn get_all_tab_ids() -> Vec<String> {
 pub fn label_for_tab(tab_id: &str) -> String {
     format!("browser-{tab_id}")
 }
-

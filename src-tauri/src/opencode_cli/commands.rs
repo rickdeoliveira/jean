@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::config::{ensure_cli_dir, get_cli_binary_path, resolve_cli_binary};
+use super::config::{ensure_cli_dir, get_cli_binary_path, get_cli_dir, resolve_cli_binary};
 use crate::http_server::EmitExt;
 use crate::platform::silent_command;
 
@@ -627,6 +627,30 @@ pub async fn install_opencode_cli(app: AppHandle, version: Option<String>) -> Re
     }
 
     emit_progress(&app, "complete", "OpenCode CLI installed", 100);
+    Ok(())
+}
+
+/// Uninstall the Jean-managed OpenCode CLI by deleting its directory.
+///
+/// Refuses to run while any sessions are active. Idempotent.
+#[tauri::command]
+pub async fn uninstall_opencode_cli(app: AppHandle) -> Result<(), String> {
+    let running_sessions = crate::chat::registry::get_running_sessions();
+    if !running_sessions.is_empty() {
+        let count = running_sessions.len();
+        return Err(format!(
+            "Cannot uninstall OpenCode CLI while {} {} running. Please stop all active sessions first.",
+            count,
+            if count == 1 { "session is" } else { "sessions are" }
+        ));
+    }
+
+    let cli_dir = get_cli_dir(&app)?;
+    if cli_dir.exists() {
+        std::fs::remove_dir_all(&cli_dir)
+            .map_err(|e| format!("Failed to remove OpenCode CLI directory: {e}"))?;
+        log::info!("Removed Jean-managed OpenCode CLI at {:?}", cli_dir);
+    }
     Ok(())
 }
 
