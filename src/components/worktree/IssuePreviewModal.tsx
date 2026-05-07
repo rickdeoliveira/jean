@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   Package,
   FileCode,
+  ExternalLink,
 } from 'lucide-react'
 import {
   Dialog,
@@ -21,6 +22,7 @@ import {
 } from '@/components/ui/dialog'
 import { Markdown } from '@/components/ui/markdown'
 import { cn } from '@/lib/utils'
+import { openExternal } from '@/lib/platform'
 import {
   useGitHubIssue,
   useGitHubPR,
@@ -95,7 +97,7 @@ function CommentItem({ comment }: { comment: GitHubComment }) {
       </div>
       <div className="px-4 py-3">
         {comment.body ? (
-          <Markdown className="text-sm">{comment.body}</Markdown>
+          <Markdown compact className="text-sm">{comment.body}</Markdown>
         ) : (
           <p className="text-sm text-muted-foreground italic">
             No description provided.
@@ -154,7 +156,7 @@ function ReviewItem({ review }: { review: GitHubReview }) {
       </div>
       {review.body && (
         <div className="px-4 py-3">
-          <Markdown className="text-sm">{review.body}</Markdown>
+          <Markdown compact className="text-sm">{review.body}</Markdown>
         </div>
       )}
     </div>
@@ -172,14 +174,8 @@ function IssueContent({ detail }: { detail: GitHubIssueDetail }) {
             detail.state === 'OPEN' ? 'text-green-500' : 'text-purple-500'
           )}
         />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold leading-snug">
-            {detail.title}{' '}
-            <span className="text-muted-foreground font-normal">
-              #{detail.number}
-            </span>
-          </h2>
-          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+        <div className="min-w-0 flex-1 mt-0.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>{detail.author.login}</span>
             <span>opened on {formatDate(getCreatedAt(detail))}</span>
           </div>
@@ -198,7 +194,7 @@ function IssueContent({ detail }: { detail: GitHubIssueDetail }) {
         </div>
         <div className="px-4 py-3">
           {detail.body ? (
-            <Markdown className="text-sm">{detail.body}</Markdown>
+            <Markdown compact className="text-sm">{detail.body}</Markdown>
           ) : (
             <p className="text-sm text-muted-foreground italic">
               No description provided.
@@ -249,14 +245,8 @@ function PRContent({ detail }: { detail: GitHubPullRequestDetail }) {
       {/* Header */}
       <div className="flex items-start gap-3">
         {stateIcon}
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold leading-snug">
-            {detail.title}{' '}
-            <span className="text-muted-foreground font-normal">
-              #{detail.number}
-            </span>
-          </h2>
-          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
+        <div className="min-w-0 flex-1 mt-0.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
             <span>{detail.author.login}</span>
             <span>opened on {formatDate(getCreatedAt(detail))}</span>
             {detail.isDraft && (
@@ -289,7 +279,7 @@ function PRContent({ detail }: { detail: GitHubPullRequestDetail }) {
         </div>
         <div className="px-4 py-3">
           {detail.body ? (
-            <Markdown className="text-sm">{detail.body}</Markdown>
+            <Markdown compact className="text-sm">{detail.body}</Markdown>
           ) : (
             <p className="text-sm text-muted-foreground italic">
               No description provided.
@@ -364,14 +354,8 @@ function SecurityAlertContent({ alert }: { alert: DependabotAlert }) {
       {/* Header */}
       <div className="flex items-start gap-3">
         <ShieldAlert className="h-5 w-5 mt-0.5 flex-shrink-0 text-orange-500" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold leading-snug">
-            Dependabot Alert{' '}
-            <span className="text-muted-foreground font-normal">
-              #{alert.number}
-            </span>
-          </h2>
-          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+        <div className="min-w-0 flex-1 mt-0.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>opened on {formatDate(alert.createdAt)}</span>
           </div>
         </div>
@@ -463,14 +447,8 @@ function AdvisoryContent({ advisory }: { advisory: RepositoryAdvisory }) {
       {/* Header */}
       <div className="flex items-start gap-3">
         <ShieldAlert className="h-5 w-5 mt-0.5 flex-shrink-0 text-orange-500" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold leading-snug">
-            Repository Advisory{' '}
-            <span className="text-muted-foreground font-normal">
-              {advisory.ghsaId}
-            </span>
-          </h2>
-          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+        <div className="min-w-0 flex-1 mt-0.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {advisory.authorLogin && <span>{advisory.authorLogin}</span>}
             <span>created on {formatDate(advisory.createdAt)}</span>
           </div>
@@ -520,7 +498,7 @@ function AdvisoryContent({ advisory }: { advisory: RepositoryAdvisory }) {
 
           {advisory.description && (
             <div className="pt-2">
-              <Markdown className="text-sm">{advisory.description}</Markdown>
+              <Markdown compact className="text-sm">{advisory.description}</Markdown>
             </div>
           )}
         </div>
@@ -617,6 +595,26 @@ export function IssuePreviewModal({
   const isLoading = activeQuery.isLoading
   const error = activeQuery.error
 
+  const headerTitle: string | null =
+    type === 'issue'
+      ? (issueQuery.data?.title ?? null)
+      : type === 'pr'
+        ? (prQuery.data?.title ?? null)
+        : type === 'security'
+          ? (securityQuery.data?.summary ?? null)
+          : (advisoryQuery.data?.summary ?? null)
+
+  const headerUrl: string | null =
+    type === 'issue'
+      ? (issueQuery.data?.url ?? null)
+      : type === 'pr'
+        ? (prQuery.data?.url ?? null)
+        : type === 'security'
+          ? (securityQuery.data?.htmlUrl ?? null)
+          : (advisoryQuery.data?.htmlUrl ?? null)
+
+  const headerNumberSuffix = type === 'advisory' ? ghsaId : `#${number}`
+
   return (
     <Dialog
       open={open}
@@ -626,9 +624,25 @@ export function IssuePreviewModal({
       }}
     >
       <DialogContent className="!fixed !inset-0 !translate-x-0 !translate-y-0 !w-screen !h-[100dvh] !max-w-none !max-h-none !rounded-none !p-4 sm:!p-6 sm:!inset-auto sm:!top-[50%] sm:!left-[50%] sm:!translate-x-[-50%] sm:!translate-y-[-50%] sm:!w-[90vw] sm:!max-w-4xl sm:!h-[85vh] sm:!max-h-[85vh] sm:!rounded-lg flex flex-col overflow-hidden z-[80] [&>[data-slot=dialog-close]]:top-4 sm:[&>[data-slot=dialog-close]]:top-6">
-        <DialogHeader className="flex-shrink-0 pr-10 text-left">
-          <DialogTitle className="text-lg">
-            {TYPE_LABELS[type]} {type === 'advisory' ? ghsaId : `#${number}`}
+        <DialogHeader className="flex-shrink-0 pr-16 text-left">
+          <DialogTitle className="text-lg flex items-center gap-3 min-w-0">
+            <span className="truncate">
+              {headerTitle ?? TYPE_LABELS[type]}{' '}
+              <span className="text-muted-foreground font-normal">
+                {headerNumberSuffix}
+              </span>
+            </span>
+            {headerUrl && (
+              <button
+                type="button"
+                onClick={() => void openExternal(headerUrl)}
+                className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                title="Open on GitHub"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Open on GitHub</span>
+              </button>
+            )}
           </DialogTitle>
         </DialogHeader>
 

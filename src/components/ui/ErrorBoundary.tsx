@@ -24,7 +24,10 @@ interface State {
   error: Error | null
 }
 
-function shallowDiffer(prev: unknown[] | undefined, next: unknown[] | undefined): boolean {
+function shallowDiffer(
+  prev: unknown[] | undefined,
+  next: unknown[] | undefined
+): boolean {
   if (prev === next) return false
   if (!prev || !next) return true
   if (prev.length !== next.length) return true

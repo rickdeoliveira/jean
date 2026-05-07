@@ -2,25 +2,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 // ============================================================================
-// Session Digest Types
-// ============================================================================
-
-/// Session digest (recap summary) for quick session overview
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionDigest {
-    /// One sentence summarizing the overall chat goal and progress
-    pub chat_summary: String,
-    /// One sentence describing what was just completed
-    pub last_action: String,
-    /// When the digest was created (unix epoch seconds)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<u64>,
-    /// Number of messages in the session when this digest was generated
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message_count: Option<usize>,
-}
-
-// ============================================================================
 // Label Types
 // ============================================================================
 
@@ -517,6 +498,9 @@ pub struct Session {
     /// Codex CLI thread ID for resuming conversations
     #[serde(default)]
     pub codex_thread_id: Option<String>,
+    /// Codex `/goal` long-horizon objective (codex backend only)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_goal: Option<String>,
     /// OpenCode session ID for resuming conversations
     #[serde(default)]
     pub opencode_session_id: Option<String>,
@@ -606,9 +590,6 @@ pub struct Session {
     /// Per-session MCP server override (None = inherit from project/global)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_mcp_servers: Option<Vec<String>>,
-    /// Persisted session digest (recap summary)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub digest: Option<SessionDigest>,
     /// Per-table checklist state: tableKey -> checked row indices.
     /// Key = "{messageId}:{markdownOffset}". Presence = checklist mode on.
     #[serde(default)]
@@ -709,6 +690,7 @@ impl Session {
             backend,
             claude_session_id: None,
             codex_thread_id: None,
+            codex_goal: None,
             opencode_session_id: None,
             cursor_chat_id: None,
             selected_model: None,
@@ -738,7 +720,6 @@ impl Session {
             plan_file_path: None,
             pending_plan_message_id: None,
             enabled_mcp_servers: None,
-            digest: None,
             table_checked_rows: HashMap::new(),
             last_run_status: None,
             last_run_execution_mode: None,
@@ -903,6 +884,7 @@ impl SessionMetadata {
             backend: self.backend.clone(),
             claude_session_id: self.claude_session_id.clone(),
             codex_thread_id: self.codex_thread_id.clone(),
+            codex_goal: self.codex_goal.clone(),
             opencode_session_id: self.opencode_session_id.clone(),
             cursor_chat_id: self.cursor_chat_id.clone(),
             selected_model: self.selected_model.clone(),
@@ -937,7 +919,6 @@ impl SessionMetadata {
             plan_file_path: self.plan_file_path.clone(),
             pending_plan_message_id: self.pending_plan_message_id.clone(),
             enabled_mcp_servers: self.enabled_mcp_servers.clone(),
-            digest: self.digest.clone(),
             table_checked_rows: self.table_checked_rows.clone(),
             // Populate from last run for status recovery on app restart
             last_run_status: last_run.map(|r| r.status.clone()),
@@ -958,6 +939,7 @@ impl SessionMetadata {
         self.backend = session.backend.clone();
         self.claude_session_id = session.claude_session_id.clone();
         self.codex_thread_id = session.codex_thread_id.clone();
+        self.codex_goal = session.codex_goal.clone();
         self.opencode_session_id = session.opencode_session_id.clone();
         self.cursor_chat_id = session.cursor_chat_id.clone();
         self.selected_model = session.selected_model.clone();
@@ -1243,6 +1225,9 @@ pub struct SessionMetadata {
     /// Codex CLI thread ID for resuming conversations
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_thread_id: Option<String>,
+    /// Codex `/goal` long-horizon objective (codex backend only)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_goal: Option<String>,
     /// OpenCode session ID for resuming conversations
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_session_id: Option<String>,
@@ -1326,9 +1311,6 @@ pub struct SessionMetadata {
     /// Per-session MCP server override (None = inherit from project/global)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_mcp_servers: Option<Vec<String>>,
-    /// Persisted session digest (recap summary)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub digest: Option<SessionDigest>,
     /// Per-table checklist state: tableKey -> checked row indices.
     #[serde(default)]
     pub table_checked_rows: HashMap<String, Vec<u32>>,
@@ -1424,6 +1406,7 @@ impl SessionMetadata {
             backend: Backend::default(),
             claude_session_id: None,
             codex_thread_id: None,
+            codex_goal: None,
             opencode_session_id: None,
             cursor_chat_id: None,
             selected_model: None,
@@ -1451,7 +1434,6 @@ impl SessionMetadata {
             plan_file_path: None,
             pending_plan_message_id: None,
             enabled_mcp_servers: None,
-            digest: None,
             table_checked_rows: HashMap::new(),
             label: None,
             queued_messages: vec![],

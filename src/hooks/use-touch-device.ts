@@ -4,7 +4,8 @@ const TOUCH_QUERY = '(pointer: coarse), (hover: none)'
 
 export function useIsTouchDevice(): boolean {
   const [isTouch, setIsTouch] = useState<boolean>(
-    () => typeof window !== 'undefined' && window.matchMedia(TOUCH_QUERY).matches
+    () =>
+      typeof window !== 'undefined' && window.matchMedia(TOUCH_QUERY).matches
   )
 
   useEffect(() => {

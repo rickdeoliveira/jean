@@ -111,16 +111,15 @@ import { ReviewResultsPanel } from './ReviewResultsPanel'
 import { QueuedMessagesList } from './QueuedMessageItem'
 import { FloatingButtons } from './FloatingButtons'
 import { PlanDialog } from './PlanDialog'
-import { RecapDialog } from './RecapDialog'
 import { StreamingMessage } from './StreamingMessage'
 import { CompactStreamingTicker } from './CompactStreamingTicker'
 import { CompactMessageList } from './CompactMessageList'
+import { CodexGoalBanner } from './CodexGoalBanner'
 import { StreamingStatusBar } from './StreamingStatusBar'
 import { ChatErrorFallback } from './ChatErrorFallback'
 import { logger } from '@/lib/logger'
 import { saveCrashState } from '@/lib/recovery'
 import { ErrorBanner } from './ErrorBanner'
-import { SessionDigestReminder } from './SessionDigestReminder'
 import {
   VirtualizedMessageList,
   type VirtualizedMessageListHandle,
@@ -143,12 +142,7 @@ import { copyToClipboard, copyHtmlToClipboard } from '@/lib/clipboard'
 import { useClaudeCliStatus } from '@/services/claude-cli'
 import { usePrStatus, usePrStatusEvents } from '@/services/pr-status'
 import type { PrDisplayStatus, CheckStatus } from '@/types/pr-status'
-import type {
-  QueuedMessage,
-  Session,
-  SessionDigest,
-  WorktreeSessions,
-} from '@/types/chat'
+import type { QueuedMessage, Session, WorktreeSessions } from '@/types/chat'
 import type { DiffRequest } from '@/types/git-diff'
 import { FileDiffModal } from './FileDiffModal'
 
@@ -429,6 +423,15 @@ export function ChatWindow({
       hydrateRunningSnapshot(deferredSessionId, lastMsg)
     }
   }, [deferredSessionId, session])
+
+  // Hydrate the chat-store mirror of Session.codex_goal whenever the session
+  // (re)loads. Live updates flow through the chat:codex_goal listener.
+  useEffect(() => {
+    if (!deferredSessionId) return
+    useChatStore
+      .getState()
+      .setCodexGoal(deferredSessionId, session?.codex_goal ?? null)
+  }, [deferredSessionId, session?.codex_goal])
 
   const loadOlderMessages = useLoadOlderMessages()
   const loadedRunStartIndex = session?.loaded_run_start_index ?? 0
@@ -1014,12 +1017,6 @@ export function ChatWindow({
   const [planDialogContent, setPlanDialogContent] = useState<string | null>(
     null
   )
-
-  // State for recap dialog
-  const [isRecapDialogOpen, setIsRecapDialogOpen] = useState(false)
-  const [recapDialogDigest, setRecapDialogDigest] =
-    useState<SessionDigest | null>(null)
-  const [isGeneratingRecap, setIsGeneratingRecap] = useState(false)
 
   // Plan dialog approval handlers (DRYs 4x-duplicated onApprove/onApproveYolo callbacks)
   const { handlePlanDialogApprove, handlePlanDialogApproveYolo } =
@@ -2070,7 +2067,7 @@ export function ChatWindow({
     }
   }, [])
 
-  // Window event listeners (focus, plan, recap, git-diff, cancel, create-session, plan approval, etc.)
+  // Window event listeners (focus, plan, git-diff, cancel, create-session, plan approval, etc.)
   useChatWindowEvents({
     inputRef,
     activeSessionId,
@@ -2082,11 +2079,6 @@ export function ChatWindow({
     setPlanDialogContent,
     setIsPlanDialogOpen,
     session,
-    isRecapDialogOpen,
-    recapDialogDigest,
-    setRecapDialogDigest,
-    setIsRecapDialogOpen,
-    setIsGeneratingRecap,
     gitStatus,
     setDiffRequest,
     isAtBottom,
@@ -2310,10 +2302,6 @@ export function ChatWindow({
                       <ChatSearchBar scrollContainerRef={scrollViewportRef} />
                       {/* Bottom fade gradient so messages don't hard-cut at the input area */}
                       <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 h-8 bg-gradient-to-b from-transparent to-background" />
-                      {/* Session digest reminder (shows when opening a session that had activity while out of focus) */}
-                      {activeSessionId && (
-                        <SessionDigestReminder sessionId={activeSessionId} />
-                      )}
                       <ScrollArea
                         className="h-full w-full"
                         viewportRef={scrollViewportRef}
@@ -2321,7 +2309,7 @@ export function ChatWindow({
                         onScroll={handleScroll}
                       >
                         <div className="mx-auto max-w-7xl px-4 pt-4 pb-6 md:px-6 min-w-0 w-full">
-                          <div className="select-text space-y-4 font-mono text-sm min-w-0 break-words overflow-x-auto">
+                          <div className="select-text space-y-4 font-mono text-sm min-w-0 break-words overflow-x-hidden">
                             {/* Debug info (enabled via Settings → Experimental → Debug mode) */}
                             {preferences?.debug_mode_enabled &&
                               activeWorktreeId &&
@@ -2362,6 +2350,12 @@ export function ChatWindow({
                                 }
                               />
                             )}
+                            <CodexGoalBanner
+                              sessionId={activeSessionId ?? null}
+                              worktreeId={activeWorktreeId ?? null}
+                              worktreePath={activeWorktreePath ?? null}
+                              isCodexBackend={isCodexBackend}
+                            />
                             {isLoading ||
                             isSessionsLoading ||
                             isSessionSwitching ? (
@@ -2872,6 +2866,7 @@ export function ChatWindow({
                                 formRef={formRef}
                                 inputRef={inputRef}
                                 installedBackends={installedBackends}
+                                selectedBackend={selectedBackend}
                               />
                             </div>
 
@@ -3207,20 +3202,6 @@ export function ChatWindow({
               }
             />
           ) : null)}
-
-        {/* Recap dialog */}
-        <RecapDialog
-          digest={recapDialogDigest}
-          isOpen={isRecapDialogOpen}
-          onClose={() => {
-            setIsRecapDialogOpen(false)
-            setRecapDialogDigest(null)
-          }}
-          isGenerating={isGeneratingRecap}
-          onRegenerate={() =>
-            window.dispatchEvent(new CustomEvent('open-recap'))
-          }
-        />
 
         {/* Merge options dialog */}
         <AlertDialog open={showMergeDialog} onOpenChange={setShowMergeDialog}>

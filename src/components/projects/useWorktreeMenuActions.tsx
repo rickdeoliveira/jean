@@ -1,6 +1,4 @@
 import { useState, useCallback } from 'react'
-import { invoke } from '@/lib/transport'
-import { toast } from 'sonner'
 import { isBaseSession, type Worktree } from '@/types/projects'
 import {
   useArchiveWorktree,
@@ -14,9 +12,7 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { useSessions } from '@/services/chat'
 import { useTerminalStore } from '@/store/terminal-store'
-import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
-import type { SessionDigest } from '@/types/chat'
 
 interface UseWorktreeMenuActionsProps {
   worktree: Worktree
@@ -39,7 +35,6 @@ export function useWorktreeMenuActions({
   const { data: sessionsData } = useSessions(worktree.id, worktree.path)
   const isBase = isBaseSession(worktree)
 
-  // Check if any session has at least one message (for recap generation)
   const hasMessages = sessionsData?.sessions?.some(
     session => session.messages.length > 0
   )
@@ -107,46 +102,6 @@ export function useWorktreeMenuActions({
     setShowDeleteConfirm(false)
   }, [deleteWorktree, worktree.id, projectId])
 
-  const handleGenerateRecap = useCallback(async () => {
-    const sessions = sessionsData?.sessions ?? []
-    const sessionWithMessages = sessions.find(s => s.messages.length >= 2)
-
-    if (!sessionWithMessages) {
-      toast.error('No session with enough messages for recap')
-      return
-    }
-
-    const toastId = toast.loading('Generating recap...')
-
-    try {
-      const digest = await invoke<SessionDigest>('generate_session_digest', {
-        sessionId: sessionWithMessages.id,
-      })
-
-      useChatStore.getState().markSessionNeedsDigest(sessionWithMessages.id)
-      useChatStore.getState().setSessionDigest(sessionWithMessages.id, digest)
-
-      invoke('update_session_digest', {
-        sessionId: sessionWithMessages.id,
-        digest,
-      }).catch(err => {
-        console.error('[useWorktreeMenuActions] Failed to persist digest:', err)
-      })
-
-      toast.success(
-        <div className="space-y-1">
-          <div className="font-medium">{digest.chat_summary}</div>
-          <div className="text-xs text-muted-foreground">
-            {digest.last_action}
-          </div>
-        </div>,
-        { id: toastId, duration: 8000 }
-      )
-    } catch (error) {
-      toast.error(`Failed to generate recap: ${error}`, { id: toastId })
-    }
-  }, [sessionsData?.sessions])
-
   return {
     // State
     showDeleteConfirm,
@@ -165,6 +120,5 @@ export function useWorktreeMenuActions({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
-    handleGenerateRecap,
   }
 }

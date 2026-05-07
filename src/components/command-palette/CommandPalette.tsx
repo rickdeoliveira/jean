@@ -58,7 +58,7 @@ export function CommandPalette() {
       .map(project => ({
         id: `goto-project-${project.id}`,
         label: project.name,
-        description: 'Open project canvas',
+        description: 'Open',
         avatarUrl:
           project.avatar_path && appDataDir
             ? convertFileSrc(`${appDataDir}/${project.avatar_path}`)

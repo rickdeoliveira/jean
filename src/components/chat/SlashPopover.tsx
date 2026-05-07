@@ -41,6 +41,14 @@ interface SlashPopoverProps {
   worktreePath?: string | null
   handleRef?: React.RefObject<SlashPopoverHandle | null>
   installedBackends?: CliBackend[]
+  /** Active session backend — gates codex-only built-ins (/goal). */
+  sessionBackend?: 'claude' | 'codex' | 'opencode' | 'cursor'
+}
+
+const CODEX_GOAL_BUILTIN: ClaudeCommand = {
+  name: 'goal',
+  path: '<built-in:codex-goal>',
+  description: 'Set, view, or clear long-horizon objective',
 }
 
 type ListItem =
@@ -75,6 +83,7 @@ export function SlashPopover({
   worktreePath,
   handleRef,
   installedBackends,
+  sessionBackend,
 }: SlashPopoverProps) {
   const backendGroups = useAllBackendSkills(worktreePath, installedBackends)
   const listRef = useRef<HTMLDivElement>(null)
@@ -82,6 +91,12 @@ export function SlashPopover({
 
   const filteredItems = useMemo(() => {
     const items: ListItem[] = []
+
+    if (isAtPromptStart && sessionBackend === 'codex') {
+      fuzzySearchItems([CODEX_GOAL_BUILTIN], searchQuery, 1).forEach(cmd => {
+        items.push({ type: 'command', backend: 'codex', data: cmd })
+      })
+    }
 
     for (const group of backendGroups) {
       if (isAtPromptStart) {
@@ -105,7 +120,7 @@ export function SlashPopover({
     }
 
     return items.slice(0, 15)
-  }, [backendGroups, searchQuery, isAtPromptStart])
+  }, [backendGroups, searchQuery, isAtPromptStart, sessionBackend])
 
   const renderGroups = useMemo(() => {
     const groups: RenderGroup[] = []

@@ -235,7 +235,9 @@ export function RecentContexts({
               </DialogTitle>
             </DialogHeader>
             <ScrollArea className="flex-1 min-h-0">
-              <Markdown className="p-4 text-sm">{preview.content}</Markdown>
+              <Markdown compact className="p-4 text-sm">
+                {preview.content}
+              </Markdown>
             </ScrollArea>
           </DialogContent>
         </Dialog>

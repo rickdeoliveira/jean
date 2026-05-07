@@ -555,7 +555,7 @@ export function LoadContextModal({
                   </DialogTitle>
                 </DialogHeader>
                 <ScrollArea className="flex-1 min-h-0">
-                  <Markdown className="p-4">
+                  <Markdown compact className="p-4 text-sm">
                     {handlers.viewingContext.content}
                   </Markdown>
                 </ScrollArea>

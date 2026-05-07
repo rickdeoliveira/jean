@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { ChevronRight, Loader2, Activity, Brain } from 'lucide-react'
+import { Markdown } from '@/components/ui/markdown'
 import {
   Collapsible,
   CollapsibleContent,
@@ -32,6 +33,10 @@ import {
 import { MessageItem } from './MessageItem'
 import { AskUserQuestion } from './AskUserQuestion'
 import { buildTimeline } from './tool-call-utils'
+import {
+  TOOL_CALL_ROW_CLASS,
+  TOOL_CALL_DETAIL_PILL_CLASS,
+} from './ToolCallInline'
 import type { VirtualizedMessageListHandle } from './VirtualizedMessageList'
 
 const SCROLL_THRESHOLD = 300
@@ -91,6 +96,7 @@ type RenderItem =
       kind: 'compact'
       messages: { message: ChatMessage; globalIndex: number }[]
       key: string
+      latestText: string | null
     }
   | { kind: 'question'; message: ChatMessage; globalIndex: number }
 
@@ -104,6 +110,113 @@ function messageContainsPlan(message: ChatMessage): boolean {
 
 function messageContainsQuestion(message: ChatMessage): boolean {
   return Boolean(message.tool_calls?.some(isAskUserQuestion))
+}
+
+const RECAP_HEADING_RE = /^##\s+Recap\s*$/im
+
+/**
+ * If `text` contains a `## Recap` markdown heading, returns the slice from
+ * that heading to the next H1/H2 (or end of string). Otherwise returns null.
+ * The backend instructs the assistant (via system prompt) to terminate every
+ * multi-step turn with this section, so the compact view can surface a short
+ * summary instead of the full tool-stripped prose replay.
+ */
+function extractRecapSection(text: string): string | null {
+  const match = RECAP_HEADING_RE.exec(text)
+  if (!match) return null
+  const start = match.index
+  const afterHeading = start + match[0].length
+  const rest = text.slice(afterHeading)
+  const nextHeading = /^#{1,2}\s+/m.exec(rest)
+  const end = nextHeading ? afterHeading + nextHeading.index : text.length
+  return text.slice(start, end).trim() || null
+}
+
+/**
+ * Returns the latest assistant prose text in a compact group as plain text.
+ * Walks newest → oldest and returns the first non-empty result. If the latest
+ * message contains a `## Recap` section, only that section is returned so the
+ * compact view surfaces the wrap-up instead of replaying the whole turn.
+ */
+function findLatestAssistantText(
+  group: { message: ChatMessage }[]
+): string | null {
+  for (let g = group.length - 1; g >= 0; g--) {
+    const message = group[g]?.message
+    if (!message || message.role !== 'assistant') continue
+
+    const blocks = message.content_blocks ?? []
+    const texts: string[] = []
+    for (const block of blocks) {
+      if (block?.type === 'text' && block.text.trim()) {
+        texts.push(block.text)
+      }
+    }
+    if (texts.length === 0 && message.content?.trim()) {
+      texts.push(message.content)
+    }
+    if (texts.length === 0) continue
+
+    const combined = texts.join('\n\n')
+    if (!combined.trim()) continue
+    return extractRecapSection(combined) ?? combined
+  }
+  return null
+}
+
+/**
+ * Trims the `## Recap` section (and everything after it up to the next H1/H2)
+ * from a markdown string. Returns the original string unchanged when no recap
+ * heading is present.
+ */
+function stripRecapFromText(text: string): string {
+  const match = RECAP_HEADING_RE.exec(text)
+  if (!match) return text
+  const start = match.index
+  const afterHeading = start + match[0].length
+  const rest = text.slice(afterHeading)
+  const nextHeading = /^#{1,2}\s+/m.exec(rest)
+  const before = text.slice(0, start).trimEnd()
+  const after = nextHeading ? text.slice(afterHeading + nextHeading.index) : ''
+  return after ? `${before}\n\n${after}`.trim() : before
+}
+
+/**
+ * Returns a clone of `message` with the `## Recap` section removed from any
+ * text content blocks. Used so the latest assistant message doesn't duplicate
+ * the recap that already renders in the `latestText` block under the activity
+ * row.
+ */
+function stripRecapFromMessage(message: ChatMessage): ChatMessage {
+  const blocks = message.content_blocks
+  let changed = false
+  let newBlocks: ContentBlock[] | undefined
+  if (blocks && blocks.length > 0) {
+    newBlocks = []
+    for (const block of blocks) {
+      if (block?.type === 'text' && RECAP_HEADING_RE.test(block.text)) {
+        const stripped = stripRecapFromText(block.text)
+        changed = true
+        if (stripped) newBlocks.push({ ...block, text: stripped })
+      } else {
+        newBlocks.push(block)
+      }
+    }
+  }
+  let newContent = message.content
+  if (newContent && RECAP_HEADING_RE.test(newContent)) {
+    const stripped = stripRecapFromText(newContent)
+    if (stripped !== newContent) {
+      newContent = stripped
+      changed = true
+    }
+  }
+  if (!changed) return message
+  return {
+    ...message,
+    ...(newBlocks ? { content_blocks: newBlocks } : {}),
+    ...(newContent !== message.content ? { content: newContent } : {}),
+  }
 }
 
 /**
@@ -136,6 +249,13 @@ function truncate(text: string, max: number): string {
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine
 }
 
+function truncatePath(text: string, max: number): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim()
+  if (oneLine.length <= max) return oneLine
+  if (oneLine.includes('/')) return `…${oneLine.slice(-(max - 1))}`
+  return `${oneLine.slice(0, max - 1)}…`
+}
+
 function summarizeToolCall(tc: ToolCall): { label: string; detail?: string } {
   const input = (tc.input ?? {}) as Record<string, unknown>
   const filePath =
@@ -147,8 +267,11 @@ function summarizeToolCall(tc: ToolCall): { label: string; detail?: string } {
   const description =
     typeof input.description === 'string' ? input.description : undefined
 
-  const detail =
-    filePath ?? path ?? command ?? url ?? pattern ?? description ?? undefined
+  const pathDetail = filePath ?? path
+  if (pathDetail) {
+    return { label: tc.name, detail: truncatePath(pathDetail, 80) }
+  }
+  const detail = command ?? url ?? pattern ?? description ?? undefined
   return {
     label: tc.name,
     detail: detail ? truncate(detail, 80) : undefined,
@@ -219,6 +342,10 @@ interface CompactActivityRowProps {
   ) => React.ReactNode
   hasFollowUpFor: (globalIndex: number) => boolean
   durationFor: (globalIndex: number, message: ChatMessage) => number | null
+  /** When true, the recap section is rendered separately under the row, so
+   * strip it from the latest assistant message inside the expanded body to
+   * avoid duplicating the recap. */
+  recapShownExternally?: boolean
 }
 
 function CompactActivityRow({
@@ -227,11 +354,26 @@ function CompactActivityRow({
   renderMessage,
   hasFollowUpFor,
   durationFor,
+  recapShownExternally,
 }: CompactActivityRowProps) {
   const [isOpen, setIsOpen] = useState(false)
   const summary = useMemo(() => summarizeGroup(group), [group])
   const stepCount = useMemo(() => countSteps(group), [group])
   const messageCount = group.length
+
+  const renderGroup = useMemo(() => {
+    if (!recapShownExternally) return group
+    let stripped = false
+    return group
+      .slice()
+      .reverse()
+      .map(item => {
+        if (stripped || item.message.role !== 'assistant') return item
+        stripped = true
+        return { ...item, message: stripRecapFromMessage(item.message) }
+      })
+      .reverse()
+  }, [group, recapShownExternally])
 
   return (
     <Collapsible
@@ -245,20 +387,22 @@ function CompactActivityRow({
           (isOpen ? ' bg-muted/50' : '')
         }
       >
-        <CollapsibleTrigger className="flex h-9 w-full items-center gap-2 px-3 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
+        <CollapsibleTrigger className={TOOL_CALL_ROW_CLASS}>
           {summary.isThinking ? (
             <Brain className="h-3.5 w-3.5 shrink-0 opacity-70" />
           ) : (
             <Activity className="h-3.5 w-3.5 shrink-0 opacity-70" />
           )}
-          <span className="font-medium truncate">{summary.label}</span>
+          <span className="font-medium shrink-0 flex-none whitespace-nowrap">
+            {summary.label}
+          </span>
           {summary.detail && (
-            <code className="truncate rounded bg-muted/50 px-1.5 text-xs font-sans leading-none">
+            <code className={TOOL_CALL_DETAIL_PILL_CLASS}>
               {summary.detail}
             </code>
           )}
           <span className="ml-auto flex items-center gap-2 shrink-0">
-            <span className="text-muted-foreground/70 tabular-nums">
+            <span className="hidden sm:inline text-muted-foreground/70 tabular-nums">
               {stepCount > 0
                 ? `${stepCount} step${stepCount === 1 ? '' : 's'}`
                 : `${messageCount} msg${messageCount === 1 ? '' : 's'}`}
@@ -273,7 +417,7 @@ function CompactActivityRow({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="border-t border-border/50 p-3 space-y-4">
-            {group.map(item => (
+            {renderGroup.map(item => (
               <div key={item.message.id}>
                 {renderMessage(item, {
                   hasFollowUpMessage: hasFollowUpFor(item.globalIndex),
@@ -532,21 +676,36 @@ export const CompactMessageList = memo(
             buffer = []
             return
           }
+          const compactKey =
+            buffer.length === 1
+              ? `compact-${first.message.id}`
+              : `compact-${first.message.id}-${last.message.id}`
           items.push({
             kind: 'compact',
             messages: buffer,
-            key:
-              buffer.length === 1
-                ? `compact-${first.message.id}`
-                : `compact-${first.message.id}-${last.message.id}`,
+            key: compactKey,
+            latestText: findLatestAssistantText(buffer),
           })
           buffer = []
         }
 
         messages.forEach((message, globalIndex) => {
-          if (message.role === 'user' || messageContainsPlan(message)) {
+          if (message.role === 'user') {
             flush()
             items.push({ kind: 'message', message, globalIndex })
+            return
+          }
+
+          if (messageContainsPlan(message)) {
+            const isResolvedPlan =
+              Boolean(message.plan_approved) &&
+              (hasFollowUpMap.get(globalIndex) ?? false)
+            if (!isResolvedPlan) {
+              flush()
+              items.push({ kind: 'message', message, globalIndex })
+              return
+            }
+            buffer.push({ message, globalIndex })
             return
           }
 
@@ -556,23 +715,20 @@ export const CompactMessageList = memo(
             return
           }
 
-          if (globalIndex === lastIndex) {
-            flush()
-            items.push({ kind: 'message', message, globalIndex })
-            return
-          }
-
           buffer.push({ message, globalIndex })
         })
 
         flush()
         return items
-      }, [messages, lastIndex])
+      }, [messages, lastIndex, hasFollowUpMap])
 
       const renderMessageItem = useCallback(
         (
           item: { message: ChatMessage; globalIndex: number },
-          extra: { hasFollowUpMessage: boolean; durationMs: number | null }
+          extra: {
+            hasFollowUpMessage: boolean
+            durationMs: number | null
+          }
         ) => (
           <MessageItem
             message={item.message}
@@ -825,15 +981,34 @@ export const CompactMessageList = memo(
               )
             }
 
+            const isLatestCompact =
+              renderItems.length > 0 &&
+              renderItems[renderItems.length - 1] === item
+            const showLatestText = isLatestCompact && Boolean(item.latestText)
+            const latestTextIsRecap =
+              showLatestText && RECAP_HEADING_RE.test(item.latestText ?? '')
             return (
-              <CompactActivityRow
-                key={item.key}
-                group={item.messages}
-                total={totalMessages}
-                renderMessage={renderMessageItem}
-                hasFollowUpFor={hasFollowUpFor}
-                durationFor={durationFor}
-              />
+              <div key={item.key}>
+                <CompactActivityRow
+                  group={item.messages}
+                  total={totalMessages}
+                  renderMessage={renderMessageItem}
+                  hasFollowUpFor={hasFollowUpFor}
+                  durationFor={durationFor}
+                  recapShownExternally={latestTextIsRecap}
+                />
+                {showLatestText && (
+                  <div className="pb-4">
+                    <Markdown
+                      streaming={false}
+                      messageId={item.key}
+                      sessionId={sessionId}
+                    >
+                      {item.latestText ?? ''}
+                    </Markdown>
+                  </div>
+                )}
+              </div>
             )
           })}
         </div>

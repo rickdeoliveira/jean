@@ -1,6 +1,7 @@
 import { useCallback, type RefObject } from 'react'
 import { generateId } from '@/lib/uuid'
 import { toast } from 'sonner'
+import { invoke } from '@/lib/transport'
 import { useChatStore } from '@/store/chat-store'
 import {
   chatQueryKeys,
@@ -391,6 +392,66 @@ export function useMessageSending({
       }
 
       let message = textMessage
+      // Intercept Codex /goal slash. /goal alone and /goal clear are
+      // pure RPC calls (no turn); /goal <objective> sets the goal AND
+      // sends the objective as the next user turn so codex starts working
+      // toward it immediately.
+      let pendingGoalSet: Promise<void> | null = null
+      if (
+        selectedBackendRef.current === 'codex' &&
+        /^\/goal(\s|$)/.test(textMessage)
+      ) {
+        const arg = textMessage.replace(/^\/goal\s*/, '').trim()
+        const sessionId = activeSessionId
+        const worktreeId = activeWorktreeId
+        const worktreePath = activeWorktreePath
+
+        if (!arg) {
+          clearInputDraft(sessionId)
+          clearChatInputState()
+          void invoke<string | null>('codex_goal_get', {
+            worktreeId,
+            worktreePath,
+            sessionId,
+          })
+            .then(goal =>
+              toast.message(goal ? `Current goal: ${goal}` : 'No goal set')
+            )
+            .catch(err => toast.error(`/goal failed: ${err}`))
+          return
+        }
+        if (arg === 'clear') {
+          clearInputDraft(sessionId)
+          clearChatInputState()
+          void invoke('codex_goal_clear', {
+            worktreeId,
+            worktreePath,
+            sessionId,
+          })
+            .then(() => toast.success('Goal cleared'))
+            .catch(err => toast.error(`/goal failed: ${err}`))
+          return
+        }
+
+        // /goal <objective>: persist goal, then fall through to send `arg`
+        // as the user's next turn. Awaiting the RPC before sendMessageNow
+        // avoids a race where thread/start runs before Session.codex_goal
+        // is persisted and flush_pending_codex_goal misses it.
+        pendingGoalSet = (async () => {
+          try {
+            await invoke('codex_goal_set', {
+              worktreeId,
+              worktreePath,
+              sessionId,
+              objective: arg,
+            })
+            toast.success('Goal set')
+          } catch (err) {
+            toast.error(`/goal failed: ${err}`)
+          }
+        })()
+        message = arg
+      }
       if (textMessage.startsWith('/')) {
         const slashName = textMessage.slice(1).split(/\s/)[0] ?? ''
         const params = textMessage.slice(1 + slashName.length).trim()
@@ -437,7 +498,6 @@ export function useMessageSending({
       clearPendingSkills(activeSessionId)
       clearPendingTextFiles(activeSessionId)
       setSessionReviewing(activeSessionId, false)
-      useChatStore.getState().clearPendingDigest(activeSessionId)
 
       clearChatInputState()
 
@@ -493,7 +553,11 @@ export function useMessageSending({
         return
       }
 
-      sendMessageNow(queuedMessage)
+      if (pendingGoalSet) {
+        void pendingGoalSet.then(() => sendMessageNow(queuedMessage))
+      } else {
+        sendMessageNow(queuedMessage)
+      }
     },
     [
       activeSessionId,

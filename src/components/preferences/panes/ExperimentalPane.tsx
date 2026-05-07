@@ -1,15 +1,7 @@
 import React from 'react'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
-import { modelOptions, type ClaudeModel } from '@/types/preferences'
 import { SettingsSection } from '../SettingsSection'
 
 const InlineField: React.FC<{
@@ -57,50 +49,6 @@ export const ExperimentalPane: React.FC = () => {
                 })
               }}
             />
-          </InlineField>
-
-          <InlineField
-            label="Automatic session recap"
-            description="Auto-generate AI summary when returning to unfocused sessions. Press R on canvas to generate on-demand."
-          >
-            <Switch
-              checked={preferences?.session_recap_enabled ?? false}
-              onCheckedChange={checked => {
-                patchPreferences.mutate({ session_recap_enabled: checked })
-              }}
-            />
-          </InlineField>
-
-          <InlineField
-            label="Recap model"
-            description="Claude model for automatic and on-demand session recaps"
-          >
-            <Select
-              value={
-                preferences?.magic_prompt_models.session_recap_model ?? 'haiku'
-              }
-              onValueChange={(value: ClaudeModel) => {
-                if (preferences) {
-                  patchPreferences.mutate({
-                    magic_prompt_models: {
-                      ...preferences.magic_prompt_models,
-                      session_recap_model: value,
-                    },
-                  })
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:min-w-96">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {modelOptions.map(option => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </InlineField>
         </div>
       </SettingsSection>

@@ -1,31 +1,39 @@
 /**
  * CLI Version Check Hook
  *
- * Checks for CLI updates on application startup and shows toast notifications
- * with buttons to update directly.
+ * Checks for CLI updates on application startup and shows toast notifications.
+ * Depending on the user's `auto_update_ai_backends` preference, updates are
+ * either installed automatically in the background, or surfaced via a toast
+ * with an "Update in background" action.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { invoke } from '@tauri-apps/api/core'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   useClaudeCliStatus,
   useAvailableCliVersions,
   useClaudePathDetection,
+  claudeCliQueryKeys,
 } from '@/services/claude-cli'
 import {
   useGhCliStatus,
   useAvailableGhVersions,
   useGhPathDetection,
+  ghCliQueryKeys,
 } from '@/services/gh-cli'
 import {
   useCodexCliStatus,
   useAvailableCodexVersions,
   useCodexPathDetection,
+  codexCliQueryKeys,
 } from '@/services/codex-cli'
 import {
   useOpencodeCliStatus,
   useAvailableOpencodeVersions,
   useOpencodePathDetection,
+  opencodeCliQueryKeys,
 } from '@/services/opencode-cli'
 import { useUIStore } from '@/store/ui-store'
 import { isNewerVersion } from '@/lib/version-utils'
@@ -37,6 +45,7 @@ import {
   resolveCliPathUpdateAction,
   type CliType,
 } from '@/lib/cli-update'
+import type { QueryClient } from '@tanstack/react-query'
 
 interface CliUpdateInfo {
   type: CliType
@@ -45,6 +54,20 @@ interface CliUpdateInfo {
   cliSource?: 'jean' | 'path'
   cliPath?: string | null
   packageManager?: string | null
+}
+
+const JEAN_INSTALL_COMMANDS: Record<CliType, string> = {
+  claude: 'install_claude_cli',
+  codex: 'install_codex_cli',
+  opencode: 'install_opencode_cli',
+  gh: 'install_gh_cli',
+}
+
+const CLI_QUERY_KEY_GETTERS: Record<CliType, () => readonly unknown[]> = {
+  claude: () => claudeCliQueryKeys.all,
+  codex: () => codexCliQueryKeys.all,
+  opencode: () => opencodeCliQueryKeys.all,
+  gh: () => ghCliQueryKeys.all,
 }
 
 /**
@@ -97,6 +120,7 @@ function resolveCliInfo(
  */
 export function useCliVersionCheck() {
   const shouldCheck = isNativeApp()
+  const queryClient = useQueryClient()
   const { data: preferences, isLoading: preferencesLoading } = usePreferences()
   const { data: claudePathInfo } = useClaudePathDetection({
     enabled: shouldCheck,
@@ -138,7 +162,7 @@ export function useCliVersionCheck() {
   const { data: opencodeVersions, isLoading: opencodeVersionsLoading } =
     useAvailableOpencodeVersions({ enabled: shouldCheck && versionCheckReady })
 
-  // Track which update pairs we've already shown notifications for
+  // Track which update pairs we've already shown notifications/run installs for
   // Format: "type:currentVersion→latestVersion"
   const notifiedRef = useRef<Set<string>>(new Set())
   const isInitialCheckRef = useRef(true)
@@ -208,14 +232,22 @@ export function useCliVersionCheck() {
 
     if (updates.length > 0) {
       logger.info('CLI updates available', { updates })
+      const autoUpdate = preferences?.auto_update_ai_backends ?? true
+      const handleUpdates = () => {
+        if (autoUpdate) {
+          for (const update of updates) {
+            void runBackgroundUpdate(update, queryClient)
+          }
+        } else {
+          showUpdateToasts(updates, queryClient)
+        }
+      }
 
       if (isInitialCheckRef.current) {
         // Delay initial notification to let the app settle
-        setTimeout(() => {
-          showUpdateToasts(updates)
-        }, 5000)
+        setTimeout(handleUpdates, 5000)
       } else {
-        showUpdateToasts(updates)
+        handleUpdates()
       }
     }
 
@@ -242,58 +274,34 @@ export function useCliVersionCheck() {
     codexVersionsLoading,
     opencodeVersionsLoading,
     preferencesLoading,
+    preferences?.auto_update_ai_backends,
     preferences?.claude_cli_source,
     preferences?.codex_cli_source,
     preferences?.opencode_cli_source,
     preferences?.gh_cli_source,
+    queryClient,
   ])
 }
 
 /**
  * Show toast notifications for each CLI update.
- * Each CLI gets its own toast with Update and Cancel buttons.
- * Toast stays visible until user dismisses it.
+ * The "Update" action runs the install in the background; failures fall back
+ * to the existing modal flow so the user can see raw output.
  */
-function showUpdateToasts(updates: CliUpdateInfo[]) {
-  const { openCliUpdateModal, openCliLoginModal } = useUIStore.getState()
-
+function showUpdateToasts(updates: CliUpdateInfo[], queryClient: QueryClient) {
   for (const update of updates) {
     const cliName = CLI_DISPLAY_NAMES[update.type]
     const toastId = `cli-update-${update.type}`
 
-    const isPathMode = update.cliSource === 'path'
-
     toast.info(`${cliName} update available`, {
       id: toastId,
       description: `v${update.currentVersion} → v${update.latestVersion}`,
-      duration: Infinity, // Don't auto-dismiss
+      duration: Infinity,
       action: {
-        label: 'Update',
+        label: 'Update in background',
         onClick: () => {
-          if (isPathMode) {
-            const action = resolveCliPathUpdateAction(
-              update.type,
-              update.cliPath,
-              update.packageManager,
-              update.latestVersion
-            )
-            if (action) {
-              logger.debug(
-                `[CliVersionCheck] PATH-mode update: type=${update.type} cmd=${action[0]} args=${action[1].join(' ')}`
-              )
-              openCliLoginModal(update.type, action[0], action[1], 'update')
-            } else {
-              logger.warn(
-                `[CliVersionCheck] PATH-mode update with unknown package manager: type=${update.type} pm=${update.packageManager}`
-              )
-              toast.error(
-                `Can't auto-update ${cliName}. Update it manually via your package manager.`
-              )
-            }
-          } else {
-            openCliUpdateModal(update.type)
-          }
           toast.dismiss(toastId)
+          void runBackgroundUpdate(update, queryClient)
         },
       },
       cancel: {
@@ -302,6 +310,133 @@ function showUpdateToasts(updates: CliUpdateInfo[]) {
           toast.dismiss(toastId)
         },
       },
+    })
+  }
+}
+
+/**
+ * Detect the "active session" guard error so we can fall back to a manual toast
+ * (giving the user a chance to stop sessions before retrying).
+ */
+function isActiveSessionConflict(message: string): boolean {
+  return (
+    message.startsWith('Cannot install') || message.startsWith('Cannot update')
+  )
+}
+
+/**
+ * Run a CLI update silently in the background, surfacing only a single
+ * loading → success / error toast. Falls back to the appropriate manual flow
+ * (modal or toast) when the install can't run silently.
+ */
+async function runBackgroundUpdate(
+  update: CliUpdateInfo,
+  queryClient: QueryClient
+) {
+  const cliName = CLI_DISPLAY_NAMES[update.type]
+  const toastId = `cli-update-bg-${update.type}`
+
+  toast.loading(`Updating ${cliName}…`, {
+    id: toastId,
+    description: `v${update.currentVersion} → v${update.latestVersion}`,
+    duration: Infinity,
+  })
+
+  try {
+    if (update.cliSource === 'path') {
+      const action = resolveCliPathUpdateAction(
+        update.type,
+        update.cliPath,
+        update.packageManager,
+        update.latestVersion
+      )
+      if (!action) {
+        toast.error(
+          `Can't auto-update ${cliName}. Update via your package manager.`,
+          { id: toastId, duration: 8000 }
+        )
+        return
+      }
+      const [command, args] = action
+      try {
+        await invoke('run_cli_path_update', {
+          command,
+          args,
+          cliType: update.type,
+        })
+      } catch (err) {
+        const msg = String(err)
+        logger.warn('Background path update failed', {
+          type: update.type,
+          msg,
+        })
+        if (isActiveSessionConflict(msg)) {
+          toast.dismiss(toastId)
+          showUpdateToasts([update], queryClient)
+          return
+        }
+        toast.error(`Failed to update ${cliName}`, {
+          id: toastId,
+          description: msg,
+          duration: Infinity,
+          action: {
+            label: 'Open terminal',
+            onClick: () => {
+              useUIStore
+                .getState()
+                .openCliLoginModal(update.type, command, args, 'update')
+              toast.dismiss(toastId)
+            },
+          },
+        })
+        return
+      }
+    } else {
+      const tauriCmd = JEAN_INSTALL_COMMANDS[update.type]
+      try {
+        await invoke(tauriCmd, { version: update.latestVersion })
+      } catch (err) {
+        const msg = String(err)
+        logger.warn('Background jean-managed update failed', {
+          type: update.type,
+          msg,
+        })
+        if (isActiveSessionConflict(msg)) {
+          toast.dismiss(toastId)
+          showUpdateToasts([update], queryClient)
+          return
+        }
+        toast.error(`Failed to update ${cliName}`, {
+          id: toastId,
+          description: msg,
+          duration: Infinity,
+          action: {
+            label: 'Open installer',
+            onClick: () => {
+              useUIStore.getState().openCliUpdateModal(update.type)
+              toast.dismiss(toastId)
+            },
+          },
+        })
+        return
+      }
+    }
+
+    queryClient.invalidateQueries({
+      queryKey: CLI_QUERY_KEY_GETTERS[update.type](),
+    })
+    toast.success(`${cliName} updated to v${update.latestVersion}`, {
+      id: toastId,
+      duration: 5000,
+    })
+  } catch (err) {
+    logger.error('Unexpected background update error', {
+      type: update.type,
+      err,
+    })
+    toast.error(`Failed to update ${cliName}: ${String(err)}`, {
+      id: toastId,
+      duration: Infinity,
     })
   }
 }

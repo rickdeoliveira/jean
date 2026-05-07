@@ -38,6 +38,8 @@ interface MarkdownProps {
   messageId?: string
   /** Owning session ID — required alongside messageId for checklist persistence */
   sessionId?: string
+  /** Smaller mobile heading + spacing for narrow modal contexts */
+  compact?: boolean
 }
 
 interface MarkdownTableContextValue {
@@ -85,8 +87,8 @@ function CodeBlock({ children }: { children: ReactNode }) {
   }, [children])
 
   return (
-    <div className="relative my-5">
-      <pre className="overflow-x-auto rounded-lg bg-muted p-4 pr-10 text-sm">
+    <div className="relative my-5 min-w-0 max-w-full">
+      <pre className="max-w-full overflow-x-auto rounded-lg bg-muted p-4 pr-10 text-sm">
         {children}
       </pre>
       <Tooltip>
@@ -325,32 +327,32 @@ function TableBlock({ children, tableOffset }: TableBlockProps) {
 const components: Components = {
   // Headers - clear hierarchy with generous spacing
   h1: ({ children }) => (
-    <div className="mt-8 mb-5 text-3xl font-bold text-foreground first:mt-0">
+    <div className="mt-6 mb-4 text-xl sm:text-3xl sm:mt-8 sm:mb-5 font-bold text-foreground first:mt-0">
       {children}
     </div>
   ),
   h2: ({ children }) => (
-    <div className="mt-8 mb-4 text-2xl font-bold text-foreground first:mt-0">
+    <div className="mt-6 mb-3 text-lg sm:text-2xl sm:mt-8 sm:mb-4 font-bold text-foreground first:mt-0">
       {children}
     </div>
   ),
   h3: ({ children }) => (
-    <div className="mt-7 mb-3 text-xl font-semibold text-foreground first:mt-0">
+    <div className="mt-5 mb-2 text-base sm:text-xl sm:mt-7 sm:mb-3 font-semibold text-foreground first:mt-0">
       {children}
     </div>
   ),
   h4: ({ children }) => (
-    <div className="mt-6 mb-2.5 text-lg font-semibold text-foreground first:mt-0">
+    <div className="mt-4 mb-2 text-sm sm:text-lg sm:mt-6 sm:mb-2.5 font-semibold text-foreground first:mt-0">
       {children}
     </div>
   ),
   h5: ({ children }) => (
-    <div className="mt-5 mb-2 text-base font-medium text-foreground first:mt-0">
+    <div className="mt-4 mb-1.5 text-sm sm:text-base sm:mt-5 sm:mb-2 font-medium text-foreground first:mt-0">
       {children}
     </div>
   ),
   h6: ({ children }) => (
-    <div className="mt-4 mb-1.5 text-sm font-medium text-muted-foreground first:mt-0">
+    <div className="mt-3 mb-1 text-xs sm:text-sm sm:mt-4 sm:mb-1.5 font-medium text-muted-foreground first:mt-0">
       {children}
     </div>
   ),
@@ -475,6 +477,40 @@ const streamingComponents: Components = {
   ),
 }
 
+const compactComponents: Components = {
+  ...components,
+  h1: ({ children }) => (
+    <div className="mt-6 mb-4 text-base md:text-3xl md:mt-8 md:mb-5 font-bold text-foreground first:mt-0">
+      {children}
+    </div>
+  ),
+  h2: ({ children }) => (
+    <div className="mt-6 mb-3 text-sm md:text-2xl md:mt-8 md:mb-4 font-bold text-foreground first:mt-0">
+      {children}
+    </div>
+  ),
+  h3: ({ children }) => (
+    <div className="mt-5 mb-2 text-sm md:text-xl md:mt-7 md:mb-3 font-semibold text-foreground first:mt-0">
+      {children}
+    </div>
+  ),
+  h4: ({ children }) => (
+    <div className="mt-4 mb-2 text-xs md:text-lg md:mt-6 md:mb-2.5 font-semibold text-foreground first:mt-0">
+      {children}
+    </div>
+  ),
+  h5: ({ children }) => (
+    <div className="mt-4 mb-1.5 text-xs md:text-base md:mt-5 md:mb-2 font-medium text-foreground first:mt-0">
+      {children}
+    </div>
+  ),
+  h6: ({ children }) => (
+    <div className="mt-3 mb-1 text-xs md:text-sm md:mt-4 md:mb-1.5 font-medium text-muted-foreground first:mt-0">
+      {children}
+    </div>
+  ),
+}
+
 /**
  * Memoized markdown renderer to prevent expensive re-parsing
  * ReactMarkdown is expensive, so we avoid re-renders when content hasn't changed
@@ -485,6 +521,7 @@ const Markdown = memo(function Markdown({
   className,
   messageId,
   sessionId,
+  compact = false,
 }: MarkdownProps) {
   // Apply remend preprocessing for streaming content to auto-close incomplete markdown
   const content = streaming ? remend(children) : children
@@ -494,11 +531,17 @@ const Markdown = memo(function Markdown({
     [messageId, sessionId]
   )
 
+  const componentsToUse = streaming
+    ? streamingComponents
+    : compact
+      ? compactComponents
+      : components
+
   return (
     <div className={cn('markdown leading-relaxed break-words', className)}>
       <MarkdownTableContext.Provider value={contextValue}>
         <ReactMarkdown
-          components={streaming ? streamingComponents : components}
+          components={componentsToUse}
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeRaw]}
         >

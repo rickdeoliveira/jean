@@ -185,8 +185,7 @@ const BLOCKING_SELECTOR =
 export function useAnyBlockingModalOpen(): boolean {
   const [isOpen, setIsOpen] = useState(false)
   useEffect(() => {
-    const compute = () =>
-      setIsOpen(!!document.querySelector(BLOCKING_SELECTOR))
+    const compute = () => setIsOpen(!!document.querySelector(BLOCKING_SELECTOR))
     compute()
     const observer = new MutationObserver(compute)
     observer.observe(document.body, {

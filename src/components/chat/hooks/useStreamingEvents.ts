@@ -46,7 +46,6 @@ import type {
   CompactingEvent,
   CompactedEvent,
   Session,
-  SessionDigest,
   WorktreeSessions,
   SaveContextResponse,
   WakeupFiredEvent,
@@ -660,6 +659,15 @@ export default function useStreamingEvents({
         }
       )
 
+    const unlistenCodexGoal = listen<{
+      session_id: string
+      worktree_id: string
+      goal: string | null
+    }>('chat:codex_goal', event => {
+      const { session_id, goal } = event.payload
+      useChatStore.getState().setCodexGoal(session_id, goal ?? null)
+    })
+
     const unlistenDone = listen<DoneEvent>('chat:done', event => {
       const sessionId = event.payload.session_id
       const worktreeId = event.payload.worktree_id
@@ -689,11 +697,9 @@ export default function useStreamingEvents({
         pauseSession,
         activeWorktreeId,
         activeSessionIds,
-        markSessionNeedsDigest,
       } = useChatStore.getState()
 
       // Check if this session is currently being viewed
-      // Only skip digest if BOTH the worktree AND session are active (user is looking at it)
       const isActiveWorktree = worktreeId === activeWorktreeId
       const isActiveSession = activeSessionIds[worktreeId] === sessionId
       const isViewingInFullView = isActiveWorktree && isActiveSession
@@ -721,47 +727,9 @@ export default function useStreamingEvents({
           .catch(() => undefined)
       }
 
-      // Check if session recap is enabled in preferences
       const preferences = queryClient.getQueryData<AppPreferences>(
         preferencesQueryKeys.preferences()
       )
-      const sessionRecapEnabled = preferences?.session_recap_enabled ?? false
-
-      // Only generate digest if status is CHANGING to review (not already reviewing)
-      // This prevents generating digests for all restored sessions on app startup
-      const wasAlreadyReviewing =
-        useChatStore.getState().reviewingSessions[sessionId] ?? false
-
-      if (
-        !isCurrentlyViewing &&
-        !isUserInitiated &&
-        sessionRecapEnabled &&
-        !wasAlreadyReviewing
-      ) {
-        // Mark for digest and generate it in the background immediately
-        markSessionNeedsDigest(sessionId)
-
-        // Generate digest in background (fire and forget)
-        invoke<SessionDigest>('generate_session_digest', { sessionId })
-          .then(digest => {
-            useChatStore.getState().setSessionDigest(sessionId, digest)
-            // Persist digest to disk so it survives app reload
-            invoke('update_session_digest', { sessionId, digest }).catch(
-              err => {
-                console.error(
-                  '[useStreamingEvents] Failed to persist digest:',
-                  err
-                )
-              }
-            )
-          })
-          .catch(err => {
-            console.error(
-              '[useStreamingEvents] Failed to generate digest:',
-              err
-            )
-          })
-      }
 
       // Capture streaming state to local variables BEFORE clearing
       // This ensures we have the data for the optimistic message
@@ -1264,7 +1232,6 @@ export default function useStreamingEvents({
         setError,
         activeWorktreeId,
         activeSessionIds,
-        markSessionNeedsDigest,
       } = useChatStore.getState()
 
       // Check if this session is currently being viewed
@@ -1300,49 +1267,6 @@ export default function useStreamingEvents({
         invoke('set_session_last_opened', { sessionId: session_id })
           .then(() => window.dispatchEvent(new CustomEvent('session-opened')))
           .catch(() => undefined)
-      }
-
-      // Check if session recap is enabled in preferences
-      const preferences = queryClient.getQueryData<AppPreferences>(
-        preferencesQueryKeys.preferences()
-      )
-      const sessionRecapEnabled = preferences?.session_recap_enabled ?? false
-
-      // Only generate digest if status is CHANGING to review (not already reviewing)
-      const wasAlreadyReviewing =
-        useChatStore.getState().reviewingSessions[session_id] ?? false
-
-      if (
-        !isCurrentlyViewing &&
-        !isUserInitiatedErr &&
-        sessionRecapEnabled &&
-        !wasAlreadyReviewing
-      ) {
-        // Mark for digest and generate it in the background immediately
-        markSessionNeedsDigest(session_id)
-
-        invoke<SessionDigest>('generate_session_digest', {
-          sessionId: session_id,
-        })
-          .then(digest => {
-            useChatStore.getState().setSessionDigest(session_id, digest)
-            // Persist digest to disk so it survives app reload
-            invoke('update_session_digest', {
-              sessionId: session_id,
-              digest,
-            }).catch(err => {
-              console.error(
-                '[useStreamingEvents] Failed to persist digest:',
-                err
-              )
-            })
-          })
-          .catch(err => {
-            console.error(
-              '[useStreamingEvents] Failed to generate digest:',
-              err
-            )
-          })
       }
 
       // Set error state for inline display
@@ -1464,7 +1388,6 @@ export default function useStreamingEvents({
           streamingContentBlocks,
           activeWorktreeId,
           activeSessionIds,
-          markSessionNeedsDigest,
         } = useChatStore.getState()
         const sendStarted = sendStartedAt[session_id] ?? 0
         if (sendStarted > emitted_at_ms) {
@@ -1509,49 +1432,6 @@ export default function useStreamingEvents({
           invoke('set_session_last_opened', { sessionId: session_id })
             .then(() => window.dispatchEvent(new CustomEvent('session-opened')))
             .catch(() => undefined)
-        }
-
-        // Check if session recap is enabled in preferences
-        const preferences = queryClient.getQueryData<AppPreferences>(
-          preferencesQueryKeys.preferences()
-        )
-        const sessionRecapEnabled = preferences?.session_recap_enabled ?? false
-
-        // Only generate digest if status is CHANGING to review (not already reviewing)
-        const wasAlreadyReviewing =
-          useChatStore.getState().reviewingSessions[session_id] ?? false
-
-        if (
-          !isCurrentlyViewing &&
-          !isUserInitiatedCan &&
-          sessionRecapEnabled &&
-          !wasAlreadyReviewing
-        ) {
-          // Mark for digest and generate it in the background immediately
-          markSessionNeedsDigest(session_id)
-
-          invoke<SessionDigest>('generate_session_digest', {
-            sessionId: session_id,
-          })
-            .then(digest => {
-              useChatStore.getState().setSessionDigest(session_id, digest)
-              // Persist digest to disk so it survives app reload
-              invoke('update_session_digest', {
-                sessionId: session_id,
-                digest,
-              }).catch(err => {
-                console.error(
-                  '[useStreamingEvents] Failed to persist digest:',
-                  err
-                )
-              })
-            })
-            .catch(err => {
-              console.error(
-                '[useStreamingEvents] Failed to generate digest:',
-                err
-              )
-            })
         }
 
         // Clear compacting state (safety net)
@@ -1950,6 +1830,7 @@ export default function useStreamingEvents({
       unlistenCodexUserInputRequest.then(f => f())
       unlistenCodexMcpElicitation.then(f => f())
       unlistenCodexDynamicToolCall.then(f => f())
+      unlistenCodexGoal.then(f => f())
       unlistenDone.then(f => f())
       unlistenError.then(f => f())
       unlistenCancelled.then(f => f())

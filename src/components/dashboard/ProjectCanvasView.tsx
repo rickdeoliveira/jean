@@ -87,7 +87,6 @@ import { OpenPRsBadge } from '@/components/shared/OpenPRsBadge'
 import { FailedRunsBadge } from '@/components/shared/FailedRunsBadge'
 import { SecurityAlertsBadge } from '@/components/shared/SecurityAlertsBadge'
 import { PlanDialog } from '@/components/chat/PlanDialog'
-import { RecapDialog } from '@/components/chat/RecapDialog'
 import { SessionChatModal } from '@/components/chat/SessionChatModal'
 
 import { LabelModal } from '@/components/chat/LabelModal'
@@ -657,9 +656,8 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
   const mobilePRCount = mobileOpenPRs?.length ?? 0
   const mobileSecurityCount =
     (mobileAlerts?.length ?? 0) +
-    (mobileAdvisories?.filter(
-      a => a.state === 'draft' || a.state === 'triage'
-    ).length ?? 0)
+    (mobileAdvisories?.filter(a => a.state === 'draft' || a.state === 'triage')
+      .length ?? 0)
   const mobileWorkflowRunCount = mobileWorkflowRuns?.runs?.length ?? 0
   const mobileFailedWorkflowCount = mobileWorkflowRuns?.failedCount ?? 0
 
@@ -1551,18 +1549,13 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
   // Get selected card for shortcut events
   const selectedCard = selectedFlatCard?.card ?? null
 
-  // Shortcut events (plan, recap, approve) - must be before keyboard nav to get dialog states
+  // Shortcut events (plan, approve) - must be before keyboard nav to get dialog states
   const {
     planDialogPath,
     planDialogContent,
     planApprovalContext,
     planDialogCard,
     closePlanDialog,
-    recapDialogDigest,
-    isRecapDialogOpen,
-    isGeneratingRecap,
-    regenerateRecap,
-    closeRecapDialog,
   } = useCanvasShortcutEvents({
     selectedCard,
     enabled: !selectedWorktreeModal && selectedIndex !== null,
@@ -1735,7 +1728,6 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     !!selectedWorktreeModal ||
     !!planDialogPath ||
     !!planDialogContent ||
-    isRecapDialogOpen ||
     worktreeLabelModalOpen
   const { cardRefs } = useCanvasKeyboardNav({
     cards: flatCards,
@@ -2479,15 +2471,6 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
           }
         />
       ) : null}
-
-      {/* Recap Dialog */}
-      <RecapDialog
-        digest={recapDialogDigest}
-        isOpen={isRecapDialogOpen}
-        onClose={closeRecapDialog}
-        isGenerating={isGeneratingRecap}
-        onRegenerate={regenerateRecap}
-      />
 
       {/* Worktree Label Modal */}
       <LabelModal

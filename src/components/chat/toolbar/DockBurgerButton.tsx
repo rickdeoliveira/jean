@@ -215,7 +215,6 @@ export function DockBurgerButton({
             </DropdownMenuItem>
           </>
         )}
-
       </DropdownMenuContent>
     </DropdownMenu>
   )

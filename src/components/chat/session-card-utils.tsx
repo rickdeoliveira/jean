@@ -6,7 +6,6 @@ import {
   isAskUserQuestion,
   isPlanToolCall,
   type Session,
-  type SessionDigest,
   type ExecutionMode,
   type ToolCall,
   type ContentBlock,
@@ -38,8 +37,6 @@ export interface SessionCardData {
   planFilePath: string | null
   planContent: string | null
   pendingPlanMessageId: string | null
-  hasRecap: boolean
-  recapDigest: SessionDigest | null
   label: LabelData | null
 }
 
@@ -50,7 +47,6 @@ export interface SessionCardProps {
   onArchive: () => void
   onDelete: () => void
   onPlanView: () => void
-  onRecapView: () => void
   onApprove?: () => void
   onYolo?: () => void
   onClearContextApprove?: () => void
@@ -122,7 +118,6 @@ export interface ChatStoreState {
   waitingForInputSessionIds: Record<string, boolean>
   reviewingSessions: Record<string, boolean>
   pendingPermissionDenials: Record<string, PermissionDenial[]>
-  sessionDigests: Record<string, SessionDigest>
   sessionLabels: Record<string, LabelData>
 }
 
@@ -141,7 +136,6 @@ export function computeSessionCardData(
     waitingForInputSessionIds,
     reviewingSessions,
     pendingPermissionDenials,
-    sessionDigests,
     sessionLabels,
   } = storeState
 
@@ -337,11 +331,6 @@ export function computeSessionCardData(
     status = 'completed'
   }
 
-  // Check for session recap/digest
-  // Zustand has priority (freshly generated), fall back to persisted digest
-  const recapDigest = sessionDigests[session.id] ?? session.digest ?? null
-  const hasRecap = recapDigest !== null
-
   // Label from Zustand store (populated from persisted data on load)
   const label = sessionLabels[session.id] ?? null
 
@@ -358,8 +347,6 @@ export function computeSessionCardData(
     planFilePath,
     planContent,
     pendingPlanMessageId,
-    hasRecap,
-    recapDigest,
     label,
   }
 }

@@ -53,9 +53,7 @@ export const BrowserView = memo(function BrowserView({
   const actions = useBrowserTabActions(activeTabId || null)
 
   // Resolve worktreePath → first jean.json port (used as default new-tab URL)
-  const worktreePath = useChatStore(
-    state => state.worktreePaths[worktreeId]
-  )
+  const worktreePath = useChatStore(state => state.worktreePaths[worktreeId])
   const { data: ports, isFetched: portsFetched } = usePorts(
     worktreePath ?? null
   )

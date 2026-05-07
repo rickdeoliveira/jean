@@ -32,6 +32,34 @@ import { IMAGE_ATTACHMENT_ACCEPT, MAX_TEXT_SIZE } from './image-constants'
 /** Threshold for saving pasted text as file (2000 chars) */
 const TEXT_PASTE_THRESHOLD = 2000
 
+// Strip ASCII C0 controls (except tab/newline/CR), DEL, and C1 controls.
+// Defends against external keyboard remappers / IMEs / accessibility tools that
+// inject control codepoints (e.g., U+001D Group Separator on ArrowRight).
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g
+
+function sanitizeInput(value: string): string {
+  CONTROL_CHARS_RE.lastIndex = 0
+  return value.replace(CONTROL_CHARS_RE, '')
+}
+
+function listControlChars(value: string): string[] {
+  const out: string[] = []
+  for (const c of value) {
+    const code = c.charCodeAt(0)
+    if (
+      (code >= 0x00 && code <= 0x08) ||
+      code === 0x0b ||
+      code === 0x0c ||
+      (code >= 0x0e && code <= 0x1f) ||
+      (code >= 0x7f && code <= 0x9f)
+    ) {
+      out.push(`U+${code.toString(16).padStart(4, '0').toUpperCase()}`)
+    }
+  }
+  return out
+}
+
 interface ChatInputProps {
   activeSessionId: string | undefined
   activeWorktreePath: string | undefined
@@ -49,6 +77,7 @@ interface ChatInputProps {
   formRef: React.RefObject<HTMLFormElement | null>
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   installedBackends?: CliBackend[]
+  selectedBackend?: 'claude' | 'codex' | 'opencode' | 'cursor'
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -68,6 +97,7 @@ export const ChatInput = memo(function ChatInput({
   formRef,
   inputRef,
   installedBackends,
+  selectedBackend,
 }: ChatInputProps) {
   const isMobile = useIsMobile()
   const resizeTextarea = useAutoResize(inputRef)
@@ -215,7 +245,24 @@ export const ChatInput = memo(function ChatInput({
   // Handle textarea value changes
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      const value = e.target.value
+      const raw = e.target.value
+      const value = sanitizeInput(raw)
+
+      // If sanitization stripped chars, write back to DOM and clamp cursor
+      if (value !== raw) {
+        const removed = raw.length - value.length
+        const cursor = Math.max(
+          0,
+          (e.target.selectionStart ?? raw.length) - removed
+        )
+        e.target.value = value
+        e.target.setSelectionRange(cursor, cursor)
+        console.warn(
+          '[ChatInput] Stripped control chars from input:',
+          listControlChars(raw)
+        )
+      }
+
       if (!activeSessionId) return
 
       // PERFORMANCE: Update ref only, no React render
@@ -508,16 +555,17 @@ export const ChatInput = memo(function ChatInput({
             }
 
             // Insert the plain text into the textarea first
-            if (text && inputRef.current) {
+            const cleanText = sanitizeInput(text)
+            if (cleanText && inputRef.current) {
               const textarea = inputRef.current
               const start = textarea.selectionStart
               const end = textarea.selectionEnd
               const current = textarea.value
               textarea.value =
-                current.slice(0, start) + text + current.slice(end)
+                current.slice(0, start) + cleanText + current.slice(end)
               valueRef.current = textarea.value
               textarea.selectionStart = textarea.selectionEnd =
-                start + text.length
+                start + cleanText.length
               // Save draft
               useChatStore
                 .getState()
@@ -855,6 +903,29 @@ export const ChatInput = memo(function ChatInput({
       // Cancel pending debounced save (it still has the old "/command" value)
       clearTimeout(debouncedSaveRef.current)
 
+      // Built-in `/goal` is not a command-template — it dispatches an
+      // app-server RPC. Insert "/goal " literal so the user types an
+      // objective; useMessageSending intercepts at submit.
+      if (command.path === '<built-in:codex-goal>') {
+        const literal = '/goal '
+        if (inputRef.current) {
+          inputRef.current.value = literal
+          inputRef.current.setSelectionRange(literal.length, literal.length)
+          inputRef.current.focus()
+          valueRef.current = literal
+        }
+        if (activeSessionId) {
+          useChatStore.getState().setInputDraft(activeSessionId, literal)
+        }
+        resizeTextarea()
+        setSlashPopoverOpen(false)
+        setSlashTriggerIndex(null)
+        setSlashQuery('')
+        setShowHint(false)
+        onHasValueChangeRef.current?.(true)
+        return
+      }
+
       // Clear input
       if (inputRef.current) {
         inputRef.current.value = ''
@@ -953,6 +1024,7 @@ export const ChatInput = memo(function ChatInput({
         worktreePath={activeWorktreePath}
         handleRef={slashPopoverHandleRef}
         installedBackends={installedBackends}
+        sessionBackend={selectedBackend}
       />
     </div>
   )

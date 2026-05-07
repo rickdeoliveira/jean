@@ -8,12 +8,7 @@ import { useTerminalStore } from '@/store/terminal-store'
 import { cancelChatMessage } from '@/services/chat'
 import { isNativeApp } from '@/lib/environment'
 import { logger } from '@/lib/logger'
-import type {
-  ContentBlock,
-  QueuedMessage,
-  SessionDigest,
-  Session,
-} from '@/types/chat'
+import type { ContentBlock, QueuedMessage, Session } from '@/types/chat'
 
 interface UseChatWindowEventsParams {
   inputRef: RefObject<HTMLTextAreaElement | null>
@@ -26,13 +21,7 @@ interface UseChatWindowEventsParams {
   latestPlanFilePath: string | null
   setPlanDialogContent: (content: string | null) => void
   setIsPlanDialogOpen: (open: boolean) => void
-  // Recap dialog
   session: Session | null | undefined
-  isRecapDialogOpen: boolean
-  recapDialogDigest: SessionDigest | null
-  setRecapDialogDigest: (d: SessionDigest | null) => void
-  setIsRecapDialogOpen: (open: boolean) => void
-  setIsGeneratingRecap: (g: boolean) => void
   // Git diff
   gitStatus: { base_branch?: string } | null | undefined
   setDiffRequest: (
@@ -96,7 +85,7 @@ interface UseChatWindowEventsParams {
 
 /**
  * Manages all window event listeners for ChatWindow.
- * Consolidates focus, plan, recap, git-diff, cancel, create-session,
+ * Consolidates focus, plan, git-diff, cancel, create-session,
  * cycle-mode, set-chat-input, debug-mode, and context command events.
  */
 export function useChatWindowEvents({
@@ -110,11 +99,6 @@ export function useChatWindowEvents({
   setPlanDialogContent,
   setIsPlanDialogOpen,
   session,
-  isRecapDialogOpen,
-  recapDialogDigest,
-  setRecapDialogDigest,
-  setIsRecapDialogOpen,
-  setIsGeneratingRecap,
   gitStatus,
   setDiffRequest,
   isAtBottom,
@@ -230,75 +214,6 @@ export function useChatWindowEvents({
     latestPlanFilePath,
     setPlanDialogContent,
     setIsPlanDialogOpen,
-  ])
-
-  // R key: Open recap dialog
-  useEffect(() => {
-    const handleOpenRecap = async () => {
-      if (!activeSessionId) return
-
-      if (isRecapDialogOpen) {
-        const currentCount = session?.messages.length ?? 0
-        const digestCount = recapDialogDigest?.message_count ?? 0
-        if (currentCount <= digestCount) {
-          toast.info('No new messages since last recap')
-          return
-        }
-      }
-
-      const cachedDigest = useChatStore
-        .getState()
-        .getSessionDigest(activeSessionId)
-      const existingDigest = cachedDigest ?? session?.digest ?? null
-
-      if (existingDigest && !isRecapDialogOpen) {
-        setRecapDialogDigest(existingDigest)
-        setIsRecapDialogOpen(true)
-        return
-      }
-
-      const messageCount = session?.messages.length ?? 0
-      if (messageCount < 2) {
-        toast.info('Not enough messages to generate a recap')
-        return
-      }
-
-      setRecapDialogDigest(null)
-      setIsRecapDialogOpen(true)
-      setIsGeneratingRecap(true)
-
-      try {
-        const digest = await invoke<SessionDigest>('generate_session_digest', {
-          sessionId: activeSessionId,
-        })
-        useChatStore.getState().markSessionNeedsDigest(activeSessionId)
-        useChatStore.getState().setSessionDigest(activeSessionId, digest)
-        invoke('update_session_digest', {
-          sessionId: activeSessionId,
-          digest,
-        }).catch(err => {
-          console.error('[ChatWindow] Failed to persist digest:', err)
-        })
-        setRecapDialogDigest(digest)
-      } catch (error) {
-        setRecapDialogDigest(null)
-        setIsRecapDialogOpen(false)
-        toast.error(`Failed to generate recap: ${error}`)
-      } finally {
-        setIsGeneratingRecap(false)
-      }
-    }
-    window.addEventListener('open-recap', handleOpenRecap)
-    return () => window.removeEventListener('open-recap', handleOpenRecap)
-  }, [
-    isModal,
-    activeSessionId,
-    session,
-    isRecapDialogOpen,
-    recapDialogDigest,
-    setRecapDialogDigest,
-    setIsRecapDialogOpen,
-    setIsGeneratingRecap,
   ])
 
   // CMD+T: Create new session

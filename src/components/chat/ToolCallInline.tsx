@@ -50,6 +50,18 @@ function shouldRenderRawOutput(toolCall: ToolCall): boolean {
   )
 }
 
+// Single source of truth for tool call row layout. Bump min-h-9/px-2.5 here, all rows update.
+// min-h ensures consistent baseline regardless of inline-content height (pill vs no-pill).
+export const TOOL_CALL_ROW_CLASS =
+  'flex min-h-9 w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0'
+
+export const TOOL_CALL_SUB_ROW_CLASS =
+  'flex min-h-7 w-full items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground/80 hover:bg-muted/30 select-none min-w-0'
+
+// Detail pill — sits AFTER label, snug to content (no flex-1 stretch).
+export const TOOL_CALL_DETAIL_PILL_CLASS =
+  'min-w-0 max-w-[55%] sm:max-w-full truncate rounded px-1 text-[0.6875rem] font-sans leading-none'
+
 interface ToolCallInlineProps {
   toolCall: ToolCall
   className?: string
@@ -98,9 +110,11 @@ export function ToolCallInline({
           isOpen && 'bg-muted/50'
         )}
       >
-        <CollapsibleTrigger className="flex h-9 w-full items-center gap-1.5 px-2.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
+        <CollapsibleTrigger className={TOOL_CALL_ROW_CLASS}>
           {icon}
-          <span className="font-medium">{label}</span>
+          <span className="font-medium shrink-0 flex-none whitespace-nowrap">
+            {label}
+          </span>
           {detail && filePath && onFileClick ? (
             <code
               role="button"
@@ -110,15 +124,16 @@ export function ToolCallInline({
                 e.key === 'Enter' &&
                 handleFileClick(e as unknown as React.MouseEvent)
               }
-              className="inline-flex items-center gap-1 truncate rounded bg-muted/50 px-1.5 text-xs font-sans leading-none hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer"
+              className={cn(
+                TOOL_CALL_DETAIL_PILL_CLASS,
+                'inline-flex items-center gap-1 hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer'
+              )}
             >
               <span className="truncate">{detail}</span>
               <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
             </code>
           ) : detail ? (
-            <code className="truncate rounded bg-muted/50 px-1.5 text-xs font-sans leading-none">
-              {detail}
-            </code>
+            <code className={TOOL_CALL_DETAIL_PILL_CLASS}>{detail}</code>
           ) : null}
           {isStreaming && isIncomplete ? (
             <Loader2 className="ml-auto h-3 w-3 shrink-0 animate-spin text-muted-foreground/50" />
@@ -202,19 +217,17 @@ export function TaskCallInline({
           isOpen && 'bg-muted/50'
         )}
       >
-        <CollapsibleTrigger className="flex h-9 w-full items-center gap-1.5 px-2.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
+        <CollapsibleTrigger className={TOOL_CALL_ROW_CLASS}>
           <Bot className="h-3.5 w-3.5 shrink-0" />
-          <span className="font-medium">
+          <span className="font-medium shrink-0 whitespace-nowrap">
             {subagentType ? `Task (${subagentType})` : 'Task'}
           </span>
           {description && (
-            <code className="truncate rounded bg-muted/50 px-1.5 text-xs font-sans leading-none">
-              {description}
-            </code>
+            <code className={TOOL_CALL_DETAIL_PILL_CLASS}>{description}</code>
           )}
           {/* Show sub-tool count badge */}
           {subToolCalls.length > 0 && (
-            <span className="ml-auto text-xs text-muted-foreground/60">
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground/60">
               {subToolCalls.length} tool{subToolCalls.length === 1 ? '' : 's'}
             </span>
           )}
@@ -344,9 +357,11 @@ export function StackedGroup({
           isOpen && 'bg-muted/50'
         )}
       >
-        <CollapsibleTrigger className="flex h-9 w-full items-center gap-1.5 px-2.5 text-xs text-muted-foreground hover:bg-muted/50 select-none min-w-0">
+        <CollapsibleTrigger className={TOOL_CALL_ROW_CLASS}>
           <Layers className="h-3.5 w-3.5 shrink-0" />
-          <span className="font-medium">{summary}</span>
+          <span className="font-medium shrink-0 whitespace-nowrap">
+            {summary}
+          </span>
           {isStreaming && isIncomplete ? (
             <Loader2 className="ml-auto h-3 w-3 shrink-0 animate-spin text-muted-foreground/50" />
           ) : (
@@ -403,9 +418,11 @@ function SubThinkingItem({ thinking }: SubThinkingItemProps) {
           isOpen && 'bg-muted/30'
         )}
       >
-        <CollapsibleTrigger className="flex h-7 w-full items-center gap-1.5 px-2 text-xs text-muted-foreground/80 hover:bg-muted/30 select-none">
+        <CollapsibleTrigger className={TOOL_CALL_SUB_ROW_CLASS}>
           <Brain className="h-3 w-3 shrink-0 text-purple-500" />
-          <span className="font-medium">Thinking</span>
+          <span className="font-medium shrink-0 whitespace-nowrap">
+            Thinking
+          </span>
           <ChevronRight
             className={cn(
               'ml-auto h-2.5 w-2.5 shrink-0 transition-transform duration-200',
@@ -457,9 +474,11 @@ function SubToolItem({ toolCall, onFileClick }: SubToolItemProps) {
           isOpen && 'bg-muted/30'
         )}
       >
-        <CollapsibleTrigger className="flex h-7 w-full items-center gap-1.5 px-2 text-xs text-muted-foreground/80 hover:bg-muted/30 select-none">
-          <span className="[&>svg]:h-3 [&>svg]:w-3">{icon}</span>
-          <span className="font-medium">{label}</span>
+        <CollapsibleTrigger className={TOOL_CALL_SUB_ROW_CLASS}>
+          <span className="shrink-0 [&>svg]:h-3 [&>svg]:w-3">{icon}</span>
+          <span className="font-medium shrink-0 flex-none whitespace-nowrap">
+            {label}
+          </span>
           {detail && filePath && onFileClick ? (
             <code
               role="button"
@@ -469,13 +488,13 @@ function SubToolItem({ toolCall, onFileClick }: SubToolItemProps) {
                 e.key === 'Enter' &&
                 handleFileClick(e as unknown as React.MouseEvent)
               }
-              className="inline-flex items-center gap-0.5 truncate rounded bg-muted/30 px-1 text-[0.625rem] font-sans leading-none hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer"
+              className="inline-flex min-w-0 max-w-[55%] sm:max-w-full items-center gap-0.5 truncate rounded px-0.5 text-[0.625rem] font-sans leading-none hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer"
             >
               <span className="truncate">{detail}</span>
               <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-60" />
             </code>
           ) : detail ? (
-            <code className="truncate rounded bg-muted/30 px-1 text-[0.625rem] font-sans leading-none">
+            <code className="min-w-0 max-w-[55%] sm:max-w-full truncate rounded px-0.5 text-[0.625rem] font-sans leading-none">
               {detail}
             </code>
           ) : null}

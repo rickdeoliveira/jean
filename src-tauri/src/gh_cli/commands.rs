@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-use super::config::{
-    ensure_gh_cli_dir, get_gh_cli_binary_path, get_gh_cli_dir, resolve_gh_binary,
-};
+use super::config::{ensure_gh_cli_dir, get_gh_cli_binary_path, get_gh_cli_dir, resolve_gh_binary};
 use crate::http_server::EmitExt;
 
 /// Emergency fallback version when API fails AND no cache exists.

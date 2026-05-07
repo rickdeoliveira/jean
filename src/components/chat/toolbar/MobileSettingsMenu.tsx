@@ -6,7 +6,9 @@ import {
   ExternalLink,
   FolderOpen,
   Github,
+  GitMerge,
   GitPullRequest,
+  GitPullRequestArrow,
   Paperclip,
   Play,
   Plug,
@@ -57,7 +59,11 @@ import {
   EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
-import { getProviderDisplayName } from '@/components/chat/toolbar/toolbar-utils'
+import {
+  getPrStatusDisplay,
+  getProviderDisplayName,
+} from '@/components/chat/toolbar/toolbar-utils'
+import type { PrDisplayStatus } from '@/types/pr-status'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
 import { BackendLabel } from '@/components/ui/backend-label'
@@ -65,7 +71,12 @@ import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useTerminalStore } from '@/store/terminal-store'
 import { useUIStore } from '@/store/ui-store'
-import { useWorktree, type GitHubRemote } from '@/services/projects'
+import {
+  useProjects,
+  useWorktree,
+  type GitHubRemote,
+} from '@/services/projects'
+import { useGitHubPRs } from '@/services/github'
 import { chatQueryKeys } from '@/services/chat'
 import { getResumeCommand } from '@/components/chat/session-card-utils'
 
@@ -107,6 +118,10 @@ interface MobileSettingsMenuProps {
   activeMcpCount: number
   onToggleMcpServer: (name: string) => void
 
+  prUrl?: string | null
+  prNumber?: number | null
+  prDisplayStatus?: PrDisplayStatus | null
+
   worktreeId?: string | null
   onAttach?: () => void
 }
@@ -144,6 +159,9 @@ export function MobileSettingsMenu({
   enabledMcpServers,
   activeMcpCount,
   onToggleMcpServer,
+  prUrl,
+  prNumber,
+  prDisplayStatus,
   worktreeId,
   onAttach,
 }: MobileSettingsMenuProps) {
@@ -153,6 +171,17 @@ export function MobileSettingsMenu({
   const [resumeCommand, setResumeCommand] = useState<string | null>(null)
   const providerDisplayName = getProviderDisplayName(selectedProvider)
   const { data: worktree } = useWorktree(worktreeId ?? null)
+  const { data: projects } = useProjects()
+  const project = worktree
+    ? projects?.find(p => p.id === worktree.project_id)
+    : null
+  const { data: openPRs } = useGitHubPRs(project?.path ?? null, 'open', {
+    enabled: menuOpen && !!project?.path,
+  })
+  const stackedOnPR =
+    worktree?.base_branch && worktree.base_branch !== project?.default_branch
+      ? openPRs?.find(pr => pr.headRefName === worktree.base_branch)
+      : undefined
 
   const openBackendModelPicker = () => {
     setMenuOpen(false)
@@ -236,6 +265,34 @@ export function MobileSettingsMenu({
       })
   }, [worktree?.branch, worktree?.path])
 
+  const openPrByNumber = useCallback(
+    (number: number) => {
+      const targetPath = worktree?.path
+      if (!targetPath) return
+      const win = preOpenWindow()
+      invoke<GitHubRemote[]>('get_github_remotes', { repoPath: targetPath })
+        .then(remotes => {
+          if (!remotes || remotes.length <= 1) {
+            const url = remotes?.[0]?.url
+            if (url) openExternal(`${url}/pull/${number}`, win)
+            else win?.close()
+          } else {
+            win?.close()
+            useUIStore.getState().openRemotePicker(targetPath, remoteName => {
+              const remote = remotes.find(r => r.name === remoteName)
+              if (remote) openExternal(`${remote.url}/pull/${number}`)
+            })
+          }
+        })
+        .catch(() => {
+          win?.close()
+          toast.error('Failed to fetch remotes')
+        })
+    },
+    [worktree?.path]
+  )
+
+  const hasLinkedPr = !!(prUrl && prNumber) || !!stackedOnPR
   const hasContexts =
     loadedIssueContexts.length > 0 ||
     loadedPRContexts.length > 0 ||
@@ -476,6 +533,60 @@ export function MobileSettingsMenu({
             <Github className="h-4 w-4" />
             GitHub
           </DropdownMenuItem>
+        )}
+
+        {hasLinkedPr && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs text-muted-foreground">
+              Linked
+            </DropdownMenuLabel>
+            {prUrl && prNumber && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  setMenuOpen(false)
+                  openExternal(prUrl)
+                }}
+              >
+                {prDisplayStatus === 'merged' ? (
+                  <GitMerge
+                    className={cn(
+                      'h-4 w-4',
+                      getPrStatusDisplay(prDisplayStatus).className
+                    )}
+                  />
+                ) : (
+                  <GitPullRequest
+                    className={cn(
+                      'h-4 w-4',
+                      prDisplayStatus
+                        ? getPrStatusDisplay(prDisplayStatus).className
+                        : 'text-muted-foreground'
+                    )}
+                  />
+                )}
+                <span className="truncate">PR #{prNumber}</span>
+                {prDisplayStatus && (
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {getPrStatusDisplay(prDisplayStatus).label}
+                  </span>
+                )}
+              </DropdownMenuItem>
+            )}
+            {stackedOnPR && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  setMenuOpen(false)
+                  openPrByNumber(stackedOnPR.number)
+                }}
+              >
+                <GitPullRequestArrow className="h-4 w-4 text-muted-foreground" />
+                <span className="truncate">
+                  Stacked on #{stackedOnPR.number} {stackedOnPR.title}
+                </span>
+              </DropdownMenuItem>
+            )}
+          </>
         )}
 
         {hasContexts && (

@@ -18,6 +18,27 @@ pub use storage::{preserve_base_sessions, restore_base_sessions, with_sessions_m
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// End-of-turn recap instruction. Appended to every backend's system prompt so
+/// the assistant terminates multi-step turns with a single `## Recap` markdown
+/// block. The compact view in `CompactMessageList.tsx` extracts that block and
+/// renders it as the visible summary instead of the full latest assistant text.
+pub const RECAP_INSTRUCTION: &str = "## End-of-turn recap
+
+When you finish a turn that involved tool calls, edits, or multi-step work, end your response with a final markdown section like this:
+
+## Recap
+
+[If the user asked a question or requested a specific output, restate the actual answer/result here so the recap stands alone as the deliverable. Use a short paragraph, table, or list — whichever fits the answer best.]
+
+- 2-4 short bullets for context that doesn't fit above: caveats, follow-ups, unresolved questions, or files the user should review.
+
+Rules:
+- Heading must be the literal string `## Recap` on its own line.
+- Place it as the LAST block of the message, after any prose.
+- The recap is the user-facing deliverable — it must be self-contained. Include the actual answer/result inline. Do NOT write things like \"I looked it up\" or \"see above\" — restate the answer.
+- Skip the recap entirely if the turn was a single one-line answer with no tool calls.
+- Do NOT repeat tool inputs, file diffs, or raw command output verbatim. Summarize.";
+
 /// Global counter for active file tailers (sessions being streamed)
 static ACTIVE_TAILER_COUNT: once_cell::sync::Lazy<AtomicUsize> =
     once_cell::sync::Lazy::new(|| AtomicUsize::new(0));

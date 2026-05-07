@@ -101,7 +101,6 @@ describe('preferences service', () => {
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        session_recap_enabled: false,
         parallel_execution_prompt_enabled: false,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
@@ -164,6 +163,7 @@ describe('preferences service', () => {
         gh_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
+        auto_update_ai_backends: true,
       }
       vi.mocked(invoke).mockResolvedValueOnce(mockPreferences)
 
@@ -230,7 +230,6 @@ describe('preferences service', () => {
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        session_recap_enabled: false,
         parallel_execution_prompt_enabled: false,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
@@ -293,6 +292,7 @@ describe('preferences service', () => {
         gh_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
+        auto_update_ai_backends: true,
       }
       vi.mocked(invoke).mockResolvedValueOnce(prefsWithOldBinding)
 
@@ -331,7 +331,6 @@ describe('preferences service', () => {
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        session_recap_enabled: false,
         parallel_execution_prompt_enabled: false,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
@@ -395,6 +394,7 @@ describe('preferences service', () => {
         gh_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
+        auto_update_ai_backends: true,
       }
       vi.mocked(invoke).mockResolvedValueOnce(prefsWithDeprecatedFastModel)
 
@@ -434,7 +434,6 @@ describe('preferences service', () => {
         archive_retention_days: 7,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        session_recap_enabled: false,
         parallel_execution_prompt_enabled: false,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
@@ -497,6 +496,7 @@ describe('preferences service', () => {
         gh_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
+        auto_update_ai_backends: true,
       }
 
       const { result } = renderHook(() => useSavePreferences(), {
@@ -538,7 +538,6 @@ describe('preferences service', () => {
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        session_recap_enabled: false,
         parallel_execution_prompt_enabled: false,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
@@ -601,6 +600,7 @@ describe('preferences service', () => {
         gh_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
+        auto_update_ai_backends: true,
       }
 
       const { result } = renderHook(() => useSavePreferences(), {
@@ -642,7 +642,6 @@ describe('preferences service', () => {
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        session_recap_enabled: false,
         parallel_execution_prompt_enabled: false,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
@@ -705,6 +704,7 @@ describe('preferences service', () => {
         gh_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
+        auto_update_ai_backends: true,
       }
 
       const { result } = renderHook(() => useSavePreferences(), {
@@ -744,7 +744,6 @@ describe('preferences service', () => {
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        session_recap_enabled: false,
         parallel_execution_prompt_enabled: false,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
@@ -807,6 +806,7 @@ describe('preferences service', () => {
         gh_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
+        auto_update_ai_backends: true,
       }
 
       const { result } = renderHook(() => useSavePreferences(), {

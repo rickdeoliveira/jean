@@ -753,11 +753,7 @@ export function useMainWindowEventListeners() {
 
         listen('menu-toggle-browser', () => {
           logger.debug('Toggle browser menu event received from native menu')
-          executeKeybindingAction(
-            'toggle_browser',
-            commandContext,
-            queryClient
-          )
+          executeKeybindingAction('toggle_browser', commandContext, queryClient)
         }),
 
         // Branch naming events (automatic branch renaming based on first message)

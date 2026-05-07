@@ -3,6 +3,7 @@ import { Brain, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Markdown } from '@/components/ui/markdown'
 import type { ThinkingLevel } from '@/types/chat'
+import { TOOL_CALL_ROW_CLASS } from './ToolCallInline'
 
 interface ThinkingBlockProps {
   /** The thinking content to display */
@@ -23,8 +24,10 @@ export const ThinkingBlock = memo(function ThinkingBlock({
 }: ThinkingBlockProps) {
   return (
     <details className="group border border-border/50 rounded-md bg-muted/30">
-      <summary className="flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-        <Brain className={cn('h-3.5 w-3.5 text-purple-500')} />
+      <summary
+        className={cn(TOOL_CALL_ROW_CLASS, 'cursor-pointer hover:text-foreground transition-colors')}
+      >
+        <Brain className={cn('h-3.5 w-3.5 shrink-0 text-purple-500')} />
         <span>Thinking...</span>
         <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 transition-transform duration-200 group-open:rotate-90" />
       </summary>

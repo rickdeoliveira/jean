@@ -195,6 +195,8 @@ export interface Session {
   claude_session_id?: string
   /** Codex CLI thread ID for resuming conversations */
   codex_thread_id?: string
+  /** Codex /goal long-horizon objective (codex backend only) */
+  codex_goal?: string
   /** OpenCode session ID for resuming conversations */
   opencode_session_id?: string
   /** Cursor chat ID for resuming conversations */
@@ -254,8 +256,6 @@ export interface Session {
   pending_plan_message_id?: string
   /** Per-session MCP server override (undefined = inherit from project/global) */
   enabled_mcp_servers?: string[]
-  /** Persisted session digest (recap summary) */
-  digest?: SessionDigest
   /** Per-table checklist state: tableKey -> checked row indices */
   table_checked_rows?: Record<string, number[]>
   /** Unix timestamp when session was last opened/viewed by the user */
@@ -1330,25 +1330,6 @@ export interface SessionDebugInfo {
   run_log_files: RunLogFileInfo[]
   /** Total token usage across all runs in this session */
   total_usage: UsageData
-}
-
-// ============================================================================
-// Session Digest Types (for context recall after switching)
-// ============================================================================
-
-/**
- * A brief digest of a session for context recall
- * Generated when user opens a session that had activity while out of focus
- */
-export interface SessionDigest {
-  /** One sentence summarizing the overall chat goal and progress */
-  chat_summary: string
-  /** One sentence describing what was just completed */
-  last_action: string
-  /** When the digest was created (unix epoch seconds) */
-  created_at?: number
-  /** Number of messages when this digest was generated */
-  message_count?: number
 }
 
 /** User-assigned label with color for session cards */

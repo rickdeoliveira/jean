@@ -493,7 +493,10 @@ export const GeneralPane: React.FC = () => {
     const labelMap = {
       claude: { name: 'Claude CLI', cmd: 'uninstall_claude_cli' as const },
       codex: { name: 'Codex CLI', cmd: 'uninstall_codex_cli' as const },
-      opencode: { name: 'OpenCode CLI', cmd: 'uninstall_opencode_cli' as const },
+      opencode: {
+        name: 'OpenCode CLI',
+        cmd: 'uninstall_opencode_cli' as const,
+      },
       gh: { name: 'GitHub CLI', cmd: 'uninstall_gh_cli' as const },
     }
     const { name, cmd } = labelMap[target]
@@ -2651,6 +2654,22 @@ export const GeneralPane: React.FC = () => {
                 ))}
               </SelectContent>
             </Select>
+          </InlineField>
+
+          <InlineField
+            label="Auto-update AI backends"
+            description="Install Claude, Codex, OpenCode, and GitHub CLI updates in the background as soon as a new version is detected."
+          >
+            <Switch
+              checked={preferences?.auto_update_ai_backends ?? true}
+              onCheckedChange={checked => {
+                if (preferences) {
+                  patchPreferences.mutate({
+                    auto_update_ai_backends: checked,
+                  })
+                }
+              }}
+            />
           </InlineField>
         </div>
       </SettingsSection>

@@ -3,7 +3,6 @@ import {
   Code,
   FolderOpen,
   Play,
-  Sparkles,
   Terminal,
   Trash2,
   X,
@@ -51,7 +50,6 @@ export function WorktreeContextMenu({
     showDeleteConfirm,
     setShowDeleteConfirm,
     isBase,
-    hasMessages,
     runScripts,
     preferences,
     handleRun,
@@ -61,7 +59,6 @@ export function WorktreeContextMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
-    handleGenerateRecap,
   } = useWorktreeMenuActions({ worktree, projectId })
 
   // Suppress unused variable warning
@@ -95,13 +92,6 @@ export function WorktreeContextMenu({
               ))}
             </ContextMenuSubContent>
           </ContextMenuSub>
-        )}
-
-        {hasMessages && (
-          <ContextMenuItem onClick={handleGenerateRecap}>
-            <Sparkles className="mr-2 h-4 w-4" />
-            Generate Recap
-          </ContextMenuItem>
         )}
 
         {isNativeApp() && <ContextMenuSeparator />}

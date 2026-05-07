@@ -380,7 +380,7 @@ export const MessageItem = memo(function MessageItem({
                 <>
                   {fallbackAssistantIntro && (
                     <Markdown
-                      streaming={message.cancelled}
+                      streaming={message.cancelled ?? false}
                       messageId={message.id}
                       sessionId={sessionId}
                     >
@@ -433,7 +433,7 @@ export const MessageItem = memo(function MessageItem({
                               return (
                                 <div>
                                   <Markdown
-                                    streaming={message.cancelled}
+                                    streaming={message.cancelled ?? false}
                                     messageId={message.id}
                                     sessionId={sessionId}
                                   >
@@ -454,7 +454,7 @@ export const MessageItem = memo(function MessageItem({
                             }
                             return (
                               <Markdown
-                                streaming={message.cancelled}
+                                streaming={message.cancelled ?? false}
                                 messageId={message.id}
                                 sessionId={sessionId}
                               >
@@ -630,7 +630,7 @@ export const MessageItem = memo(function MessageItem({
         <>
           {message.role === 'assistant' && fallbackPrePlanText && (
             <Markdown
-              streaming={message.cancelled}
+              streaming={message.cancelled ?? false}
               messageId={message.id}
               sessionId={sessionId}
             >
@@ -672,7 +672,7 @@ export const MessageItem = memo(function MessageItem({
                 hasReviewFindings(displayContent) ? (
                   <>
                     <Markdown
-                      streaming={message.cancelled}
+                      streaming={message.cancelled ?? false}
                       messageId={message.id}
                       sessionId={sessionId}
                     >
@@ -693,7 +693,7 @@ export const MessageItem = memo(function MessageItem({
                   </div>
                 ) : (
                   <Markdown
-                    streaming={message.cancelled}
+                    streaming={message.cancelled ?? false}
                     messageId={message.id}
                     sessionId={sessionId}
                   >

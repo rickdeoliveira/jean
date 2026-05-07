@@ -16,7 +16,6 @@ import {
   GitBranchPlus,
   GitPullRequestArrow,
   Pencil,
-  Sparkles,
   Tag,
   Terminal,
   Globe,
@@ -242,7 +241,6 @@ export function SessionChatModal({
   // Canonical store state shared with canvas for consistent status derivation.
   const storeState = useCanvasStoreState()
   const planFilePaths = useChatStore(state => state.planFilePaths)
-  const sessionDigests = useChatStore(state => state.sessionDigests)
 
   // Compute card data once per session — same derivation as ProjectCanvasView,
   // so canvas badges and modal tab badges stay in sync.
@@ -253,12 +251,13 @@ export function SessionChatModal({
 
   const cardForSession = useCallback(
     (id: string | null | undefined) =>
-      id ? cards.find(c => c.session.id === id) ?? null : null,
+      id ? (cards.find(c => c.session.id === id) ?? null) : null,
     [cards]
   )
 
   // Track focused session's status so scroll fires when it changes position
-  const currentSessionStatus = cardForSession(currentSession?.id)?.status ?? null
+  const currentSessionStatus =
+    cardForSession(currentSession?.id)?.status ?? null
 
   // Auto-scroll active tab into view, including when modal opens or status changes
   useEffect(() => {
@@ -1008,8 +1007,6 @@ export function SessionChatModal({
                     const sessionLabel = chatState.sessionLabels[session.id]
                     const sessionHasPlan =
                       !!planFilePaths[session.id] || !!session.plan_file_path
-                    const sessionHasRecap =
-                      !!sessionDigests[session.id] || !!session.digest
                     const resumeCommand = getResumeCommand(session)
                     return (
                       <ContextMenu key={session.id}>
@@ -1165,22 +1162,6 @@ export function SessionChatModal({
                             </ContextMenuItem>
                           )}
                           <ContextMenuSeparator />
-                          <ContextMenuItem
-                            disabled={!sessionHasRecap}
-                            onSelect={() => {
-                              useChatStore
-                                .getState()
-                                .setActiveSession(worktreeId, session.id)
-                              requestAnimationFrame(() => {
-                                window.dispatchEvent(
-                                  new CustomEvent('open-recap')
-                                )
-                              })
-                            }}
-                          >
-                            <Sparkles className="mr-2 h-4 w-4" />
-                            Recap
-                          </ContextMenuItem>
                           <ContextMenuItem
                             disabled={!sessionHasPlan}
                             onSelect={() => {

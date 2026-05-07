@@ -249,9 +249,11 @@ export const BrowserTabContent = memo(function BrowserTabContent({
     if (!isNativeApp()) return
     const win = getCurrentWindow()
     let unlisten: (() => void) | null = null
-    void win.onScaleChanged(() => scheduleFlush()).then(fn => {
-      unlisten = fn
-    })
+    void win
+      .onScaleChanged(() => scheduleFlush())
+      .then(fn => {
+        unlisten = fn
+      })
     return () => {
       if (unlisten) unlisten()
     }

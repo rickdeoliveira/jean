@@ -777,12 +777,7 @@ export function useGitOperations({
     } catch (error) {
       toast.error(`Failed to merge PR: ${error}`, { id: mergePrToastId })
     }
-  }, [
-    activeWorktreeId,
-    worktree,
-    preferences?.removal_behavior,
-    queryClient,
-  ])
+  }, [activeWorktreeId, worktree, preferences?.removal_behavior, queryClient])
 
   // Handle Resolve Conflicts - detects existing merge conflicts and opens resolution session
   const handleResolveConflicts = useCallback(

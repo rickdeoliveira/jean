@@ -6,9 +6,7 @@ import type { PortEntry } from '@/services/projects'
  * so the embedded browser auto-points at the worktree's dev server.
  * Falls back to about:blank when no port is configured.
  */
-export function resolveDefaultTabUrl(
-  ports: PortEntry[] | undefined
-): string {
+export function resolveDefaultTabUrl(ports: PortEntry[] | undefined): string {
   const first = ports?.[0]
   if (!first) return 'about:blank'
   return `http://localhost:${first.port}`

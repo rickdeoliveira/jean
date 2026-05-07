@@ -28,7 +28,12 @@
         "alwaysOnTop": false,
         "transparent": true,
         "shadow": true,
-        "dragDropEnabled": true
+        "dragDropEnabled": true,
+        "windowEffects": {
+          "effects": ["sidebar"],
+          "radius": 12,
+          "state": "active"
+        }
       }
     ],
     "security": {

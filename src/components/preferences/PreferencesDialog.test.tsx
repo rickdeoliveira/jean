@@ -95,6 +95,40 @@ describe('PreferencesDialog', () => {
     })
   })
 
+  it('renders desktop settings navigation in grouped order', () => {
+    render(<PreferencesDialog />)
+
+    const dialog = screen.getByRole('dialog')
+    const navigationMenu = dialog.querySelector<HTMLElement>(
+      '[data-sidebar="menu"]'
+    )
+
+    if (!navigationMenu) {
+      throw new Error('Expected desktop navigation menu to be rendered')
+    }
+
+    expect(
+      within(navigationMenu)
+        .getAllByRole('button')
+        .map(button => button.textContent)
+    ).toEqual([
+      'General',
+      'Appearance',
+      'Keybindings',
+      'Magic Prompts',
+      'Opinionated',
+      'Providers',
+      'Web Access',
+      'MCP Servers',
+      'Integrations',
+      'Usage',
+      'Experimental',
+    ])
+    expect(
+      navigationMenu.querySelectorAll('[data-sidebar="separator"]')
+    ).toHaveLength(4)
+  })
+
   it('keeps the dialog open when Escape clears the desktop search', async () => {
     const user = userEvent.setup()
 

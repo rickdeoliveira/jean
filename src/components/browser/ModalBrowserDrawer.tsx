@@ -32,9 +32,7 @@ export const ModalBrowserDrawer = memo(function ModalBrowserDrawer({
   worktreeId,
   dockMode,
 }: ModalBrowserDrawerProps) {
-  const isOpen = useBrowserStore(
-    state => state.modalOpen[worktreeId] ?? false
-  )
+  const isOpen = useBrowserStore(state => state.modalOpen[worktreeId] ?? false)
   const activeDockMode = useBrowserStore(state => state.modalDockMode)
   const width = useBrowserStore(state => state.modalWidth)
   const height = useBrowserStore(state => state.modalHeight)

@@ -348,6 +348,9 @@ export const ChatToolbar = memo(function ChatToolbar({
           enabledMcpServers={enabledMcpServers}
           activeMcpCount={activeMcpCount}
           onToggleMcpServer={onToggleMcpServer}
+          prUrl={prUrl}
+          prNumber={prNumber}
+          prDisplayStatus={displayStatus}
           worktreeId={worktreeId}
           onAttach={onAttach}
         />

@@ -217,7 +217,8 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   setTabLoading: (tabId, loading) =>
     get().updateTab(tabId, { isLoading: loading }),
   setTabError: (tabId, error) => get().updateTab(tabId, { error }),
-  setRequestedUrl: (tabId, url) => get().updateTab(tabId, { requestedUrl: url }),
+  setRequestedUrl: (tabId, url) =>
+    get().updateTab(tabId, { requestedUrl: url }),
   setLastLoadedUrl: (tabId, url) =>
     get().updateTab(tabId, { lastLoadedUrl: url }),
 

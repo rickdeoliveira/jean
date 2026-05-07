@@ -33,7 +33,6 @@ describe('computeSessionCardData', () => {
       waitingForInputSessionIds: {},
       reviewingSessions: {},
       pendingPermissionDenials: {},
-      sessionDigests: {},
       sessionLabels: {},
       ...overrides,
     }

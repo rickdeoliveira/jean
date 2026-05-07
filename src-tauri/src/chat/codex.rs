@@ -700,6 +700,11 @@ pub fn execute_codex_via_server(
         }
     }
 
+    // If user set a `/goal` before the first turn, flush it to the server now
+    // that we have a real thread id. No-op when the session has no buffered
+    // goal or when this is a resume (the server already knows the goal).
+    super::commands::flush_pending_codex_goal(app, session_id, &thread_id);
+
     // Build turn params
     let turn_params = build_turn_start_params(
         &thread_id,
@@ -1573,6 +1578,24 @@ fn process_server_notification(
             }
             *completed = true;
             log::trace!("Codex turn completed for session: {session_id}");
+        }
+        "thread/goal/updated" => {
+            let goal = params
+                .get("goal")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Err(e) =
+                super::commands::persist_codex_goal(app, worktree_id, "", session_id, goal)
+            {
+                log::warn!("Failed to persist codex goal update: {e}");
+            }
+        }
+        "thread/goal/cleared" => {
+            if let Err(e) =
+                super::commands::persist_codex_goal(app, worktree_id, "", session_id, None)
+            {
+                log::warn!("Failed to persist codex goal clear: {e}");
+            }
         }
         "thread/tokenUsage/updated" => {
             // Extract usage data

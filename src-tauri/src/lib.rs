@@ -12,6 +12,7 @@ mod background_tasks;
 mod browser;
 mod chat;
 mod claude_cli;
+mod cli_update;
 mod codex_cli;
 mod cursor_cli;
 mod gh_cli;
@@ -119,8 +120,6 @@ pub struct AppPreferences {
     pub syntax_theme_dark: String, // Syntax highlighting theme for dark mode
     #[serde(default = "default_syntax_theme_light")]
     pub syntax_theme_light: String, // Syntax highlighting theme for light mode
-    #[serde(default = "default_session_recap_enabled")]
-    pub session_recap_enabled: bool, // Show session recap when returning to unfocused sessions
     #[serde(default = "default_parallel_execution_prompt_enabled")]
     pub parallel_execution_prompt_enabled: bool, // Add system prompt to encourage parallel sub-agent execution
     #[serde(default = "default_compact_chat_view_enabled")]
@@ -241,6 +240,8 @@ pub struct AppPreferences {
     pub expand_tool_calls_by_default: bool, // Expand all tool call collapsibles by default (default: false)
     #[serde(default)]
     pub window_vibrancy: bool, // macOS window vibrancy effect (high GPU cost, default false)
+    #[serde(default = "default_auto_update_ai_backends")]
+    pub auto_update_ai_backends: bool, // Automatically update AI backend CLIs when a new version is available
 }
 
 fn default_true() -> Option<bool> {
@@ -377,10 +378,6 @@ fn default_file_edit_mode() -> String {
     "external".to_string() // Default to external editor (VS Code, etc.)
 }
 
-fn default_session_recap_enabled() -> bool {
-    false // Disabled by default (experimental)
-}
-
 fn default_parallel_execution_prompt_enabled() -> bool {
     false // Disabled by default (experimental)
 }
@@ -391,6 +388,10 @@ fn default_compact_chat_view_enabled() -> bool {
 
 fn default_chrome_enabled() -> bool {
     true // Enabled by default
+}
+
+fn default_auto_update_ai_backends() -> bool {
+    true // Enabled by default — auto-install CLI updates in background
 }
 
 fn default_canvas_layout() -> String {
@@ -602,8 +603,6 @@ pub struct MagicPrompts {
     pub parallel_execution: Option<String>,
     #[serde(default)]
     pub global_system_prompt: Option<String>,
-    #[serde(default)]
-    pub session_recap: Option<String>,
     #[serde(default)]
     pub investigate_security_alert: Option<String>,
     #[serde(default)]
@@ -1009,6 +1008,51 @@ Respond with ONLY the raw JSON object, no markdown, no code fences, no explanati
         .to_string()
 }
 
+fn default_review_comments_prompt() -> String {
+    r#"<task>
+
+Address the following review comments from PR #{prNumber}
+
+</task>
+
+
+<review_comments>
+{reviewComments}
+</review_comments>
+
+
+<instructions>
+
+1. Read each review comment carefully, noting the file path, line numbers, and diff context
+2. Understand what the reviewer is asking for in each comment
+3. Make the requested changes to address each comment
+4. If a comment is unclear or you disagree with it, explain your reasoning
+5. After making changes, briefly summarize what you changed for each comment
+
+</instructions>
+
+
+<guidelines>
+
+- Be thorough but focused — address exactly what was requested
+- If a comment requires a larger refactor, explain the scope before proceeding
+- Run tests after making changes to ensure nothing is broken
+
+</guidelines>"#
+        .to_string()
+}
+
+fn default_parallel_execution_prompt() -> String {
+    r#"In plan mode, structure plans so subagents can work simultaneously. In build/execute mode, use subagents in parallel for faster implementation.
+
+When launching multiple Task subagents, prefer sending them in a single message rather than sequentially. Group independent work items (e.g., editing separate files, researching unrelated questions) into parallel Task calls. Only sequence Tasks when one depends on another's output.
+
+Instruct each sub-agent to briefly outline its approach before implementing, so it can course-correct early without formal plan mode overhead.
+
+When specifying subagent_type for Task tool calls, always use the fully qualified name exactly as listed in the system prompt (e.g., "code-simplifier:code-simplifier", not just "code-simplifier"). If the agent type contains a colon, include the full namespace:name string."#
+        .to_string()
+}
+
 fn default_global_system_prompt() -> String {
     r#"### 1. Plan Mode Default
 - Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
@@ -1073,65 +1117,6 @@ fn default_global_system_prompt() -> String {
         .to_string()
 }
 
-fn default_session_recap_prompt() -> String {
-    r#"You are a summarization assistant. Your ONLY job is to summarize the following conversation transcript. Do NOT continue the conversation or take any actions. Just summarize.
-
-CONVERSATION TRANSCRIPT:
-{conversation}
-
-END OF TRANSCRIPT.
-
-Now provide a brief summary with exactly two fields:
-- chat_summary: One sentence (max 100 chars) describing the overall goal and current status
-- last_action: One sentence (max 200 chars) describing what was just completed in the last exchange"#
-        .to_string()
-}
-
-fn default_review_comments_prompt() -> String {
-    r#"<task>
-
-Address the following review comments from PR #{prNumber}
-
-</task>
-
-
-<review_comments>
-{reviewComments}
-</review_comments>
-
-
-<instructions>
-
-1. Read each review comment carefully, noting the file path, line numbers, and diff context
-2. Understand what the reviewer is asking for in each comment
-3. Make the requested changes to address each comment
-4. If a comment is unclear or you disagree with it, explain your reasoning
-5. After making changes, briefly summarize what you changed for each comment
-
-</instructions>
-
-
-<guidelines>
-
-- Be thorough but focused — address exactly what was requested
-- If a comment requires a larger refactor, explain the scope before proceeding
-- Run tests after making changes to ensure nothing is broken
-
-</guidelines>"#
-        .to_string()
-}
-
-fn default_parallel_execution_prompt() -> String {
-    r#"In plan mode, structure plans so subagents can work simultaneously. In build/execute mode, use subagents in parallel for faster implementation.
-
-When launching multiple Task subagents, prefer sending them in a single message rather than sequentially. Group independent work items (e.g., editing separate files, researching unrelated questions) into parallel Task calls. Only sequence Tasks when one depends on another's output.
-
-Instruct each sub-agent to briefly outline its approach before implementing, so it can course-correct early without formal plan mode overhead.
-
-When specifying subagent_type for Task tool calls, always use the fully qualified name exactly as listed in the system prompt (e.g., "code-simplifier:code-simplifier", not just "code-simplifier"). If the agent type contains a colon, include the full namespace:name string."#
-        .to_string()
-}
-
 /// Per-prompt model overrides for magic prompts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MagicPromptModels {
@@ -1155,8 +1140,6 @@ pub struct MagicPromptModels {
     pub release_notes_model: String,
     #[serde(default = "default_sonnet_model")]
     pub session_naming_model: String,
-    #[serde(default = "default_sonnet_model")]
-    pub session_recap_model: String,
     #[serde(default = "default_model")]
     pub investigate_security_alert_model: String,
     #[serde(default = "default_model")]
@@ -1184,7 +1167,6 @@ impl Default for MagicPromptModels {
             resolve_conflicts_model: default_model(),
             release_notes_model: default_sonnet_model(),
             session_naming_model: default_sonnet_model(),
-            session_recap_model: default_sonnet_model(),
             investigate_security_alert_model: default_model(),
             investigate_advisory_model: default_model(),
             investigate_linear_issue_model: default_model(),
@@ -1267,8 +1249,6 @@ pub struct MagicPromptProviders {
     #[serde(default)]
     pub session_naming_provider: Option<String>,
     #[serde(default)]
-    pub session_recap_provider: Option<String>,
-    #[serde(default)]
     pub investigate_security_alert_provider: Option<String>,
     #[serde(default)]
     pub investigate_advisory_provider: Option<String>,
@@ -1301,8 +1281,6 @@ pub struct MagicPromptBackends {
     pub release_notes_backend: Option<String>,
     #[serde(default)]
     pub session_naming_backend: Option<String>,
-    #[serde(default)]
-    pub session_recap_backend: Option<String>,
     #[serde(default)]
     pub investigate_security_alert_backend: Option<String>,
     #[serde(default)]
@@ -1337,8 +1315,6 @@ pub struct MagicPromptReasoningEfforts {
     #[serde(default)]
     pub session_naming_effort: Option<String>,
     #[serde(default)]
-    pub session_recap_effort: Option<String>,
-    #[serde(default)]
     pub investigate_security_alert_effort: Option<String>,
     #[serde(default)]
     pub investigate_advisory_effort: Option<String>,
@@ -1353,7 +1329,7 @@ impl MagicPrompts {
     /// This ensures users who never customized a prompt get auto-updated defaults.
     fn migrate_defaults(&mut self) {
         type DefaultEntry<'a> = (fn() -> String, &'a mut Option<String>);
-        let defaults: [DefaultEntry; 17] = [
+        let defaults: [DefaultEntry; 16] = [
             (
                 default_investigate_issue_prompt,
                 &mut self.investigate_issue,
@@ -1378,7 +1354,6 @@ impl MagicPrompts {
                 &mut self.parallel_execution,
             ),
             (default_global_system_prompt, &mut self.global_system_prompt),
-            (default_session_recap_prompt, &mut self.session_recap),
             (
                 default_investigate_security_alert_prompt,
                 &mut self.investigate_security_alert,
@@ -1427,7 +1402,6 @@ impl Default for AppPreferences {
             archive_retention_days: default_archive_retention_days(),
             syntax_theme_dark: default_syntax_theme_dark(),
             syntax_theme_light: default_syntax_theme_light(),
-            session_recap_enabled: default_session_recap_enabled(),
             parallel_execution_prompt_enabled: default_parallel_execution_prompt_enabled(),
             compact_chat_view_enabled: default_compact_chat_view_enabled(),
             magic_prompts: MagicPrompts::default(),
@@ -1489,6 +1463,7 @@ impl Default for AppPreferences {
             gh_cli_source: default_cli_source(),
             expand_tool_calls_by_default: false,
             window_vibrancy: false,
+            auto_update_ai_backends: default_auto_update_ai_backends(),
         }
     }
 }
@@ -1540,10 +1515,6 @@ pub struct UIState {
     /// Whether the review sidebar is visible
     #[serde(default)]
     pub review_sidebar_visible: Option<bool>,
-
-    /// Session IDs that completed while out of focus, need digest on open
-    #[serde(default)]
-    pub pending_digest_session_ids: Vec<String>,
 
     /// Modal terminal drawer open state per worktree
     #[serde(default)]
@@ -1663,7 +1634,6 @@ impl Default for UIState {
             left_sidebar_visible: None,
             active_session_ids: std::collections::HashMap::new(),
             review_sidebar_visible: None,
-            pending_digest_session_ids: Vec::new(),
             modal_terminal_open: std::collections::HashMap::new(),
             modal_terminal_dock_mode: None,
             modal_terminal_pinned: None,
@@ -3418,6 +3388,9 @@ pub fn run() {
             chat::respond_codex_user_input_request,
             chat::respond_codex_mcp_elicitation,
             chat::respond_codex_dynamic_tool_call,
+            chat::codex_goal_set,
+            chat::codex_goal_get,
+            chat::codex_goal_clear,
             // Chat commands - Queue management (cross-client sync)
             chat::enqueue_message,
             chat::dequeue_message,
@@ -3451,9 +3424,6 @@ pub fn run() {
             chat::delete_context_file,
             chat::rename_saved_context,
             chat::generate_context_from_session,
-            // Chat commands - Session digest (context recall)
-            chat::generate_session_digest,
-            chat::update_session_digest,
             // Chat commands - Real-time setting sync
             chat::broadcast_session_setting,
             // Chat commands - Debug info
@@ -3498,6 +3468,8 @@ pub fn run() {
             gh_cli::get_available_gh_versions,
             gh_cli::install_gh_cli,
             gh_cli::uninstall_gh_cli,
+            // Generic CLI update command (path-installed CLIs)
+            cli_update::run_cli_path_update,
             // Background task commands
             background_tasks::commands::set_app_focus_state,
             background_tasks::commands::set_active_worktree_for_polling,

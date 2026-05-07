@@ -213,9 +213,7 @@ pub fn spawn_terminal(
             match std::str::from_utf8(bytes) {
                 Ok(_) => {
                     // SAFETY: validated above.
-                    let data = unsafe {
-                        String::from_utf8_unchecked(bytes.to_vec())
-                    };
+                    let data = unsafe { String::from_utf8_unchecked(bytes.to_vec()) };
                     let event = TerminalOutputEvent {
                         terminal_id: terminal_id_clone.clone(),
                         data,
@@ -234,9 +232,7 @@ pub fn spawn_terminal(
                         let valid_up_to = err.valid_up_to();
                         // SAFETY: from_utf8 verified [cursor..cursor+valid_up_to].
                         out.push_str(unsafe {
-                            std::str::from_utf8_unchecked(
-                                &bytes[cursor..cursor + valid_up_to],
-                            )
+                            std::str::from_utf8_unchecked(&bytes[cursor..cursor + valid_up_to])
                         });
                         match err.error_len() {
                             None => {
@@ -244,8 +240,7 @@ pub fn spawn_terminal(
                                 let tail_start = cursor + valid_up_to;
                                 let tail_len = total - tail_start;
                                 debug_assert!(tail_len <= 3);
-                                carry[..tail_len]
-                                    .copy_from_slice(&bytes[tail_start..total]);
+                                carry[..tail_len].copy_from_slice(&bytes[tail_start..total]);
                                 carry_len = tail_len;
                                 break;
                             }

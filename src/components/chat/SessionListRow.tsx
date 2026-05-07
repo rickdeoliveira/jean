@@ -6,7 +6,6 @@ import {
   FileText,
   Pencil,
   Shield,
-  Sparkles,
   Tag,
   Terminal,
   Trash2,
@@ -41,7 +40,6 @@ export const SessionListRow = forwardRef<HTMLDivElement, SessionCardProps>(
       onArchive,
       onDelete,
       onPlanView,
-      onRecapView,
       onApprove,
       onYolo,
       onClearContextApprove,
@@ -59,7 +57,6 @@ export const SessionListRow = forwardRef<HTMLDivElement, SessionCardProps>(
     ref
   ) {
     const config = statusConfig[card.status]
-    const hasRecap = card.hasRecap
     const hasPlan = !!(card.planFilePath || card.planContent)
     const resumeCommand = getResumeCommand(card.session)
     const renameInputRef = useCallback((node: HTMLInputElement | null) => {
@@ -282,10 +279,6 @@ export const SessionListRow = forwardRef<HTMLDivElement, SessionCardProps>(
             </ContextMenuItem>
           )}
           <ContextMenuSeparator />
-          <ContextMenuItem disabled={!hasRecap} onSelect={onRecapView}>
-            <Sparkles className="mr-2 h-4 w-4" />
-            Recap
-          </ContextMenuItem>
           <ContextMenuItem disabled={!hasPlan} onSelect={onPlanView}>
             <FileText className="mr-2 h-4 w-4" />
             Plan

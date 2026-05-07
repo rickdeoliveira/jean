@@ -511,8 +511,6 @@ fn build_claude_args(
         }
     }
 
-    // Explicit mode override for Claude so build/yolo do not fall back into plan mode
-    // due to the default global prompt.
     if let Some(mode_instruction) = execution_mode_instruction(execution_mode) {
         system_prompt_parts.push(mode_instruction.to_string());
     }
@@ -584,6 +582,9 @@ fn build_claude_args(
             ));
         }
     }
+
+    // End-of-turn recap instruction (compact view surfaces this block)
+    system_prompt_parts.push(super::RECAP_INSTRUCTION.to_string());
 
     // Collect all context files (issues and PRs) and concatenate into a single file
     let mut all_context_paths: Vec<std::path::PathBuf> = Vec::new();

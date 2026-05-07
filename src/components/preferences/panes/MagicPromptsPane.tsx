@@ -49,7 +49,6 @@ import {
   DEFAULT_RELEASE_NOTES_PROMPT,
   DEFAULT_REVIEW_COMMENTS_PROMPT,
   DEFAULT_SESSION_NAMING_PROMPT,
-  DEFAULT_SESSION_RECAP_PROMPT,
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
   DEFAULT_GLOBAL_SYSTEM_PROMPT,
   DEFAULT_MAGIC_PROMPTS,
@@ -423,36 +422,11 @@ const PROMPT_SECTIONS: PromptSection[] = [
         defaultValue: DEFAULT_SESSION_NAMING_PROMPT,
         defaultModel: 'sonnet',
       },
-      {
-        key: 'session_recap',
-        modelKey: 'session_recap_model',
-        providerKey: 'session_recap_provider',
-        backendKey: 'session_recap_backend',
-        label: 'Session Recap',
-        description:
-          'Prompt for generating session recaps (digests) when returning to unfocused sessions.',
-        variables: [
-          {
-            name: '{conversation}',
-            description: 'Full conversation transcript',
-          },
-        ],
-        defaultValue: DEFAULT_SESSION_RECAP_PROMPT,
-        defaultModel: 'sonnet',
-      },
     ],
   },
   {
     label: 'System Prompts',
     configs: [
-      {
-        key: 'global_system_prompt',
-        label: 'Global System Prompt',
-        description:
-          'Appended to every chat session. Works like ~/.claude/CLAUDE.md but managed in settings.',
-        variables: [],
-        defaultValue: DEFAULT_GLOBAL_SYSTEM_PROMPT,
-      },
       {
         key: 'parallel_execution',
         label: 'Parallel Execution',
@@ -460,6 +434,14 @@ const PROMPT_SECTIONS: PromptSection[] = [
           'System prompt appended to every chat session when enabled in Experimental settings. Encourages sub-agent parallelization.',
         variables: [],
         defaultValue: DEFAULT_PARALLEL_EXECUTION_PROMPT,
+      },
+      {
+        key: 'global_system_prompt',
+        label: 'Global System Prompt',
+        description:
+          'Global system prompt appended to every chat session (like ~/.claude/CLAUDE.md).',
+        variables: [],
+        defaultValue: DEFAULT_GLOBAL_SYSTEM_PROMPT,
       },
     ],
   },

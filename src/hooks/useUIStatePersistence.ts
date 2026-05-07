@@ -77,7 +77,6 @@ export function useUIStatePersistence() {
       lastActiveWorktreeId,
       activeSessionIds,
       reviewSidebarVisible,
-      pendingDigestSessionIds,
       lastOpenedPerProject,
     } = useChatStore.getState()
     const {
@@ -115,8 +114,6 @@ export function useUIStatePersistence() {
       active_session_ids: activeSessionIds,
       // Review sidebar visibility
       review_sidebar_visible: reviewSidebarVisible,
-      // Convert pendingDigestSessionIds record to array of session IDs
-      pending_digest_session_ids: Object.keys(pendingDigestSessionIds),
       // Modal terminal drawer state
       modal_terminal_open: modalTerminalOpen,
       modal_terminal_dock_mode: modalTerminalDockMode,
@@ -298,18 +295,6 @@ export function useUIStatePersistence() {
       useChatStore.setState({
         reviewSidebarVisible: uiState.review_sidebar_visible,
       })
-    }
-
-    // Restore pending digest session IDs (convert array to record with true values)
-    const pendingDigestSessionIds = uiState.pending_digest_session_ids ?? []
-    if (pendingDigestSessionIds.length > 0) {
-      logger.debug('Restoring pending digest session IDs', {
-        count: pendingDigestSessionIds.length,
-      })
-      const converted = Object.fromEntries(
-        pendingDigestSessionIds.map(id => [id, true])
-      )
-      useChatStore.setState({ pendingDigestSessionIds: converted })
     }
 
     // Restore modal terminal drawer state
@@ -542,8 +527,6 @@ export function useUIStatePersistence() {
     let prevLastActiveWorktreeId = useChatStore.getState().lastActiveWorktreeId
     let prevActiveSessionIds = useChatStore.getState().activeSessionIds
     let prevReviewSidebarVisible = useChatStore.getState().reviewSidebarVisible
-    let prevPendingDigestSessionIds =
-      useChatStore.getState().pendingDigestSessionIds
     let prevLastOpenedPerProject = useChatStore.getState().lastOpenedPerProject
     let prevModalTerminalOpen = useTerminalStore.getState().modalTerminalOpen
     let prevModalTerminalDockMode =
@@ -624,8 +607,6 @@ export function useUIStatePersistence() {
       const sessionsChanged = state.activeSessionIds !== prevActiveSessionIds
       const reviewSidebarChanged =
         state.reviewSidebarVisible !== prevReviewSidebarVisible
-      const pendingDigestChanged =
-        state.pendingDigestSessionIds !== prevPendingDigestSessionIds
       const lastOpenedChanged =
         state.lastOpenedPerProject !== prevLastOpenedPerProject
 
@@ -633,7 +614,6 @@ export function useUIStatePersistence() {
         worktreeChanged ||
         sessionsChanged ||
         reviewSidebarChanged ||
-        pendingDigestChanged ||
         lastOpenedChanged
       ) {
         prevWorktreeId = state.activeWorktreeId
@@ -641,7 +621,6 @@ export function useUIStatePersistence() {
         prevLastActiveWorktreeId = state.lastActiveWorktreeId
         prevActiveSessionIds = state.activeSessionIds
         prevReviewSidebarVisible = state.reviewSidebarVisible
-        prevPendingDigestSessionIds = state.pendingDigestSessionIds
         prevLastOpenedPerProject = state.lastOpenedPerProject
         const currentState = getCurrentUIState()
         debouncedSaveRef.current?.(currentState)

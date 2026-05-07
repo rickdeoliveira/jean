@@ -137,8 +137,7 @@ pub async fn dispatch_command(
                 field_opt(&args, "defaultProvider", "default_provider")?;
             let default_backend: Option<Option<String>> =
                 field_opt(&args, "defaultBackend", "default_backend")?;
-            let worktrees_dir: Option<String> =
-                field_opt(&args, "worktreesDir", "worktrees_dir")?;
+            let worktrees_dir: Option<String> = field_opt(&args, "worktreesDir", "worktrees_dir")?;
             let linear_api_key: Option<String> =
                 field_opt(&args, "linearApiKey", "linear_api_key")?;
             let linear_team_id: Option<String> =
@@ -1802,17 +1801,6 @@ pub async fn dispatch_command(
             emit_cache_invalidation(app, &["contexts"]);
             Ok(Value::Null)
         }
-        "generate_session_digest" => {
-            let session_id: String = field(&args, "sessionId", "session_id")?;
-            let result = crate::chat::generate_session_digest(app.clone(), session_id).await?;
-            to_value(result)
-        }
-        "update_session_digest" => {
-            let session_id: String = field(&args, "sessionId", "session_id")?;
-            let digest: crate::chat::types::SessionDigest = from_field(&args, "digest")?;
-            crate::chat::update_session_digest(app.clone(), session_id, digest).await?;
-            Ok(Value::Null)
-        }
         "get_session_debug_info" => {
             let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
@@ -1946,6 +1934,14 @@ pub async fn dispatch_command(
             crate::gh_cli::uninstall_gh_cli(app.clone()).await?;
             Ok(Value::Null)
         }
+        "run_cli_path_update" => {
+            let command: String = from_field(&args, "command")?;
+            let cli_args: Vec<String> = from_field(&args, "args")?;
+            let cli_type: String = field(&args, "cliType", "cli_type")?;
+            let result =
+                crate::cli_update::run_cli_path_update(command, cli_args, cli_type).await?;
+            to_value(result)
+        }
 
         // =====================================================================
         // HTTP Server control (additional)
@@ -2064,6 +2060,49 @@ pub async fn dispatch_command(
                 success,
                 content_items,
             )?;
+            Ok(Value::Null)
+        }
+        "codex_goal_set" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let objective: String = from_field(&args, "objective")?;
+            let app_clone = app.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::chat::codex_goal_set(
+                    app_clone,
+                    worktree_id,
+                    worktree_path,
+                    session_id,
+                    objective,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
+        "codex_goal_get" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let app_clone = app.clone();
+            let goal = tokio::task::spawn_blocking(move || {
+                crate::chat::codex_goal_get(app_clone, worktree_id, worktree_path, session_id)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            to_value(goal)
+        }
+        "codex_goal_clear" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let app_clone = app.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::chat::codex_goal_clear(app_clone, worktree_id, worktree_path, session_id)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
             Ok(Value::Null)
         }
 

@@ -101,7 +101,7 @@ const paneEntries: PreferenceSearchEntry[] = [
     paneTitle: 'Experimental',
     type: 'pane',
     title: 'Experimental',
-    keywords: ['beta', 'recap', 'debug'],
+    keywords: ['beta', 'debug'],
     anchorId: 'pref-pane-experimental',
   },
   {
@@ -383,11 +383,7 @@ const sectionEntries: PreferenceSearchEntry[] = [
     type: 'section',
     title: 'AI Behavior',
     sectionTitle: 'Experimental',
-    keywords: [
-      'parallel execution prompting',
-      'automatic session recap',
-      'recap model',
-    ],
+    keywords: ['parallel execution prompting'],
     anchorId: 'pref-experimental-section-ai-behavior',
     fallbackAnchorId: 'pref-pane-experimental',
   },
@@ -570,22 +566,16 @@ const magicPromptDefinitions: {
     keywords: ['session naming prompt'],
   },
   {
-    key: 'session_recap',
-    title: 'Session Recap Prompt',
-    description: 'Generate recaps when returning to sessions.',
-    keywords: ['session recap prompt', 'recap prompt'],
+    key: 'parallel_execution',
+    title: 'Parallel Execution Prompt',
+    description: 'System prompt encouraging sub-agent parallelization.',
+    keywords: ['parallel execution prompt', 'parallelization prompt'],
   },
   {
     key: 'global_system_prompt',
     title: 'Global System Prompt',
     description: 'System prompt applied to every session.',
     keywords: ['global system prompt', 'system prompt'],
-  },
-  {
-    key: 'parallel_execution',
-    title: 'Parallel Execution Prompt',
-    description: 'System prompt encouraging sub-agent parallelization.',
-    keywords: ['parallel execution prompt', 'parallelization prompt'],
   },
 ]
 

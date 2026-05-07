@@ -36,8 +36,6 @@ export interface UIState {
   active_session_ids: Record<string, string>
   /** Whether the review sidebar is visible */
   review_sidebar_visible?: boolean
-  /** Session IDs that completed while out of focus, need digest on open */
-  pending_digest_session_ids: string[]
   /** Modal terminal drawer open state per worktree */
   modal_terminal_open?: Record<string, boolean>
   /** Modal terminal dock mode */
@@ -92,7 +90,6 @@ export const defaultUIState: UIState = {
   left_sidebar_size: 250,
   left_sidebar_visible: false,
   active_session_ids: {},
-  pending_digest_session_ids: [],
   modal_terminal_open: {},
   modal_terminal_dock_mode: 'floating',
   modal_terminal_width: 400,

@@ -55,8 +55,6 @@ export interface MagicPrompts {
   parallel_execution: string | null
   /** Global system prompt appended to every chat session (like ~/.claude/CLAUDE.md) */
   global_system_prompt: string | null
-  /** Prompt for generating session recaps (digests) when returning to unfocused sessions */
-  session_recap: string | null
   /** Prompt for investigating Dependabot vulnerability alerts */
   investigate_security_alert: string | null
   /** Prompt for investigating repository security advisories */
@@ -484,6 +482,13 @@ Respond with ONLY the raw JSON object, no markdown, no code fences, no explanati
 {"session_name": "Your session name here"}
 </output_format>`
 
+export const DEFAULT_PARALLEL_EXECUTION_PROMPT = `In plan mode, structure plans so subagents can work simultaneously. In build/execute mode, use subagents in parallel for faster implementation.
+
+When launching multiple Task subagents, prefer sending them in a single message rather than sequentially. Group independent work items (e.g., editing separate files, researching unrelated questions) into parallel Task calls. Only sequence Tasks when one depends on another's output.
+
+Instruct each sub-agent to briefly outline its approach before implementing, so it can course-correct early without formal plan mode overhead.`
+
+/** Default global system prompt (must match DEFAULT_GLOBAL_SYSTEM_PROMPT in src-tauri) */
 export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Plan Mode Default
 - Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
@@ -545,24 +550,6 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Plan Mode Default
 
 - After each finished task, please write a few bullet points on how to test the changes.`
 
-export const DEFAULT_PARALLEL_EXECUTION_PROMPT = `In plan mode, structure plans so subagents can work simultaneously. In build/execute mode, use subagents in parallel for faster implementation.
-
-When launching multiple Task subagents, prefer sending them in a single message rather than sequentially. Group independent work items (e.g., editing separate files, researching unrelated questions) into parallel Task calls. Only sequence Tasks when one depends on another's output.
-
-Instruct each sub-agent to briefly outline its approach before implementing, so it can course-correct early without formal plan mode overhead.`
-
-/** Default prompt for session recap (digest) generation */
-export const DEFAULT_SESSION_RECAP_PROMPT = `You are a summarization assistant. Your ONLY job is to summarize the following conversation transcript. Do NOT continue the conversation or take any actions. Just summarize.
-
-CONVERSATION TRANSCRIPT:
-{conversation}
-
-END OF TRANSCRIPT.
-
-Now provide a brief summary with exactly two fields:
-- chat_summary: One sentence (max 100 chars) describing the overall goal and current status
-- last_action: One sentence (max 200 chars) describing what was just completed in the last exchange`
-
 /** Default prompt for addressing inline PR review comments */
 export const DEFAULT_REVIEW_COMMENTS_PROMPT = `<task>
 
@@ -609,7 +596,6 @@ export const DEFAULT_MAGIC_PROMPTS: MagicPrompts = {
   session_naming: null,
   parallel_execution: null,
   global_system_prompt: null,
-  session_recap: null,
   investigate_security_alert: null,
   investigate_advisory: null,
   investigate_linear_issue: null,
@@ -630,7 +616,6 @@ export interface MagicPromptModels {
   resolve_conflicts_model: MagicPromptModel
   release_notes_model: MagicPromptModel
   session_naming_model: MagicPromptModel
-  session_recap_model: MagicPromptModel
   investigate_security_alert_model: MagicPromptModel
   investigate_advisory_model: MagicPromptModel
   investigate_linear_issue_model: MagicPromptModel
@@ -652,7 +637,6 @@ export interface MagicPromptReasoningEfforts {
   resolve_conflicts_effort: MagicPromptReasoningEffort
   release_notes_effort: MagicPromptReasoningEffort
   session_naming_effort: MagicPromptReasoningEffort
-  session_recap_effort: MagicPromptReasoningEffort
   investigate_security_alert_effort: MagicPromptReasoningEffort
   investigate_advisory_effort: MagicPromptReasoningEffort
   investigate_linear_issue_effort: MagicPromptReasoningEffort
@@ -671,7 +655,6 @@ export const DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   resolve_conflicts_model: 'claude-opus-4-7',
   release_notes_model: 'sonnet',
   session_naming_model: 'sonnet',
-  session_recap_model: 'sonnet',
   investigate_security_alert_model: 'claude-opus-4-7',
   investigate_advisory_model: 'claude-opus-4-7',
   investigate_linear_issue_model: 'claude-opus-4-7',
@@ -690,7 +673,6 @@ export const CODEX_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   resolve_conflicts_model: 'gpt-5.4',
   release_notes_model: 'gpt-5.3-codex',
   session_naming_model: 'gpt-5.3-codex',
-  session_recap_model: 'gpt-5.3-codex',
   investigate_security_alert_model: 'gpt-5.4',
   investigate_advisory_model: 'gpt-5.4',
   investigate_linear_issue_model: 'gpt-5.4',
@@ -709,7 +691,6 @@ export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   resolve_conflicts_model: 'opencode/gpt-5.3-codex',
   release_notes_model: 'opencode/gpt-5.3-codex',
   session_naming_model: 'opencode/gpt-5.3-codex',
-  session_recap_model: 'opencode/gpt-5.3-codex',
   investigate_security_alert_model: 'opencode/gpt-5.3-codex',
   investigate_advisory_model: 'opencode/gpt-5.3-codex',
   investigate_linear_issue_model: 'opencode/gpt-5.3-codex',
@@ -728,7 +709,6 @@ export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   resolve_conflicts_effort: null,
   release_notes_effort: null,
   session_naming_effort: null,
-  session_recap_effort: null,
   investigate_security_alert_effort: null,
   investigate_advisory_effort: null,
   investigate_linear_issue_effort: null,
@@ -747,7 +727,6 @@ export const CODEX_DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   resolve_conflicts_effort: 'medium',
   release_notes_effort: 'low',
   session_naming_effort: 'low',
-  session_recap_effort: 'low',
   investigate_security_alert_effort: 'medium',
   investigate_advisory_effort: 'medium',
   investigate_linear_issue_effort: 'medium',
@@ -775,7 +754,6 @@ export interface MagicPromptProviders {
   resolve_conflicts_provider: string | null
   release_notes_provider: string | null
   session_naming_provider: string | null
-  session_recap_provider: string | null
   investigate_security_alert_provider: string | null
   investigate_advisory_provider: string | null
   investigate_linear_issue_provider: string | null
@@ -794,7 +772,6 @@ export const DEFAULT_MAGIC_PROMPT_PROVIDERS: MagicPromptProviders = {
   resolve_conflicts_provider: null,
   release_notes_provider: null,
   session_naming_provider: null,
-  session_recap_provider: null,
   investigate_security_alert_provider: null,
   investigate_advisory_provider: null,
   investigate_linear_issue_provider: null,
@@ -817,7 +794,6 @@ export interface MagicPromptBackends {
   resolve_conflicts_backend: string | null
   release_notes_backend: string | null
   session_naming_backend: string | null
-  session_recap_backend: string | null
   investigate_security_alert_backend: string | null
   investigate_advisory_backend: string | null
   investigate_linear_issue_backend: string | null
@@ -836,7 +812,6 @@ export const DEFAULT_MAGIC_PROMPT_BACKENDS: MagicPromptBackends = {
   resolve_conflicts_backend: null,
   release_notes_backend: null,
   session_naming_backend: null,
-  session_recap_backend: null,
   investigate_security_alert_backend: null,
   investigate_advisory_backend: null,
   investigate_linear_issue_backend: null,
@@ -855,7 +830,6 @@ function makeBackendsPreset(backend: string): MagicPromptBackends {
     resolve_conflicts_backend: backend,
     release_notes_backend: backend,
     session_naming_backend: backend,
-    session_recap_backend: backend,
     investigate_security_alert_backend: backend,
     investigate_advisory_backend: backend,
     investigate_linear_issue_backend: backend,
@@ -932,7 +906,6 @@ export interface AppPreferences {
   archive_retention_days: number // Days to keep archived items (0 = never delete)
   syntax_theme_dark: SyntaxTheme // Syntax highlighting theme for dark mode
   syntax_theme_light: SyntaxTheme // Syntax highlighting theme for light mode
-  session_recap_enabled: boolean // Show session recap when returning to unfocused sessions
   parallel_execution_prompt_enabled: boolean // Add system prompt to encourage parallel sub-agent execution
   compact_chat_view_enabled: boolean // Collapse intermediate tool calls/replies into a single ticker line, only showing the latest activity
   magic_prompts: MagicPrompts // Customizable prompts for AI-powered features
@@ -993,6 +966,7 @@ export interface AppPreferences {
   gh_cli_source: 'jean' | 'path' // GitHub CLI source: 'jean' (managed) or 'path' (system PATH)
   expand_tool_calls_by_default: boolean // Expand all tool call collapsibles by default
   window_vibrancy: boolean // macOS window vibrancy effect (high GPU cost, default false)
+  auto_update_ai_backends: boolean // Auto-install CLI updates in background when a new version is detected
 }
 
 export interface CustomCliProfile {
@@ -1532,7 +1506,6 @@ export const defaultPreferences: AppPreferences = {
   archive_retention_days: 7,
   syntax_theme_dark: 'vitesse-black',
   syntax_theme_light: 'github-light',
-  session_recap_enabled: false, // Default: disabled (experimental)
   parallel_execution_prompt_enabled: false, // Default: disabled (experimental)
   compact_chat_view_enabled: false, // Default: disabled (experimental)
   magic_prompts: DEFAULT_MAGIC_PROMPTS,
@@ -1592,4 +1565,5 @@ export const defaultPreferences: AppPreferences = {
   gh_cli_source: 'jean', // Default: Jean-managed
   expand_tool_calls_by_default: false, // Default: collapsed
   window_vibrancy: false, // Default: disabled (high GPU cost)
+  auto_update_ai_backends: true, // Default: auto-update AI backends in the background
 }

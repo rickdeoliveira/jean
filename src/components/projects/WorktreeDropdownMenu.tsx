@@ -12,7 +12,6 @@ import {
   Plus,
   Settings,
   ShieldAlert,
-  Sparkles,
   Terminal,
   Trash2,
   X,
@@ -87,7 +86,6 @@ export function WorktreeDropdownMenu({
     showDeleteConfirm,
     setShowDeleteConfirm,
     isBase,
-    hasMessages,
     runScripts,
     preferences,
     handleRun,
@@ -97,7 +95,6 @@ export function WorktreeDropdownMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
-    handleGenerateRecap,
   } = useWorktreeMenuActions({ worktree, projectId })
   const isMobile = useIsMobile()
   // On native desktop the auth query runs in App.tsx; on web/mobile access it doesn't.
@@ -227,13 +224,6 @@ export function WorktreeDropdownMenu({
             <Settings className="mr-2 h-4 w-4" />
             Project Settings
           </DropdownMenuItem>
-
-          {hasMessages && (
-            <DropdownMenuItem onClick={handleGenerateRecap}>
-              <Sparkles className="mr-2 h-4 w-4" />
-              Generate Recap
-            </DropdownMenuItem>
-          )}
 
           {hasGitHubStatusItems && <DropdownMenuSeparator />}
 
