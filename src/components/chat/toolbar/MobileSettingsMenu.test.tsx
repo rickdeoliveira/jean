@@ -32,6 +32,7 @@ const baseProps = {
   selectedProvider: null,
   backendModelLabel: 'Claude · Sonnet',
   backendModelLabelText: 'Claude · Sonnet',
+  hasMultipleBackendModelChoices: true,
   selectedEffortLevel: 'medium' as const,
   selectedThinkingLevel: 'think' as const,
   useAdaptiveThinking: false,
@@ -60,6 +61,35 @@ const baseProps = {
 }
 
 describe('MobileSettingsMenu', () => {
+  it('hides model row chevron when there is only one backend/model choice', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <MobileSettingsMenu
+        {...baseProps}
+        hasMultipleBackendModelChoices={false}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+
+    const modelItem = screen.getByText('Model').closest('[role="menuitem"]')
+    expect(modelItem?.querySelector('svg.lucide-chevron-right')).toBeNull()
+  })
+
+  it('shows MCP as a plain disabled row when no servers are configured', async () => {
+    const user = userEvent.setup()
+
+    render(<MobileSettingsMenu {...baseProps} availableMcpServers={[]} />)
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+
+    const mcpItem = screen.getByText('MCP').closest('[role="menuitem"]')
+    expect(mcpItem).toHaveAttribute('aria-disabled', 'true')
+    expect(mcpItem?.querySelector('svg.lucide-chevron-right')).toBeNull()
+    expect(screen.getByText('None')).toBeInTheDocument()
+  })
+
   it('opens backend/model picker via gear menu', async () => {
     const user = userEvent.setup()
     const onOpenBackendModelPicker = vi.fn()

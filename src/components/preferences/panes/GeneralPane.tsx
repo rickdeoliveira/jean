@@ -9,7 +9,7 @@ import React, {
 import { invoke } from '@/lib/transport'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Loader2, ChevronDown, Check, ChevronsUpDown, Play } from 'lucide-react'
+import { Loader2, Check, ChevronsUpDown, Play } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
@@ -1070,7 +1070,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     onClick={() => openCliUpdateModal('claude')}
                   >
                     {cliStatus.version ?? 'Installed'}
-                    <ChevronDown className="size-3" />
                   </Button>
                 )
               ) : (
@@ -1230,7 +1229,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     onClick={() => openCliUpdateModal('gh')}
                   >
                     {ghStatus.version ?? 'Installed'}
-                    <ChevronDown className="size-3" />
                   </Button>
                 )
               ) : (
@@ -1399,7 +1397,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     onClick={() => openCliUpdateModal('codex')}
                   >
                     {codexStatus.version ?? 'Installed'}
-                    <ChevronDown className="size-3" />
                   </Button>
                 )
               ) : (
@@ -1570,7 +1567,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     onClick={() => openCliUpdateModal('opencode')}
                   >
                     {opencodeStatus.version ?? 'Installed'}
-                    <ChevronDown className="size-3" />
                   </Button>
                 )
               ) : (

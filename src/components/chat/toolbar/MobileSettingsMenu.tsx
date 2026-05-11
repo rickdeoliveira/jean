@@ -88,6 +88,7 @@ interface MobileSettingsMenuProps {
   selectedProvider: string | null
   backendModelLabel: ReactNode
   backendModelLabelText: string
+  hasMultipleBackendModelChoices: boolean
   selectedEffortLevel: EffortLevel
   selectedThinkingLevel: ThinkingLevel
   hideThinkingLevel?: boolean
@@ -134,6 +135,7 @@ export function MobileSettingsMenu({
   selectedProvider,
   backendModelLabel,
   backendModelLabelText,
+  hasMultipleBackendModelChoices,
   selectedEffortLevel,
   selectedThinkingLevel,
   hideThinkingLevel,
@@ -310,6 +312,9 @@ export function MobileSettingsMenu({
     loadedAdvisoryContexts.length > 0 ||
     loadedLinearContexts.length > 0 ||
     attachedSavedContexts.length > 0
+  const hasToggleableMcpServers = availableMcpServers.some(
+    server => !server.disabled
+  )
 
   return (
     <DropdownMenu open={menuOpen} onOpenChange={handleOpenChange}>
@@ -373,7 +378,9 @@ export function MobileSettingsMenu({
           >
             {backendModelLabel}
           </span>
-          <ChevronRight className="ml-2 h-4 w-4 shrink-0 text-foreground" />
+          {hasMultipleBackendModelChoices && (
+            <ChevronRight className="ml-2 h-4 w-4 shrink-0 text-foreground" />
+          )}
         </DropdownMenuItem>
 
         {hideThinkingLevel ? null : useAdaptiveThinking || isCodex ? (
@@ -438,24 +445,24 @@ export function MobileSettingsMenu({
           </DropdownMenuSub>
         )}
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger className="[&>svg:last-child]:!ml-2">
-            <Plug
-              className={cn(
-                'mr-2 h-4 w-4',
-                activeMcpCount > 0
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : 'text-muted-foreground'
-              )}
-            />
-            <span>MCP</span>
-            <span className="ml-auto w-16 text-right text-xs text-muted-foreground">
-              {activeMcpCount > 0 ? `${activeMcpCount} on` : 'Off'}
-            </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent>
-            {availableMcpServers.length > 0 ? (
-              (() => {
+        {hasToggleableMcpServers ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="[&>svg:last-child]:!ml-2">
+              <Plug
+                className={cn(
+                  'mr-2 h-4 w-4',
+                  activeMcpCount > 0
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-muted-foreground'
+                )}
+              />
+              <span>MCP</span>
+              <span className="ml-auto w-16 text-right text-xs text-muted-foreground">
+                {activeMcpCount > 0 ? `${activeMcpCount} on` : 'Off'}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              {(() => {
                 const grouped = groupServersByBackend(availableMcpServers)
                 const backends = Object.keys(grouped) as CliBackend[]
                 const showHeaders = backends.length > 1
@@ -493,16 +500,16 @@ export function MobileSettingsMenu({
                     })}
                   </div>
                 ))
-              })()
-            ) : (
-              <DropdownMenuItem disabled>
-                <span className="text-xs text-muted-foreground">
-                  No MCP servers configured
-                </span>
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+              })()}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        ) : (
+          <DropdownMenuItem disabled>
+            <Plug className="mr-2 h-4 w-4 text-muted-foreground" />
+            <span>MCP</span>
+            <span className="ml-auto text-xs text-muted-foreground">None</span>
+          </DropdownMenuItem>
+        )}
 
         <DropdownMenuSeparator />
 

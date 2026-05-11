@@ -159,17 +159,23 @@ export const ChatToolbar = memo(function ChatToolbar({
       label: formatOpencodeModelLabel(model),
     })) ?? OPENCODE_MODEL_OPTIONS
 
-  const { isCodex, activeMcpCount, selectedModelLabel } =
+  const { isCodex, activeMcpCount, backendModelSections, selectedModelLabel } =
     useToolbarDerivedState({
       selectedBackend,
       selectedProvider,
       selectedModel,
       opencodeModelOptions,
       customCliProfiles,
+      installedBackends,
       availableMcpServers,
       enabledMcpServers,
     })
   const availableExecutionModes = getSupportedExecutionModes(selectedBackend)
+  const hasMultipleBackendModelChoices =
+    backendModelSections.reduce(
+      (count, section) => count + section.options.length,
+      0
+    ) > 1
 
   const backendModelLabel = useMemo(
     () => (
@@ -327,6 +333,7 @@ export const ChatToolbar = memo(function ChatToolbar({
           selectedProvider={selectedProvider}
           backendModelLabel={backendModelLabel}
           backendModelLabelText={backendModelLabelText}
+          hasMultipleBackendModelChoices={hasMultipleBackendModelChoices}
           selectedEffortLevel={selectedEffortLevel}
           selectedThinkingLevel={selectedThinkingLevel}
           hideThinkingLevel={hideThinkingLevel}
