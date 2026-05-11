@@ -431,6 +431,24 @@ fn default_cli_source() -> String {
     "jean".to_string()
 }
 
+fn maybe_auto_select_system_coderabbit(
+    app: &AppHandle,
+    preferences: &mut AppPreferences,
+    raw_preferences: Option<&Value>,
+) -> bool {
+    let coderabbit_source_missing = raw_preferences
+        .and_then(Value::as_object)
+        .map(|object| !object.contains_key("coderabbit_cli_source"))
+        .unwrap_or(true);
+
+    if coderabbit_source_missing && coderabbit_cli::should_auto_use_system_coderabbit(app) {
+        preferences.coderabbit_cli_source = "path".to_string();
+        return true;
+    }
+
+    false
+}
+
 fn default_codex_model() -> String {
     "gpt-5.5".to_string()
 }
@@ -1716,12 +1734,17 @@ pub fn get_preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
 pub fn load_preferences_sync(app: &AppHandle) -> Result<AppPreferences, String> {
     let prefs_path = get_preferences_path(app)?;
     if !prefs_path.exists() {
-        return Ok(AppPreferences::default());
+        let mut preferences = AppPreferences::default();
+        maybe_auto_select_system_coderabbit(app, &mut preferences, None);
+        return Ok(preferences);
     }
     let contents = std::fs::read_to_string(&prefs_path)
         .map_err(|e| format!("Failed to read preferences file: {e}"))?;
-    let preferences: AppPreferences =
+    let raw_preferences: Value =
         serde_json::from_str(&contents).map_err(|e| format!("Failed to parse preferences: {e}"))?;
+    let mut preferences: AppPreferences = serde_json::from_value(raw_preferences.clone())
+        .map_err(|e| format!("Failed to parse preferences: {e}"))?;
+    maybe_auto_select_system_coderabbit(app, &mut preferences, Some(&raw_preferences));
     Ok(preferences)
 }
 
@@ -1732,7 +1755,14 @@ async fn load_preferences(app: AppHandle) -> Result<AppPreferences, String> {
 
     if !prefs_path.exists() {
         log::trace!("Preferences file not found, using defaults");
-        return Ok(AppPreferences::default());
+        let mut preferences = AppPreferences::default();
+        if maybe_auto_select_system_coderabbit(&app, &mut preferences, None) {
+            if let Ok(json) = serde_json::to_string_pretty(&preferences) {
+                let _ = std::fs::write(&prefs_path, json);
+                log::trace!("Saved preferences after CodeRabbit PATH auto-detection");
+            }
+        }
+        return Ok(preferences);
     }
 
     let contents = std::fs::read_to_string(&prefs_path).map_err(|e| {
@@ -1740,10 +1770,15 @@ async fn load_preferences(app: AppHandle) -> Result<AppPreferences, String> {
         format!("Failed to read preferences file: {e}")
     })?;
 
-    let mut preferences: AppPreferences = serde_json::from_str(&contents).map_err(|e| {
+    let raw_preferences: Value = serde_json::from_str(&contents).map_err(|e| {
         log::error!("Failed to parse preferences JSON: {e}");
         format!("Failed to parse preferences: {e}")
     })?;
+    let mut preferences: AppPreferences =
+        serde_json::from_value(raw_preferences.clone()).map_err(|e| {
+            log::error!("Failed to parse preferences JSON: {e}");
+            format!("Failed to parse preferences: {e}")
+        })?;
 
     // Migrate magic prompts: convert prompts matching current defaults to None
     // so they auto-update when new defaults are shipped
@@ -1762,6 +1797,9 @@ async fn load_preferences(app: AppHandle) -> Result<AppPreferences, String> {
     needs_resave |= preferences.magic_prompt_models.migrate_legacy_defaults();
     if preferences.branch_naming_model == "haiku" {
         preferences.branch_naming_model = default_branch_naming_model();
+        needs_resave = true;
+    }
+    if maybe_auto_select_system_coderabbit(&app, &mut preferences, Some(&raw_preferences)) {
         needs_resave = true;
     }
     if preferences.session_naming_model == "haiku" {

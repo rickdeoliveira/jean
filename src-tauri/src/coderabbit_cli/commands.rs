@@ -7,8 +7,8 @@ use std::time::Duration;
 use tauri::AppHandle;
 
 use super::config::{
-    ensure_coderabbit_cli_dir, get_coderabbit_binary_path, get_coderabbit_cli_dir,
-    resolve_coderabbit_binary,
+    ensure_coderabbit_cli_dir, find_system_coderabbit_binary, get_coderabbit_binary_path,
+    get_coderabbit_cli_dir, resolve_coderabbit_binary,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,53 +90,21 @@ pub async fn check_coderabbit_cli_installed(app: AppHandle) -> Result<CodeRabbit
 
 #[tauri::command]
 pub async fn detect_coderabbit_in_path(app: AppHandle) -> Result<CodeRabbitPathDetection, String> {
-    let jean_managed_path = get_coderabbit_binary_path(&app)
-        .ok()
-        .and_then(|p| std::fs::canonicalize(&p).ok());
-    let which_cmd = if cfg!(target_os = "windows") {
-        "where"
-    } else {
-        "which"
-    };
-    let output = match silent_command(which_cmd).arg("coderabbit").output() {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string(),
-        _ => String::new(),
-    };
-
-    if output.is_empty() {
+    let Some(found_path) = find_system_coderabbit_binary(&app) else {
         return Ok(CodeRabbitPathDetection {
             found: false,
             path: None,
             version: None,
             package_manager: None,
         });
-    }
-
-    let found_path = std::path::PathBuf::from(&output);
-    if let Some(ref jean_path) = jean_managed_path {
-        if let Ok(canonical_found) = std::fs::canonicalize(&found_path) {
-            if canonical_found == *jean_path {
-                return Ok(CodeRabbitPathDetection {
-                    found: false,
-                    path: None,
-                    version: None,
-                    package_manager: None,
-                });
-            }
-        }
-    }
+    };
 
     let version = get_version(&found_path);
     let package_manager = crate::platform::detect_package_manager(&found_path);
 
     Ok(CodeRabbitPathDetection {
         found: true,
-        path: Some(output),
+        path: Some(found_path.to_string_lossy().to_string()),
         version,
         package_manager,
     })

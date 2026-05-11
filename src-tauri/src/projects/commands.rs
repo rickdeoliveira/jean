@@ -7618,6 +7618,87 @@ fn parse_coderabbit_review_output(output: &str) -> Result<ReviewResponse, String
     })
 }
 
+fn parse_coderabbit_json_line(line: &str) -> Option<serde_json::Value> {
+    let trimmed = line.trim();
+    let json_start = trimmed.find('{')?;
+    serde_json::from_str(&trimmed[json_start..]).ok()
+}
+
+fn coderabbit_event_message(value: &serde_json::Value) -> Option<String> {
+    let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if event_type != "error" {
+        return None;
+    }
+
+    value
+        .get("message")
+        .or_else(|| value.get("error"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(str::to_string)
+}
+
+fn normalize_coderabbit_error_message(message: &str) -> String {
+    static TOO_MANY_FILES_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?is)this\s+PR\s+contains\s+(\d+)\s+files,\s+which\s+is\s+(\d+)\s+over\s+the\s+limit\s+of\s+(\d+)",
+        )
+        .expect("valid CodeRabbit too-many-files regex")
+    });
+
+    let message = message.trim();
+    if let Some(captures) = TOO_MANY_FILES_RE.captures(message) {
+        return format!(
+            "CodeRabbit can review up to {} files; this PR has {} ({} over). Split the PR or reduce changed files.",
+            &captures[3], &captures[1], &captures[2]
+        );
+    }
+
+    message
+        .strip_prefix("Review failed:")
+        .unwrap_or(message)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn non_json_coderabbit_failure_lines(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| parse_coderabbit_json_line(line).is_none())
+        .filter(|line| *line != "[error] stopping cli")
+        .map(str::to_string)
+        .collect()
+}
+
+fn format_coderabbit_review_failure(exit_status: &str, stderr: &str, stdout: &str) -> String {
+    let structured_error = stderr
+        .lines()
+        .chain(stdout.lines())
+        .filter_map(parse_coderabbit_json_line)
+        .filter_map(|value| coderabbit_event_message(&value))
+        .next();
+
+    if let Some(message) = structured_error {
+        return normalize_coderabbit_error_message(&message);
+    }
+
+    let fallback = non_json_coderabbit_failure_lines(stderr)
+        .into_iter()
+        .chain(non_json_coderabbit_failure_lines(stdout))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if fallback.trim().is_empty() {
+        format!("CodeRabbit CLI failed ({exit_status})")
+    } else {
+        format!("CodeRabbit CLI failed ({exit_status}): {}", fallback.trim())
+    }
+}
+
 /// Run CodeRabbit CLI review on the current worktree.
 #[tauri::command]
 pub async fn run_coderabbit_review(
@@ -7680,16 +7761,11 @@ pub async fn run_coderabbit_review(
         if cancelled {
             return Err("Review cancelled".to_string());
         }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!(
-            "CodeRabbit CLI failed (exit {}): {}{}",
-            output.status,
-            stderr,
-            if stdout.trim().is_empty() {
-                String::new()
-            } else {
-                format!("\n{}", stdout.trim())
-            }
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(format_coderabbit_review_failure(
+            &output.status.to_string(),
+            &stderr,
+            &stdout,
         ));
     }
 
@@ -7712,6 +7788,47 @@ mod coderabbit_review_tests {
         assert_eq!(parsed.findings[0].severity, "warning");
         assert_eq!(parsed.findings[1].severity, "suggestion");
         assert_eq!(parsed.approval_status, "changes_requested");
+    }
+
+    #[test]
+    fn formats_too_many_files_error_without_jsonl_noise() {
+        let stdout = r#"{"type":"review_context","reviewType":"all","currentBranch":"api-sensitive-data-scrubber","baseBranch":"v4.x"}
+{"type":"status","phase":"connecting","status":"connecting_to_review_service"}
+{"type":"status","phase":"setup","status":"setting_up"}
+{"type":"error","errorType":"review","message":"Review failed: Too many files!\n\nThis PR contains 182 files, which is 32 over the limit of 150.","recoverable":false,"details":{}}"#;
+        let formatted =
+            format_coderabbit_review_failure("exit status: 1", "[error] stopping cli", stdout);
+
+        assert_eq!(
+            formatted,
+            "CodeRabbit can review up to 150 files; this PR has 182 (32 over). Split the PR or reduce changed files."
+        );
+        assert!(!formatted.contains("review_context"));
+        assert!(!formatted.contains("connecting_to_review_service"));
+    }
+
+    #[test]
+    fn formats_structured_error_from_stderr_before_stdout_status() {
+        let stderr = r#"{"type":"error","message":"Review failed: Authentication required.","recoverable":true}"#;
+        let stdout =
+            r#"{"type":"status","phase":"connecting","status":"connecting_to_review_service"}"#;
+        let formatted = format_coderabbit_review_failure("exit status: 1", stderr, stdout);
+
+        assert_eq!(formatted, "Authentication required.");
+    }
+
+    #[test]
+    fn formats_raw_failure_when_no_structured_error_exists() {
+        let formatted = format_coderabbit_review_failure(
+            "exit status: 1",
+            "network unavailable",
+            r#"{"type":"status","status":"setting_up"}"#,
+        );
+
+        assert_eq!(
+            formatted,
+            "CodeRabbit CLI failed (exit status: 1): network unavailable"
+        );
     }
 }
 
