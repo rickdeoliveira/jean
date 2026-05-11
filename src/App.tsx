@@ -53,6 +53,7 @@ import {
   endSessionStateHydration,
 } from './lib/session-state-hydration'
 import { scheduleIdleWork } from './lib/idle'
+import { checkWebClientVersion } from './lib/web-client-version'
 
 /** Loading screen shown while preloading initial data (browser mode only). */
 function WebLoadingScreen() {
@@ -436,6 +437,7 @@ function App() {
           logger.info('Preloaded initial data via HTTP', {
             projects: Array.isArray(data.projects) ? data.projects.length : 0,
           })
+          checkWebClientVersion(data)
           seedCache(data)
           ingestBootstrapEvents(data.replayEvents ?? [])
           setWsDataReady(true)
@@ -578,6 +580,7 @@ function App() {
       dataPromise
         .then(data => {
           if (data) {
+            checkWebClientVersion(data)
             seedCache(data)
             ingestBootstrapEvents(data.replayEvents ?? [])
             logger.info('Reconnect: re-seeded cache from HTTP')

@@ -13,6 +13,7 @@ import {
   codexDefaultModelOptions,
   CODEX_DEFAULT_MAGIC_PROMPT_MODELS,
   CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS,
+  DEFAULT_GLOBAL_SYSTEM_PROMPT,
   DEFAULT_MAGIC_PROMPTS,
   DEFAULT_MAGIC_PROMPT_MODELS,
   DEFAULT_MAGIC_PROMPT_PROVIDERS,
@@ -89,6 +90,19 @@ describe('model option helpers', () => {
       new Set(Object.values(CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS))
     ).toEqual(new Set(['gpt-5.5-fast']))
   })
+
+  it('documents Codex questions-tool answers must re-show the plan tool', () => {
+    expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain(
+      'backend-native interactive question UI'
+    )
+    expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain('Codex request_user_input')
+    expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain(
+      'after the user answers native `request_user_input`'
+    )
+    expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain(
+      'Every Codex plan-mode response'
+    )
+  })
 })
 
 describe('preferences service', () => {
@@ -99,7 +113,7 @@ describe('preferences service', () => {
     vi.clearAllMocks()
     // Mock Tauri environment
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      value: {},
+      value: { invoke: vi.fn() },
       configurable: true,
     })
   })
@@ -182,6 +196,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         default_codex_reasoning_effort: 'high',
+        codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
         codex_max_agent_threads: 3,
         restore_last_session: true,
@@ -312,6 +327,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         default_codex_reasoning_effort: 'high',
+        codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
         codex_max_agent_threads: 3,
         restore_last_session: true,
@@ -415,6 +431,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         default_codex_reasoning_effort: 'high',
+        codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
         codex_max_agent_threads: 3,
         restore_last_session: true,
@@ -518,6 +535,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         default_codex_reasoning_effort: 'high',
+        codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
         codex_max_agent_threads: 3,
         restore_last_session: true,
@@ -623,6 +641,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         default_codex_reasoning_effort: 'high',
+        codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
         codex_max_agent_threads: 3,
         restore_last_session: true,
@@ -728,6 +747,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         default_codex_reasoning_effort: 'high',
+        codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
         codex_max_agent_threads: 3,
         restore_last_session: true,
@@ -831,6 +851,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         default_codex_reasoning_effort: 'high',
+        codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
         codex_max_agent_threads: 3,
         restore_last_session: true,

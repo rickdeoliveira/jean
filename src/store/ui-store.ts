@@ -3,6 +3,11 @@ import { devtools } from 'zustand/middleware'
 
 export type PreferencePane =
   | 'general'
+  | 'claude'
+  | 'codex'
+  | 'opencode'
+  | 'cursor'
+  | 'github'
   | 'appearance'
   | 'keybindings'
   | 'magic-prompts'

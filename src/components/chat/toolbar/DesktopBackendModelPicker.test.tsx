@@ -19,13 +19,26 @@ vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 HTMLCanvasElement.prototype.getContext = vi.fn(() => null)
 Element.prototype.scrollIntoView = vi.fn()
 
+const modelMocks = vi.hoisted(() => ({
+  opencodeModels: ['openai/gpt-5.4', 'groq/compound-mini'],
+  cursorModels: [{ id: 'auto', label: 'Auto' }],
+}))
+
 vi.mock('@/services/opencode-cli', () => ({
   useAvailableOpencodeModels: () => ({
-    data: ['openai/gpt-5.4', 'groq/compound-mini'],
+    data: modelMocks.opencodeModels,
+  }),
+}))
+
+vi.mock('@/services/cursor-cli', () => ({
+  useAvailableCursorModels: () => ({
+    data: modelMocks.cursorModels,
   }),
 }))
 
 beforeEach(() => {
+  modelMocks.opencodeModels = ['openai/gpt-5.4', 'groq/compound-mini']
+  modelMocks.cursorModels = [{ id: 'auto', label: 'Auto' }]
   vi.stubGlobal(
     'matchMedia',
     vi.fn().mockImplementation(() => ({
@@ -47,6 +60,44 @@ beforeEach(() => {
 })
 
 describe('DesktopBackendModelPicker', () => {
+  it('hides the chevron when there is only one selectable backend/model choice', () => {
+    modelMocks.opencodeModels = ['openai/gpt-5.4']
+
+    render(
+      <DesktopBackendModelPicker
+        selectedBackend="opencode"
+        selectedModel="openai/gpt-5.4"
+        selectedProvider={null}
+        installedBackends={['opencode']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('backend-model-picker-chevron')).toBeNull()
+  })
+
+  it('shows the chevron when another selectable choice is available', () => {
+    modelMocks.opencodeModels = ['openai/gpt-5.4', 'groq/compound-mini']
+
+    render(
+      <DesktopBackendModelPicker
+        selectedBackend="opencode"
+        selectedModel="openai/gpt-5.4"
+        selectedProvider={null}
+        installedBackends={['opencode']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByTestId('backend-model-picker-chevron')
+    ).toBeInTheDocument()
+  })
+
   it('opens picker, lists backend tabs, and selects a model from another backend', async () => {
     const user = userEvent.setup()
     const onModelChange = vi.fn()
@@ -112,9 +163,8 @@ describe('DesktopBackendModelPicker', () => {
       screen.getByRole('button', { name: /choose backend and model/i })
     )
 
-    const searchInput = await screen.findByPlaceholderText(
-      /search codex models/i
-    )
+    const searchInput =
+      await screen.findByPlaceholderText(/search codex models/i)
     await user.type(searchInput, 'gpt 5.4')
     await user.click(screen.getByText('GPT 5.4'))
 

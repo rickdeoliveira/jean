@@ -33,6 +33,7 @@ import {
 import { MessageItem } from './MessageItem'
 import { AskUserQuestion } from './AskUserQuestion'
 import { buildTimeline } from './tool-call-utils'
+import { formatDuration, getAssistantDurationMs } from './time-utils'
 import {
   TOOL_CALL_ROW_CLASS,
   TOOL_CALL_DETAIL_PILL_CLASS,
@@ -113,6 +114,21 @@ function messageContainsPlan(message: ChatMessage): boolean {
 
 function messageContainsQuestion(message: ChatMessage): boolean {
   return Boolean(message.tool_calls?.some(isAskUserQuestion))
+}
+
+function isPureTextAssistantMessage(message: ChatMessage): boolean {
+  if (message.role !== 'assistant') return false
+  if ((message.tool_calls?.length ?? 0) > 0) return false
+
+  const blocks = message.content_blocks ?? []
+  if (blocks.some(block => block.type !== 'text')) return false
+
+  const blockText = blocks
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('')
+
+  return Boolean(blockText.trim() || message.content?.trim())
 }
 
 const RECAP_HEADING_RE = /^##\s+Recap\s*$/im
@@ -363,6 +379,15 @@ function CompactActivityRow({
   const summary = useMemo(() => summarizeGroup(group), [group])
   const stepCount = useMemo(() => countSteps(group), [group])
   const messageCount = group.length
+  const groupDurationMs = useMemo(() => {
+    for (let i = group.length - 1; i >= 0; i--) {
+      const item = group[i]
+      if (!item) continue
+      const duration = durationFor(item.globalIndex, item.message)
+      if (duration != null && duration > 0) return duration
+    }
+    return null
+  }, [group, durationFor])
 
   const renderGroup = useMemo(() => {
     if (!recapShownExternally) return group
@@ -431,6 +456,11 @@ function CompactActivityRow({
           </div>
         </CollapsibleContent>
       </div>
+      {groupDurationMs != null && (
+        <span className="mt-1 block min-h-4 text-xs leading-4 text-muted-foreground/40 tabular-nums font-mono">
+          {formatDuration(groupDurationMs)}
+        </span>
+      )}
       <span aria-hidden className="sr-only">
         Total: {total}
       </span>
@@ -558,9 +588,11 @@ function CompactQuestionMessage({
           />
         )
       })}
-      <span aria-hidden className="sr-only">
-        {durationMs ? `Duration ${durationMs}ms` : ''}
-      </span>
+      {durationMs != null && durationMs > 0 && (
+        <span className="mt-1 block min-h-4 text-xs leading-4 text-muted-foreground/40 tabular-nums font-mono">
+          {formatDuration(durationMs)}
+        </span>
+      )}
     </>
   )
 }
@@ -662,20 +694,14 @@ export const CompactMessageList = memo(
 
       const durationFor = useCallback(
         (globalIndex: number, message: ChatMessage): number | null => {
-          if (message.role !== 'assistant') return null
-          if (globalIndex === lastIndex && completedDurationMs) {
-            return completedDurationMs
-          }
-          if (globalIndex > 0) {
-            const prev = messages[globalIndex - 1]
-            if (prev?.role === 'user') {
-              const deltaSecs = message.timestamp - prev.timestamp
-              if (deltaSecs > 0 && deltaSecs < 3600) return deltaSecs * 1000
-            }
-          }
-          return null
+          if (message !== messages[globalIndex]) return null
+          return getAssistantDurationMs(
+            messages,
+            globalIndex,
+            completedDurationMs
+          )
         },
-        [messages, lastIndex, completedDurationMs]
+        [messages, completedDurationMs]
       )
 
       // Group messages into render items. Anything that should always render
@@ -995,6 +1021,40 @@ export const CompactMessageList = memo(
                     hasFollowUpFor={hasFollowUpFor}
                     durationFor={durationFor}
                   />
+                </div>
+              )
+            }
+
+            const singleMessage = item.messages[0]
+            if (
+              item.messages.length === 1 &&
+              singleMessage &&
+              isPureTextAssistantMessage(singleMessage.message)
+            ) {
+              const hasFollowUpMessage = hasFollowUpFor(
+                singleMessage.globalIndex
+              )
+              return (
+                <div
+                  key={singleMessage.message.id}
+                  ref={el => {
+                    if (el)
+                      messageRefs.current.set(singleMessage.globalIndex, el)
+                    else messageRefs.current.delete(singleMessage.globalIndex)
+                  }}
+                  className={
+                    singleMessage.globalIndex === lastIndex && isSending
+                      ? ''
+                      : 'pb-4'
+                  }
+                >
+                  {renderMessageItem(singleMessage, {
+                    hasFollowUpMessage,
+                    durationMs: durationFor(
+                      singleMessage.globalIndex,
+                      singleMessage.message
+                    ),
+                  })}
                 </div>
               )
             }

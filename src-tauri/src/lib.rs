@@ -206,6 +206,8 @@ pub struct AppPreferences {
     pub selected_cursor_model: String, // Default Cursor model
     #[serde(default = "default_codex_reasoning_effort")]
     pub default_codex_reasoning_effort: String, // Codex reasoning effort: low, medium, high, xhigh
+    #[serde(default = "default_codex_goal_execution_mode")]
+    pub codex_goal_execution_mode: String, // Codex /goal execution mode: build or yolo
     #[serde(default)]
     pub codex_multi_agent_enabled: bool, // Enable multi-agent collaboration (experimental)
     #[serde(default = "default_codex_max_agent_threads")]
@@ -442,6 +444,10 @@ fn default_codex_reasoning_effort() -> String {
     "high".to_string()
 }
 
+fn default_codex_goal_execution_mode() -> String {
+    "build".to_string()
+}
+
 fn default_codex_max_agent_threads() -> u32 {
     3
 }
@@ -489,8 +495,21 @@ fn resolve_http_server_bind_host(prefs: &AppPreferences) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_http_server_bind_host, AppPreferences};
+    use super::{default_global_system_prompt, resolve_http_server_bind_host, AppPreferences};
     use serde_json::json;
+
+    #[test]
+    fn default_global_system_prompt_prefers_interactive_plan_questions() {
+        let prompt = default_global_system_prompt();
+
+        assert!(prompt.contains("backend-native interactive question UI"));
+        assert!(prompt.contains("Codex request_user_input"));
+        assert!(prompt.contains("after the user answers native `request_user_input`"));
+        assert!(prompt.contains("Every Codex plan-mode response"));
+        assert!(prompt.contains("Claude AskUserQuestion"));
+        assert!(prompt.contains("OpenCode question"));
+        assert!(prompt.contains("Use a plain-text Unresolved Questions section only"));
+    }
 
     #[test]
     fn resolve_http_server_bind_host_prefers_explicit_host() {
@@ -1072,8 +1091,11 @@ fn default_global_system_prompt() -> String {
 - Use plan mode for verification steps, not just building
 - Write detailed specs upfront to reduce ambiguity
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
-- At the end of each plan, give me a list of unresolved questions to answer, if any.
-- In planning mode, present plans using the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- In planning mode, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- For unresolved questions in plan mode, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
+- For Codex specifically: after the user answers native `request_user_input`/open questions in plan mode, immediately call `update_plan`/emit `CodexPlan` again with the revised plan before any implementation.
+- Every Codex plan-mode response that contains or revises a plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.
+- Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
 
 ### 2. Documentation First
 - Before designing or coding against any external library/framework/SDK/API/CLI, run WebSearch for current docs.
@@ -1459,6 +1481,7 @@ impl Default for AppPreferences {
             selected_opencode_model: default_opencode_model(),
             selected_cursor_model: default_cursor_model(),
             default_codex_reasoning_effort: default_codex_reasoning_effort(),
+            codex_goal_execution_mode: default_codex_goal_execution_mode(),
             codex_multi_agent_enabled: false,
             codex_max_agent_threads: default_codex_max_agent_threads(),
             restore_last_session: true,
@@ -3425,15 +3448,22 @@ pub fn run() {
         .expect("error building tauri application")
         .run(move |app_handle, event| match &event {
             tauri::RunEvent::Exit => {
+                let has_running_sessions = chat::has_running_sessions();
                 eprintln!("[TERMINAL CLEANUP] RunEvent::Exit received");
                 let killed = terminal::cleanup_all_terminals();
                 eprintln!("[TERMINAL CLEANUP] Killed {killed} terminal(s)");
-                match opencode_server::shutdown_managed_server() {
-                    Ok(true) => eprintln!("[OPENCODE CLEANUP] Stopped managed OpenCode server"),
-                    Ok(false) => {}
-                    Err(e) => eprintln!("[OPENCODE CLEANUP] Failed during Exit: {e}"),
+                if has_running_sessions {
+                    log::warn!(
+                        "RunEvent::Exit while sessions are running; skipping managed AI server shutdown"
+                    );
+                } else {
+                    match opencode_server::shutdown_managed_server() {
+                        Ok(true) => eprintln!("[OPENCODE CLEANUP] Stopped managed OpenCode server"),
+                        Ok(false) => {}
+                        Err(e) => eprintln!("[OPENCODE CLEANUP] Failed during Exit: {e}"),
+                    }
+                    chat::codex_server::shutdown_server();
                 }
-                chat::codex_server::shutdown_server();
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 // In headless mode, prevent exit when window closes

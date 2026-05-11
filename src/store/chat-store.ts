@@ -2843,6 +2843,10 @@ export const useChatStore = create<ChatUIState>()(
               pendingPermissionDenials,
               deniedMessageContext,
               sendStartedAt: sendStartedAtRest,
+              completedDurations:
+                sendStarted > 0
+                  ? { ...state.completedDurations, [sessionId]: elapsed }
+                  : state.completedDurations,
               reviewingSessions: {
                 ...state.reviewingSessions,
                 [sessionId]: true,
@@ -2886,6 +2890,8 @@ export const useChatStore = create<ChatUIState>()(
             const { [sessionId]: _mcp, ...restMcp } = state.enabledMcpServers
             const { [sessionId]: _label, ...restLabels } = state.sessionLabels
             const { [sessionId]: _goal, ...restCodexGoals } = state.codexGoals
+            const { [sessionId]: _duration, ...restDurations } =
+              state.completedDurations
 
             return {
               approvedTools: restApproved,
@@ -2905,6 +2911,7 @@ export const useChatStore = create<ChatUIState>()(
               enabledMcpServers: restMcp,
               sessionLabels: restLabels,
               codexGoals: restCodexGoals,
+              completedDurations: restDurations,
             }
           },
           undefined,

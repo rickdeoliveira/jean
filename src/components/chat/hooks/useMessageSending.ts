@@ -44,6 +44,7 @@ interface UseMessageSendingParams {
         magic_prompts?: { parallel_execution?: string | null }
         chrome_enabled?: boolean
         ai_language?: string
+        codex_goal_execution_mode?: 'build' | 'yolo'
       }
     | undefined
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -341,7 +342,7 @@ export function useMessageSending({
 
   // Form submit handler
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault()
 
       const {
@@ -357,6 +358,7 @@ export function useMessageSending({
         enqueueMessage,
         isSending: checkIsSendingNow,
         setSessionReviewing,
+        setExecutionMode,
       } = useChatStore.getState()
       const liveInputValue = inputRef.current?.value
       const textMessage = (
@@ -392,11 +394,10 @@ export function useMessageSending({
       }
 
       let message = textMessage
+      let startedCodexGoalTurn = false
       // Intercept Codex /goal slash. /goal alone and /goal clear are
-      // pure RPC calls (no turn); /goal <objective> sets the goal AND
-      // sends the objective as the next user turn so codex starts working
-      // toward it immediately.
-      let pendingGoalSet: Promise<void> | null = null
+      // pure RPC calls (no turn); /goal <objective> sets the goal, switches
+      // to the configured goal execution mode, and starts a turn immediately.
       if (
         selectedBackendRef.current === 'codex' &&
         /^\/goal(\s|$)/.test(textMessage)
@@ -427,32 +428,32 @@ export function useMessageSending({
             worktreeId,
             worktreePath,
             sessionId,
-          })
-            .then(() => toast.success('Goal cleared'))
-            .catch(err => toast.error(`/goal failed: ${err}`))
+          }).catch(err => toast.error(`/goal failed: ${err}`))
           return
         }
 
-        // /goal <objective>: persist goal, then fall through to send `arg`
-        // as the user's next turn. Awaiting the RPC before sendMessageNow
-        // avoids a race where thread/start runs before Session.codex_goal
-        // is persisted and flush_pending_codex_goal misses it.
-        pendingGoalSet = (async () => {
-          try {
-            await invoke('codex_goal_set', {
-              worktreeId,
-              worktreePath,
-              sessionId,
-              objective: arg,
-            })
-            toast.success('Goal set')
-          } catch (err) {
-            toast.error(`/goal failed: ${err}`)
-          }
-        })()
-        message = arg
+        // /goal <objective>: persist goal, then start work in the configured
+        // mode so the active goal is not left as passive metadata.
+        try {
+          await invoke('codex_goal_set', {
+            worktreeId,
+            worktreePath,
+            sessionId,
+            objective: arg,
+          })
+        } catch (err) {
+          toast.error(`/goal failed: ${err}`)
+          return
+        }
+        const configuredGoalMode = preferences?.codex_goal_execution_mode
+        const goalMode: ExecutionMode =
+          configuredGoalMode === 'yolo' ? 'yolo' : 'build'
+        setExecutionMode(sessionId, goalMode)
+        executionModeRef.current = goalMode
+        message = `Work toward the active goal:\n\n${arg}`
+        startedCodexGoalTurn = true
       }
-      if (textMessage.startsWith('/')) {
+      if (!startedCodexGoalTurn && textMessage.startsWith('/')) {
         const slashName = textMessage.slice(1).split(/\s/)[0] ?? ''
         const params = textMessage.slice(1 + slashName.length).trim()
         const claudeSkills =
@@ -553,11 +554,7 @@ export function useMessageSending({
         return
       }
 
-      if (pendingGoalSet) {
-        void pendingGoalSet.then(() => sendMessageNow(queuedMessage))
-      } else {
-        sendMessageNow(queuedMessage)
-      }
+      sendMessageNow(queuedMessage)
     },
     [
       activeSessionId,

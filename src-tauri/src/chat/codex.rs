@@ -949,6 +949,49 @@ fn emit_codex_done(app: &tauri::AppHandle, session_id: &str, worktree_id: &str) 
     );
 }
 
+fn run_was_explicitly_cancelled(app: &tauri::AppHandle, session_id: &str, run_id: &str) -> bool {
+    super::storage::load_metadata(app, session_id)
+        .ok()
+        .flatten()
+        .and_then(|metadata| {
+            metadata
+                .runs
+                .iter()
+                .find(|run| run.run_id == run_id)
+                .map(|run| run.status == super::types::RunStatus::Cancelled || run.cancelled)
+        })
+        .unwrap_or(false)
+}
+
+fn persist_codex_recovered_completion_state(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    run_id: &str,
+) -> Result<(), String> {
+    let Some(mut metadata) = super::storage::load_metadata(app, session_id)? else {
+        return Ok(());
+    };
+
+    let is_plan_mode = metadata
+        .runs
+        .iter()
+        .find(|run| run.run_id == run_id)
+        .and_then(|run| run.execution_mode.as_deref())
+        == Some("plan");
+
+    if is_plan_mode {
+        metadata.waiting_for_input = true;
+        metadata.waiting_for_input_type = Some("plan".to_string());
+        metadata.is_reviewing = false;
+    } else {
+        metadata.waiting_for_input = false;
+        metadata.waiting_for_input_type = None;
+        metadata.is_reviewing = true;
+    }
+
+    super::storage::save_metadata(app, &metadata)
+}
+
 /// Resume a Codex session after Jean crashed.
 ///
 /// Spawns a new app-server (if needed), calls `thread/resume` to reconnect
@@ -1064,13 +1107,24 @@ pub fn resume_codex_after_crash(
                             );
                         }
                     } else if response.cancelled {
-                        if let Err(e) = writer.cancel(Some(&assistant_message_id), None) {
-                            log::error!("Failed to cancel run after Codex crash recovery: {e}");
+                        if run_was_explicitly_cancelled(app, session_id, run_id) {
+                            if let Err(e) = writer.cancel(Some(&assistant_message_id), None) {
+                                log::error!("Failed to cancel run after Codex crash recovery: {e}");
+                            }
+                        } else if let Err(e) = writer.crash() {
+                            log::error!(
+                                "Recovered Codex turn was interrupted without user cancel; \
+                                 failed to mark run crashed: {e}"
+                            );
                         }
                     } else if let Err(e) =
                         writer.complete(&assistant_message_id, None, response.usage)
                     {
                         log::error!("Failed to complete run after crash recovery: {e}");
+                    } else if let Err(e) =
+                        persist_codex_recovered_completion_state(app, session_id, run_id)
+                    {
+                        log::error!("Failed to persist Codex recovered completion state: {e}");
                     }
                 }
 
@@ -1122,8 +1176,17 @@ pub fn resume_codex_after_crash(
             if disposition == CodexResumeDisposition::Interrupted {
                 if let Ok(mut writer) = RunLogWriter::resume(app, session_id, run_id) {
                     let assistant_message_id = uuid::Uuid::new_v4().to_string();
-                    if let Err(e) = writer.cancel(Some(&assistant_message_id), None) {
-                        log::error!("Failed to cancel interrupted Codex run during recovery: {e}");
+                    if run_was_explicitly_cancelled(app, session_id, run_id) {
+                        if let Err(e) = writer.cancel(Some(&assistant_message_id), None) {
+                            log::error!(
+                                "Failed to cancel interrupted Codex run during recovery: {e}"
+                            );
+                        }
+                    } else if let Err(e) = writer.crash() {
+                        log::error!(
+                            "Recovered Codex turn was interrupted without user cancel; \
+                             failed to mark run crashed: {e}"
+                        );
                     }
                 }
                 emit_codex_done(app, session_id, worktree_id);
@@ -1137,6 +1200,10 @@ pub fn resume_codex_after_crash(
                     let assistant_message_id = uuid::Uuid::new_v4().to_string();
                     if let Err(e) = writer.complete(&assistant_message_id, None, None) {
                         log::error!("Failed to complete run during crash recovery: {e}");
+                    } else if let Err(e) =
+                        persist_codex_recovered_completion_state(app, session_id, run_id)
+                    {
+                        log::error!("Failed to persist Codex recovered completion state: {e}");
                     }
                 }
                 emit_codex_done(app, session_id, worktree_id);
@@ -1149,6 +1216,10 @@ pub fn resume_codex_after_crash(
                 let assistant_message_id = uuid::Uuid::new_v4().to_string();
                 if let Err(e) = writer.complete(&assistant_message_id, None, None) {
                     log::error!("Failed to complete run during crash recovery: {e}");
+                } else if let Err(e) =
+                    persist_codex_recovered_completion_state(app, session_id, run_id)
+                {
+                    log::error!("Failed to persist Codex recovered completion state: {e}");
                 }
             }
             emit_codex_done(app, session_id, worktree_id);
@@ -1890,10 +1961,7 @@ fn process_server_notification(
             log::trace!("Codex turn completed for session: {session_id}");
         }
         "thread/goal/updated" => {
-            let goal = params
-                .get("goal")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let goal = super::commands::extract_codex_goal_objective(params);
             if let Err(e) =
                 super::commands::persist_codex_goal(app, worktree_id, "", session_id, goal)
             {

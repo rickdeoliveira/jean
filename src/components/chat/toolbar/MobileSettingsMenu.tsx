@@ -56,6 +56,7 @@ import { copyToClipboard } from '@/lib/clipboard'
 import { invoke } from '@/lib/transport'
 import { isNativeApp } from '@/lib/environment'
 import {
+  CODEX_EFFORT_LEVEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
@@ -165,6 +166,15 @@ export function MobileSettingsMenu({
   worktreeId,
   onAttach,
 }: MobileSettingsMenuProps) {
+  const effortLevelOptions = isCodex
+    ? CODEX_EFFORT_LEVEL_OPTIONS
+    : EFFORT_LEVEL_OPTIONS
+  const displayedEffortLevel =
+    isCodex && selectedEffortLevel === 'max' ? 'high' : selectedEffortLevel
+  const displayedEffortLabel =
+    effortLevelOptions.find(o => o.value === displayedEffortLevel)?.label ??
+    displayedEffortLevel
+
   const isMobile = useIsMobile()
   const queryClient = useQueryClient()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -372,19 +382,15 @@ export function MobileSettingsMenu({
               <Brain className="mr-2 h-4 w-4 text-muted-foreground" />
               <span>Effort</span>
               <span className="ml-auto w-16 text-right text-xs text-muted-foreground">
-                {
-                  EFFORT_LEVEL_OPTIONS.find(
-                    o => o.value === selectedEffortLevel
-                  )?.label
-                }
+                {displayedEffortLabel}
               </span>
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               <DropdownMenuRadioGroup
-                value={selectedEffortLevel}
+                value={displayedEffortLevel}
                 onValueChange={handleEffortLevelChange}
               >
-                {EFFORT_LEVEL_OPTIONS.map(option => (
+                {effortLevelOptions.map(option => (
                   <DropdownMenuRadioItem
                     key={option.value}
                     value={option.value}

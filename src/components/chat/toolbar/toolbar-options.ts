@@ -46,3 +46,7 @@ export const EFFORT_LEVEL_OPTIONS: {
   { value: 'xhigh', label: 'xHigh', description: 'Extra high' },
   { value: 'max', label: 'Max', description: 'No limits' },
 ]
+
+export const CODEX_EFFORT_LEVEL_OPTIONS = EFFORT_LEVEL_OPTIONS.filter(
+  option => option.value !== 'max'
+)

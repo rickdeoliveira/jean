@@ -10,11 +10,11 @@ vi.mock('@/hooks/use-mobile', () => ({
 
 type ResizeObserverCallback = ConstructorParameters<typeof ResizeObserver>[0]
 
-let resizeObserverCallback: ResizeObserverCallback | null = null
+let resizeObserverCallbacks: ResizeObserverCallback[] = []
 
 class ResizeObserverMock {
   constructor(callback: ResizeObserverCallback) {
-    resizeObserverCallback = callback
+    resizeObserverCallbacks.push(callback)
   }
 
   observe = vi.fn()
@@ -39,19 +39,24 @@ function defineReadonlyNumber(
   })
 }
 
-function setupHook() {
+interface SetupHookOptions {
+  isSending?: boolean
+}
+
+function setupHook({ isSending = true }: SetupHookOptions = {}) {
   const virtualizedListRef = { current: null }
 
   function TestHarness() {
-    const { scrollViewportRef } = useScrollManagement({
+    const { isAtBottom, scrollViewportRef } = useScrollManagement({
       messages: [],
       virtualizedListRef,
       activeWorktreeId: 'worktree-1',
-      isSending: true,
+      isSending,
     })
 
     return (
       <div ref={scrollViewportRef} data-testid="viewport">
+        <span data-testid="is-at-bottom">{String(isAtBottom)}</span>
         <div data-testid="content">
           <div data-plan-display data-testid="plan" />
         </div>
@@ -72,7 +77,9 @@ function setupHook() {
 
 async function triggerResize() {
   await act(async () => {
-    resizeObserverCallback?.([], {} as ResizeObserver)
+    for (const callback of resizeObserverCallbacks) {
+      callback([], {} as ResizeObserver)
+    }
   })
   await act(async () => {
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
@@ -82,7 +89,7 @@ async function triggerResize() {
 describe('useScrollManagement streaming auto-scroll', () => {
   beforeEach(() => {
     isMobile = false
-    resizeObserverCallback = null
+    resizeObserverCallbacks = []
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
@@ -133,5 +140,48 @@ describe('useScrollManagement streaming auto-scroll', () => {
     await triggerResize()
 
     expect(viewport.scrollTop).toBe(1500)
+  })
+
+  it('keeps non-scrollable chats at bottom after upward wheel gestures', () => {
+    const { getByTestId, viewport } = setupHook({ isSending: false })
+    defineReadonlyNumber(viewport, 'clientHeight', 600)
+    defineReadonlyNumber(viewport, 'scrollHeight', 500)
+
+    act(() => {
+      viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    })
+
+    expect(getByTestId('is-at-bottom')).toHaveTextContent('true')
+  })
+
+  it('marks scrollable chats as away from bottom after upward wheel gestures', () => {
+    const { getByTestId, viewport } = setupHook({ isSending: false })
+    defineReadonlyNumber(viewport, 'clientHeight', 400)
+    defineReadonlyNumber(viewport, 'scrollHeight', 2000)
+    viewport.scrollTop = 1500
+
+    act(() => {
+      viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    })
+
+    expect(getByTestId('is-at-bottom')).toHaveTextContent('false')
+  })
+
+  it('resets stale away-from-bottom state when content no longer overflows', async () => {
+    const { getByTestId, viewport } = setupHook({ isSending: false })
+    defineReadonlyNumber(viewport, 'clientHeight', 400)
+    defineReadonlyNumber(viewport, 'scrollHeight', 2000)
+    viewport.scrollTop = 1500
+
+    act(() => {
+      viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    })
+
+    expect(getByTestId('is-at-bottom')).toHaveTextContent('false')
+
+    defineReadonlyNumber(viewport, 'scrollHeight', 350)
+    await triggerResize()
+
+    expect(getByTestId('is-at-bottom')).toHaveTextContent('true')
   })
 })

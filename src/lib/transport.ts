@@ -146,6 +146,8 @@ export interface InitialData {
   preferences: unknown
   uiState: unknown
   appDataDir?: string
+  webBuildId?: string
+  appVersion?: string
 }
 
 let initialDataPromise: Promise<InitialData | null> | null = null

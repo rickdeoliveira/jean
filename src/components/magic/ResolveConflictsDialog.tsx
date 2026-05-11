@@ -390,6 +390,11 @@ export function ResolveConflictsDialog({
                   >
                     <SelectTrigger
                       size="sm"
+                      hideIcon={
+                        installedBackends.filter(backend =>
+                          ['claude', 'codex', 'opencode'].includes(backend)
+                        ).length <= 1
+                      }
                       onClick={() => setResolveSelectionMode('custom')}
                     >
                       <SelectValue />
@@ -417,7 +422,10 @@ export function ResolveConflictsDialog({
                       setCustomResolveModel(value)
                     }}
                   >
-                    <SelectTrigger size="sm">
+                    <SelectTrigger
+                      size="sm"
+                      hideIcon={customResolveModelOptions.length <= 1}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

@@ -956,7 +956,11 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                   value={effectiveBackend}
                   onValueChange={handleBackendChange}
                 >
-                  <SelectTrigger size="sm" className="w-[120px] text-xs">
+                  <SelectTrigger
+                    size="sm"
+                    className="w-[120px] text-xs"
+                    hideIcon={installedBackends.length <= 1}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1041,7 +1045,16 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                           )
                         })()}
                       </span>
-                      <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
+                      {(effectiveBackend === 'claude'
+                        ? filteredClaudeOptions
+                        : effectiveBackend === 'codex'
+                          ? CODEX_MODEL_OPTIONS
+                          : effectiveBackend === 'cursor'
+                            ? cursorModelOptions
+                            : opencodeModelOptions
+                      ).length > 1 && (
+                        <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
+                      )}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent

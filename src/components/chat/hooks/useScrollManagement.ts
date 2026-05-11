@@ -44,6 +44,24 @@ interface UseScrollManagementReturn {
   endKeyboardScroll: () => void
 }
 
+const BOTTOM_THRESHOLD_PX = 100
+const SCROLL_EPSILON_PX = 2
+
+function hasScrollableOverflow(viewport: HTMLDivElement) {
+  return viewport.scrollHeight - viewport.clientHeight > SCROLL_EPSILON_PX
+}
+
+function isViewportAtBottom(viewport: HTMLDivElement) {
+  if (!hasScrollableOverflow(viewport)) {
+    return true
+  }
+
+  return (
+    viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
+    BOTTOM_THRESHOLD_PX
+  )
+}
+
 function scrollToTail(viewport: HTMLDivElement) {
   viewport.scrollTop = viewport.scrollHeight
 }
@@ -142,6 +160,18 @@ export function useScrollManagement({
           scrollTimeoutRef.current = null
         }
         isAutoScrollingRef.current = false
+
+        // Trackpads can emit upward wheel events even when the chat content
+        // does not overflow. In that case no real scroll-away happened, so keep
+        // the viewport logically pinned to the bottom and avoid showing the
+        // floating "Bottom" button.
+        if (!hasScrollableOverflow(viewport)) {
+          userScrollUpUntilRef.current = 0
+          isAtBottomRef.current = true
+          setIsAtBottom(prev => (prev ? prev : true))
+          return
+        }
+
         isAtBottomRef.current = false
         setIsAtBottom(false)
         userScrollUpUntilRef.current = Date.now() + 1000
@@ -153,6 +183,40 @@ export function useScrollManagement({
 
     viewport.addEventListener('wheel', handleWheel, { passive: true })
     return () => viewport.removeEventListener('wheel', handleWheel)
+  }, [])
+
+  // Keep scroll state honest when content/viewport size changes. If the chat no
+  // longer overflows (short message list, window got taller, content collapsed),
+  // it is necessarily at the bottom. This clears stale "scrolled away" state
+  // without changing behavior for genuinely scrollable chats.
+  useEffect(() => {
+    const viewport = scrollViewportRef.current
+    if (!viewport) return
+
+    let rafId = 0
+    const syncNonScrollableState = () => {
+      cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        if (!hasScrollableOverflow(viewport)) {
+          userScrollUpUntilRef.current = 0
+          isAtBottomRef.current = true
+          setIsAtBottom(prev => (prev ? prev : true))
+        }
+      })
+    }
+
+    syncNonScrollableState()
+
+    const observer = new ResizeObserver(syncNonScrollableState)
+    observer.observe(viewport)
+    if (viewport.firstElementChild) {
+      observer.observe(viewport.firstElementChild)
+    }
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      observer.disconnect()
+    }
   }, [])
 
   // [Tier 2 + 5] Auto-scroll during streaming using ResizeObserver.
@@ -308,9 +372,7 @@ export function useScrollManagement({
     }
 
     const target = e.target as HTMLDivElement
-    const { scrollTop, scrollHeight, clientHeight } = target
-    // Consider "at bottom" if within 100px of the bottom
-    const atBottom = scrollHeight - scrollTop - clientHeight < 100
+    const atBottom = isViewportAtBottom(target)
 
     // During cooldown after user scrolled up, only allow transitions to NOT-at-bottom
     if (Date.now() < userScrollUpUntilRef.current && atBottom) {
@@ -420,8 +482,7 @@ export function useScrollManagement({
     isAutoScrollingRef.current = false
     const viewport = scrollViewportRef.current
     if (viewport) {
-      const { scrollTop, scrollHeight, clientHeight } = viewport
-      const atBottom = scrollHeight - scrollTop - clientHeight < 100
+      const atBottom = isViewportAtBottom(viewport)
       isAtBottomRef.current = atBottom
       setIsAtBottom(prev => (prev === atBottom ? prev : atBottom))
     }

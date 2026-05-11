@@ -647,8 +647,12 @@ export function ChatWindow({
   const sessionEffortLevel = useChatStore(state =>
     deferredSessionId ? state.effortLevels[deferredSessionId] : undefined
   )
-  const selectedEffortLevel: EffortLevel =
+  const rawSelectedEffortLevel: EffortLevel =
     sessionEffortLevel ?? defaultEffortLevel
+  const selectedEffortLevel: EffortLevel =
+    isCodexBackend && rawSelectedEffortLevel === 'max'
+      ? 'high'
+      : rawSelectedEffortLevel
 
   // MCP servers: resolve enabled servers cascade (session → project → global)
   // Fetches from ALL installed backends so toolbar shows grouped sections

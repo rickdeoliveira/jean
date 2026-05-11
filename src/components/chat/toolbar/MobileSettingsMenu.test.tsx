@@ -103,9 +103,11 @@ describe('MobileSettingsMenu', () => {
 
   it('renders worktree PR row when prUrl + prNumber set; click opens externally', async () => {
     const user = userEvent.setup()
-    const openSpy = vi.spyOn(platform, 'openExternal').mockImplementation(() => {
-      return undefined as unknown as ReturnType<typeof platform.openExternal>
-    })
+    const openSpy = vi
+      .spyOn(platform, 'openExternal')
+      .mockImplementation(() => {
+        return undefined as unknown as ReturnType<typeof platform.openExternal>
+      })
 
     render(
       <MobileSettingsMenu
@@ -137,5 +139,44 @@ describe('MobileSettingsMenu', () => {
     await user.click(screen.getByRole('button', { name: /settings/i }))
 
     expect(screen.queryByText('Linked')).not.toBeInTheDocument()
+  })
+
+  it('hides Claude-only Max effort for Codex', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <MobileSettingsMenu
+        {...baseProps}
+        selectedBackend="codex"
+        backendModelLabel="Codex · GPT 5.5"
+        backendModelLabelText="Codex · GPT 5.5"
+        selectedEffortLevel="max"
+        useAdaptiveThinking={false}
+        isCodex
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByText('Effort'))
+
+    expect(screen.getByText('xHigh')).toBeInTheDocument()
+    expect(screen.queryByText('Max')).not.toBeInTheDocument()
+  })
+
+  it('keeps Max effort available for Claude adaptive thinking', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <MobileSettingsMenu
+        {...baseProps}
+        selectedEffortLevel="max"
+        useAdaptiveThinking
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByText('Effort'))
+
+    expect(screen.getAllByText('Max').length).toBeGreaterThan(0)
   })
 })

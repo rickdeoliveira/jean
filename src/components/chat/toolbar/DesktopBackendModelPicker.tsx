@@ -10,10 +10,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import {
-  getModelFastInfo,
-  type CustomCliProfile,
-} from '@/types/preferences'
+import { getModelFastInfo, type CustomCliProfile } from '@/types/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
 import { cn } from '@/lib/utils'
@@ -90,7 +87,7 @@ export function DesktopBackendModelPicker({
     [availableCursorModels]
   )
 
-  const { selectedModelLabel } = useToolbarDerivedState({
+  const { backendModelSections, selectedModelLabel } = useToolbarDerivedState({
     selectedBackend,
     selectedProvider,
     selectedModel,
@@ -99,6 +96,15 @@ export function DesktopBackendModelPicker({
     customCliProfiles,
     installedBackends,
   })
+
+  const selectableChoiceCount = useMemo(
+    () =>
+      backendModelSections
+        .filter(section => installedBackends.includes(section.backend))
+        .reduce((count, section) => count + section.options.length, 0),
+    [backendModelSections, installedBackends]
+  )
+  const hasMultipleChoices = selectableChoiceCount > 1
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     setOpen(nextOpen)
@@ -140,7 +146,12 @@ export function DesktopBackendModelPicker({
                   Tab
                 </Kbd>
               )}
-              <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+              {hasMultipleChoices && (
+                <ChevronsUpDown
+                  className="h-3.5 w-3.5 shrink-0 opacity-50"
+                  data-testid="backend-model-picker-chevron"
+                />
+              )}
             </button>
           </PopoverTrigger>
         </TooltipTrigger>

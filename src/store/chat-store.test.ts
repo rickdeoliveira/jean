@@ -35,6 +35,7 @@ describe('ChatStore', () => {
       worktreePaths: {},
       sendingSessionIds: {},
       sendStartedAt: {},
+      completedDurations: {},
       waitingForInputSessionIds: {},
       sessionWorktreeMap: {},
       streamingContents: {},
@@ -249,7 +250,40 @@ describe('ChatStore', () => {
       const state = useChatStore.getState()
       expect(state.sendingSessionIds['session-1']).toBeUndefined()
       expect(state.sendStartedAt['session-1']).toBeUndefined()
+      expect(state.completedDurations['session-1']).toBeGreaterThanOrEqual(0)
       expect(state.reviewingSessions['session-1']).toBe(true)
+    })
+
+    it('stores completed duration when a session completes', () => {
+      const nowSpy = vi.spyOn(Date, 'now')
+      nowSpy.mockReturnValueOnce(10_000).mockReturnValueOnce(25_000)
+
+      const { addSendingSession, completeSession } = useChatStore.getState()
+      addSendingSession('session-1')
+
+      useChatStore.setState({
+        streamingContents: { 'session-1': 'Done' },
+      })
+
+      completeSession('session-1')
+
+      const state = useChatStore.getState()
+      expect(state.completedDurations['session-1']).toBe(15_000)
+      expect(state.sendStartedAt['session-1']).toBeUndefined()
+
+      nowSpy.mockRestore()
+    })
+
+    it('clears previous completed duration when a new send starts', () => {
+      useChatStore.setState({
+        completedDurations: { 'session-1': 12_000 },
+      })
+
+      useChatStore.getState().addSendingSession('session-1', 20_000)
+
+      const state = useChatStore.getState()
+      expect(state.completedDurations['session-1']).toBeUndefined()
+      expect(state.sendStartedAt['session-1']).toBe(20_000)
     })
 
     it('blocks fast completion when no current streaming state exists', () => {
@@ -299,9 +333,28 @@ describe('ChatStore', () => {
       const state = useChatStore.getState()
       expect(state.sendingSessionIds['session-1']).toBeUndefined()
       expect(state.sendStartedAt['session-1']).toBeUndefined()
+      expect(state.completedDurations['session-1']).toBeGreaterThanOrEqual(0)
       expect(state.pendingPermissionDenials['session-1']).toBeUndefined()
       expect(state.deniedMessageContext['session-1']).toBeUndefined()
       expect(state.reviewingSessions['session-1']).toBe(true)
+    })
+
+    it('stores completed duration when a session fails after running', () => {
+      const nowSpy = vi.spyOn(Date, 'now')
+      nowSpy.mockReturnValueOnce(30_000)
+
+      useChatStore.setState({
+        sendingSessionIds: { 'session-1': true },
+        sendStartedAt: { 'session-1': 20_000 },
+      })
+
+      useChatStore.getState().failSession('session-1')
+
+      expect(useChatStore.getState().completedDurations['session-1']).toBe(
+        10_000
+      )
+
+      nowSpy.mockRestore()
     })
   })
 
