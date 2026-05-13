@@ -372,7 +372,8 @@ pub fn cancel_process(
         // This makes the in-flight blocking POST return immediately.
         if let Some(oc_sid) = entry.opencode_session_id {
             if let Some(base_url) = crate::opencode_server::get_current_url() {
-                let interrupt_url = format!("{base_url}/session/{oc_sid}/interrupt");
+                // sst/opencode renamed the endpoint to `/abort` in v1.14.x (HttpApi migration).
+                let interrupt_url = format!("{base_url}/session/{oc_sid}/abort");
                 let working_dir = entry.working_dir.clone();
                 std::thread::spawn(move || {
                     log::info!("OpenCode: sending interrupt to {interrupt_url}");
@@ -514,7 +515,8 @@ pub fn cancel_process_if_running(
         // Fire-and-forget interrupt
         if let Some(oc_sid) = entry.opencode_session_id {
             if let Some(base_url) = crate::opencode_server::get_current_url() {
-                let interrupt_url = format!("{base_url}/session/{oc_sid}/interrupt");
+                // sst/opencode renamed the endpoint to `/abort` in v1.14.x (HttpApi migration).
+                let interrupt_url = format!("{base_url}/session/{oc_sid}/abort");
                 let working_dir = entry.working_dir.clone();
                 std::thread::spawn(move || {
                     log::info!("OpenCode: sending interrupt to {interrupt_url}");

@@ -272,6 +272,39 @@ struct SharedSseSubscriberEntry {
 struct SharedSseListenerState {
     connected: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
+    disabled_until: Arc<Mutex<Option<Instant>>>,
+}
+
+const OPENCODE_SSE_BASE_RECONNECT_DELAY: Duration = Duration::from_millis(250);
+const OPENCODE_SSE_MAX_RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const OPENCODE_SSE_SHORT_LIVED_THRESHOLD: Duration = Duration::from_secs(2);
+const OPENCODE_SSE_MAX_SHORT_LIVED_DISCONNECTS: u32 = 3;
+const OPENCODE_SSE_DISABLED_COOLDOWN: Duration = Duration::from_secs(60);
+
+fn shared_sse_reconnect_delay(short_lived_disconnects: u32) -> Duration {
+    if short_lived_disconnects == 0 {
+        return OPENCODE_SSE_BASE_RECONNECT_DELAY;
+    }
+    let exp = short_lived_disconnects.saturating_sub(1).min(5);
+    let multiplier = 1_u32.checked_shl(exp).unwrap_or(32);
+    OPENCODE_SSE_BASE_RECONNECT_DELAY
+        .saturating_mul(multiplier)
+        .min(OPENCODE_SSE_MAX_RECONNECT_DELAY)
+}
+
+fn listener_in_cooldown(state: &SharedSseListenerState) -> bool {
+    let guard = lock_recover(&state.disabled_until, "OPENCODE_SSE_DISABLED_UNTIL");
+    matches!(*guard, Some(deadline) if deadline > Instant::now())
+}
+
+fn mark_listener_cooldown(state: &SharedSseListenerState) {
+    let mut guard = lock_recover(&state.disabled_until, "OPENCODE_SSE_DISABLED_UNTIL");
+    *guard = Some(Instant::now() + OPENCODE_SSE_DISABLED_COOLDOWN);
+}
+
+fn clear_listener_cooldown(state: &SharedSseListenerState) {
+    let mut guard = lock_recover(&state.disabled_until, "OPENCODE_SSE_DISABLED_UNTIL");
+    *guard = None;
 }
 
 struct SharedSseCoordinator {
@@ -404,12 +437,22 @@ fn get_or_create_listener_state(working_dir: &str) -> SharedSseListenerState {
         .or_insert_with(|| SharedSseListenerState {
             connected: Arc::new(AtomicBool::new(false)),
             running: Arc::new(AtomicBool::new(false)),
+            disabled_until: Arc::new(Mutex::new(None)),
         })
         .clone()
 }
 
 fn ensure_shared_sse_listener(app: &AppHandle, base_url: &str, working_dir: &str) {
     let listener_state = get_or_create_listener_state(working_dir);
+
+    if listener_in_cooldown(&listener_state) {
+        log::info!(
+            "OpenCode shared SSE: listener in cooldown for dir={}, skipping spawn (POST fallback will be used)",
+            working_dir
+        );
+        return;
+    }
+
     if listener_state
         .running
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -426,6 +469,7 @@ fn ensure_shared_sse_listener(app: &AppHandle, base_url: &str, working_dir: &str
     let base_url = base_url.to_string();
     let working_dir = working_dir.to_string();
     let subscribers = SHARED_SSE.subscribers.clone();
+    let state_for_thread = listener_state.clone();
     let connected = listener_state.connected.clone();
     let running = listener_state.running.clone();
 
@@ -450,7 +494,7 @@ fn ensure_shared_sse_listener(app: &AppHandle, base_url: &str, working_dir: &str
                 base_url,
                 working_dir,
                 subscribers,
-                connected.clone(),
+                state_for_thread,
             ));
             connected.store(false, Ordering::SeqCst);
             running.store(false, Ordering::SeqCst);
@@ -832,10 +876,14 @@ fn parse_provider_model(model: Option<&str>) -> Option<(String, String)> {
         return None;
     }
 
-    // Strip "opencode/" prefix if present (e.g. "opencode/ollama/Qwen" → "ollama/Qwen")
-    let raw = raw.strip_prefix("opencode/").unwrap_or(raw);
-    // Expect provider/model; if not present, let backend pick default.
-    let (provider, model_id) = raw.split_once('/')?;
+    // Strip the Jean `opencode/` wrapper prefix ONLY when the remaining string still
+    // contains a `/` — e.g. "opencode/ollama/Qwen" → "ollama/Qwen". For inputs like
+    // "opencode/gpt-5.5", opencode IS the provider, so keep the whole string.
+    let stripped = raw
+        .strip_prefix("opencode/")
+        .filter(|rest| rest.contains('/'))
+        .unwrap_or(raw);
+    let (provider, model_id) = stripped.split_once('/')?;
     let provider = provider.trim();
     let model_id = model_id.trim();
     if provider.is_empty() || model_id.is_empty() {
@@ -852,6 +900,40 @@ fn bare_model_id(model: &str) -> Option<&str> {
         return None;
     }
     Some(raw.strip_prefix("opencode/").unwrap_or(raw))
+}
+
+/// Extracts a human-readable error message from an opencode message response when
+/// `info.error` is populated (status 200 OK + parts=[] + error object). Tries the
+/// upstream provider's raw error body first, then `info.error.data.message`, then
+/// `info.error.name`.
+fn extract_opencode_error_message(message: &serde_json::Value) -> Option<String> {
+    let error = message.get("info")?.get("error")?;
+    let data = error.get("data");
+
+    // Provider-level error body (e.g. opencode.ai zen CreditsError message)
+    if let Some(body_str) = data
+        .and_then(|d| d.get("responseBody"))
+        .and_then(|v| v.as_str())
+    {
+        if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(body_str) {
+            if let Some(msg) = body_json
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|v| v.as_str())
+            {
+                return Some(msg.to_string());
+            }
+        }
+    }
+
+    if let Some(msg) = data.and_then(|d| d.get("message")).and_then(|v| v.as_str()) {
+        return Some(msg.to_string());
+    }
+
+    error
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|n| n.to_string())
 }
 
 /// Search the provider list for a provider that owns `target_model_id`.
@@ -1038,8 +1120,9 @@ async fn shared_sse_listener_loop(
     base_url: String,
     working_dir: String,
     subscribers: Arc<Mutex<HashMap<String, SharedSseSubscriberEntry>>>,
-    connected: Arc<AtomicBool>,
+    state: SharedSseListenerState,
 ) {
+    let connected = state.connected.clone();
     let client = match reqwest::Client::builder().no_proxy().build() {
         Ok(c) => c,
         Err(e) => {
@@ -1051,12 +1134,22 @@ async fn shared_sse_listener_loop(
     let url = format!("{base_url}/event");
     let query = [("directory", working_dir.clone())];
     let mut connect_attempt: u64 = 0;
+    let mut short_lived_disconnects: u32 = 0;
 
     loop {
         if !has_subscribers_for_working_dir(&subscribers, &working_dir) {
             connected.store(false, Ordering::SeqCst);
             tokio::time::sleep(Duration::from_millis(200)).await;
             continue;
+        }
+
+        if listener_in_cooldown(&state) {
+            log::info!(
+                "OpenCode shared SSE: cooldown active for dir={}, listener exiting",
+                working_dir
+            );
+            connected.store(false, Ordering::SeqCst);
+            return;
         }
 
         connect_attempt += 1;
@@ -1112,6 +1205,7 @@ async fn shared_sse_listener_loop(
         let mut total_chunks: u64 = 0;
         let mut total_events_emitted: u64 = 0;
         let mut poll_count: u64 = 0;
+        let connection_started = Instant::now();
 
         loop {
             poll_count += 1;
@@ -1136,7 +1230,7 @@ async fn shared_sse_listener_loop(
                     total_chunks += 1;
                     let chunk_str = String::from_utf8_lossy(&bytes);
                     let preview: String = chunk_str.chars().take(300).collect();
-                    log::trace!(
+                    log::debug!(
                         "OpenCode shared SSE: chunk #{total_chunks} ({} bytes): {preview}{}",
                         bytes.len(),
                         if chunk_str.len() > 300 { "..." } else { "" }
@@ -1170,18 +1264,61 @@ async fn shared_sse_listener_loop(
                     }
                 }
                 Ok(None) => {
+                    if !current_data.is_empty() {
+                        let emitted = process_shared_sse_event(&app, &current_data, &subscribers);
+                        if matches!(emitted, Some(true)) {
+                            total_events_emitted += 1;
+                        }
+                        current_data.clear();
+                    }
                     log::info!(
-                        "OpenCode shared SSE: stream ended after {total_chunks} chunks, {total_events_emitted} events emitted"
+                        "OpenCode shared SSE: stream ended after {total_chunks} chunks, {total_events_emitted} events emitted, elapsed_ms={}",
+                        connection_started.elapsed().as_millis()
                     );
                     connected.store(false, Ordering::SeqCst);
                     break;
                 }
                 Err(e) => {
+                    if !current_data.is_empty() {
+                        let emitted = process_shared_sse_event(&app, &current_data, &subscribers);
+                        if matches!(emitted, Some(true)) {
+                            total_events_emitted += 1;
+                        }
+                        current_data.clear();
+                    }
                     log::info!("OpenCode shared SSE: read error after {total_chunks} chunks: {e}");
                     connected.store(false, Ordering::SeqCst);
                     break;
                 }
             }
+        }
+
+        let elapsed = connection_started.elapsed();
+        if elapsed < OPENCODE_SSE_SHORT_LIVED_THRESHOLD && total_events_emitted == 0 {
+            short_lived_disconnects = short_lived_disconnects.saturating_add(1);
+        } else {
+            short_lived_disconnects = 0;
+            clear_listener_cooldown(&state);
+        }
+
+        if short_lived_disconnects >= OPENCODE_SSE_MAX_SHORT_LIVED_DISCONNECTS {
+            log::warn!(
+                "OpenCode shared SSE: disabling listener for dir={} after {short_lived_disconnects} short-lived disconnects; POST response fallback will be used for {}s",
+                working_dir,
+                OPENCODE_SSE_DISABLED_COOLDOWN.as_secs()
+            );
+            mark_listener_cooldown(&state);
+            connected.store(false, Ordering::SeqCst);
+            return;
+        }
+
+        if has_subscribers_for_working_dir(&subscribers, &working_dir) {
+            let delay = shared_sse_reconnect_delay(short_lived_disconnects);
+            log::info!(
+                "OpenCode shared SSE: reconnecting after {}ms (short_lived_disconnects={short_lived_disconnects})",
+                delay.as_millis()
+            );
+            tokio::time::sleep(delay).await;
         }
     }
 }
@@ -1782,13 +1919,17 @@ pub fn execute_opencode_http(
             .json()
             .map_err(|e| format!("Failed to parse OpenCode providers response: {e}"))?;
 
-        // Try to find the bare model ID across providers before picking any random model
         model
             .and_then(bare_model_id)
             .and_then(|bare| find_provider_for_model(&providers, bare))
             .or_else(|| choose_model(&providers))
             .ok_or("No OpenCode models available. Authenticate a provider first.")?
     };
+    log::info!(
+        "OpenCode: selected model provider='{}' model='{}'",
+        selected_model.0,
+        selected_model.1
+    );
 
     // Check for cancellation before sending the (potentially long-running) message request
     if cancelled.load(Ordering::SeqCst) {
@@ -1920,9 +2061,54 @@ pub fn execute_opencode_http(
         return Err(error);
     }
 
-    let response_json: serde_json::Value = response
-        .json()
-        .map_err(|e| format!("Failed to parse OpenCode message response: {e}"))?;
+    log::info!(
+        "OpenCode: POST body read start jean_session={} opencode_session={}",
+        session_id,
+        opencode_session_id
+    );
+    let body_read_start = Instant::now();
+    let response_json: serde_json::Value = response.json().map_err(|e| {
+        log::warn!(
+            "OpenCode: POST body read failed jean_session={} opencode_session={} elapsed_ms={} err={e}",
+            session_id,
+            opencode_session_id,
+            body_read_start.elapsed().as_millis()
+        );
+        format!("Failed to parse OpenCode message response: {e}")
+    })?;
+    log::info!(
+        "OpenCode: POST body read done jean_session={} opencode_session={} elapsed_ms={} parts={}",
+        session_id,
+        opencode_session_id,
+        body_read_start.elapsed().as_millis(),
+        response_json
+            .get("parts")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    );
+
+    // Surface upstream errors from `info.error` (e.g. opencode.ai zen "Insufficient balance",
+    // ContextOverflowError, model-provider auth failures). These come back as 200 OK with
+    // parts=[] and an embedded error object; without this check the run would silently log
+    // "empty JSONL content" and the UI would show nothing.
+    if let Some(error_msg) = extract_opencode_error_message(&response_json) {
+        log::warn!(
+            "OpenCode: upstream error in POST response jean_session={} opencode_session={} msg={}",
+            session_id,
+            opencode_session_id,
+            error_msg
+        );
+        let _ = app.emit_all(
+            "chat:error",
+            &ErrorEvent {
+                session_id: session_id.to_string(),
+                worktree_id: worktree_id.to_string(),
+                error: error_msg.clone(),
+            },
+        );
+        return Err(error_msg);
+    }
 
     // Let the SSE listener drain any trailing events before deciding whether
     // the POST response needs to synthesize the stream.
@@ -2513,4 +2699,81 @@ pub fn answer_opencode_question(
     log::info!("OpenCode question replied: request_id={request_id}, tool_call_id={tool_call_id}");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_provider_model_keeps_single_segment_after_opencode_prefix() {
+        assert_eq!(
+            parse_provider_model(Some("opencode/gpt-5.5")),
+            Some(("opencode".into(), "gpt-5.5".into()))
+        );
+    }
+
+    #[test]
+    fn parse_provider_model_strips_jean_prefix_for_wrapped_paths() {
+        assert_eq!(
+            parse_provider_model(Some("opencode/ollama/Qwen")),
+            Some(("ollama".into(), "Qwen".into()))
+        );
+    }
+
+    #[test]
+    fn parse_provider_model_handles_plain_provider_model() {
+        assert_eq!(
+            parse_provider_model(Some("anthropic/claude-sonnet-4-6")),
+            Some(("anthropic".into(), "claude-sonnet-4-6".into()))
+        );
+    }
+
+    #[test]
+    fn extract_opencode_error_picks_credits_message_from_response_body() {
+        let body = serde_json::json!({
+            "info": {
+                "error": {
+                    "name": "APIError",
+                    "data": {
+                        "message": "Insufficient balance. Manage your billing here: ...",
+                        "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"CreditsError\",\"message\":\"Insufficient balance.\"}}"
+                    }
+                }
+            },
+            "parts": []
+        });
+        assert_eq!(
+            extract_opencode_error_message(&body),
+            Some("Insufficient balance.".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_opencode_error_falls_back_to_data_message() {
+        let body = serde_json::json!({
+            "info": {
+                "error": {
+                    "name": "ContextOverflowError",
+                    "data": {
+                        "message": "Session too large to compact"
+                    }
+                }
+            },
+            "parts": []
+        });
+        assert_eq!(
+            extract_opencode_error_message(&body),
+            Some("Session too large to compact".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_opencode_error_returns_none_when_no_error() {
+        let body = serde_json::json!({
+            "info": {},
+            "parts": [{"type": "text", "text": "hello"}]
+        });
+        assert_eq!(extract_opencode_error_message(&body), None);
+    }
 }
