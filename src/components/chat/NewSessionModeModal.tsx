@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo } from 'react'
-import { MessageSquarePlus, Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { MessageSquarePlus, Loader2, Terminal } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -15,13 +15,16 @@ import { useCodexCliStatus } from '@/services/codex-cli'
 import { useOpencodeCliStatus } from '@/services/opencode-cli'
 import { useCursorCliStatus } from '@/services/cursor-cli'
 import { useChatStore } from '@/store/chat-store'
-import { useTerminalStore } from '@/store/terminal-store'
 import { useUIStore } from '@/store/ui-store'
 import {
   getBackendIcon,
   getBackendPlainLabel,
 } from '@/components/ui/backend-label'
 import type { CliBackend } from '@/types/preferences'
+import {
+  NativeCliSessionsModal,
+  type NativeCliSessionKind,
+} from './NativeCliSessionsModal'
 
 const BACKEND_ORDER: CliBackend[] = ['codex', 'claude', 'opencode', 'cursor']
 
@@ -40,11 +43,13 @@ export function NewSessionModeModal() {
   const codexStatus = useCodexCliStatus({ enabled: target !== null })
   const opencodeStatus = useOpencodeCliStatus({ enabled: target !== null })
   const cursorStatus = useCursorCliStatus({ enabled: target !== null })
+  const [nativePickerKind, setNativePickerKind] =
+    useState<NativeCliSessionKind | null>(null)
   const open = target !== null
 
   const installedBackendChoices = useMemo(
     () =>
-      BACKEND_ORDER.map(backend => {
+      BACKEND_ORDER.map((backend, index) => {
         const status =
           backend === 'codex'
             ? codexStatus
@@ -55,7 +60,7 @@ export function NewSessionModeModal() {
                 : cursorStatus
         return {
           backend,
-          shortcut: String(BACKEND_ORDER.indexOf(backend) + 1),
+          shortcut: String(index + 2),
           installed: Boolean(status.data?.installed),
           command: status.data?.path ?? backendCommands[backend],
         }
@@ -78,9 +83,40 @@ export function NewSessionModeModal() {
     opencodeStatus.isLoading ||
     cursorStatus.isLoading
 
+  const nativePickerCommand = useMemo(() => {
+    if (nativePickerKind === null || nativePickerKind === 'terminal') {
+      return null
+    }
+    return (
+      installedBackendChoices.find(
+        choice => choice.backend === nativePickerKind
+      )?.command ?? backendCommands[nativePickerKind]
+    )
+  }, [installedBackendChoices, nativePickerKind])
+
+  const openSessionModal = useCallback(
+    (sessionId: string, worktreeId: string, worktreePath: string) => {
+      if (!target) return
+      if (target.origin === 'canvas') {
+        window.dispatchEvent(
+          new CustomEvent('open-session-modal', {
+            detail: { sessionId, worktreeId, worktreePath },
+          })
+        )
+      } else if (target.origin === 'modal') {
+        window.dispatchEvent(
+          new CustomEvent('open-session-modal', {
+            detail: { sessionId },
+          })
+        )
+      }
+    },
+    [target]
+  )
+
   const chooseChat = useCallback(() => {
     if (!target) return
-    const { worktreeId, worktreePath, origin } = target
+    const { worktreeId, worktreePath } = target
     close()
     createSession.mutate(
       { worktreeId, worktreePath },
@@ -88,79 +124,27 @@ export function NewSessionModeModal() {
         onSuccess: session => {
           useChatStore.getState().setActiveSession(worktreeId, session.id)
           useUIStore.getState().setSessionPrimarySurface(session.id, 'chat')
-          if (origin === 'canvas') {
-            window.dispatchEvent(
-              new CustomEvent('open-session-modal', {
-                detail: { sessionId: session.id, worktreeId, worktreePath },
-              })
-            )
-          } else if (origin === 'modal') {
-            window.dispatchEvent(
-              new CustomEvent('open-session-modal', {
-                detail: { sessionId: session.id },
-              })
-            )
-          }
+          openSessionModal(session.id, worktreeId, worktreePath)
         },
       }
     )
-  }, [close, createSession, target])
+  }, [close, createSession, openSessionModal, target])
 
-  const chooseBackendTerminal = useCallback(
-    (backend: CliBackend) => {
-      if (!target) return
-      const { worktreeId, worktreePath, origin } = target
-      const command =
-        installedBackendChoices.find(choice => choice.backend === backend)
-          ?.command ?? backendCommands[backend]
-      const label = getBackendPlainLabel(backend)
-      close()
-      createSession.mutate(
-        { worktreeId, worktreePath, name: label, backend },
-        {
-          onSuccess: session => {
-            const terminalStore = useTerminalStore.getState()
-            const terminalId = terminalStore.addTerminal(
-              worktreeId,
-              command,
-              session.name,
-              {
-                kind: 'session',
-                commandArgs: [],
-                activate: false,
-                openPanel: false,
-              }
-            )
+  const choosePlainTerminal = useCallback(() => {
+    setNativePickerKind('terminal')
+  }, [])
 
-            const uiStore = useUIStore.getState()
-            uiStore.setSessionPrimarySurface(session.id, 'terminal')
-            uiStore.setSessionTerminalId(session.id, terminalId)
-            const chatStore = useChatStore.getState()
-            chatStore.setActiveSession(worktreeId, session.id)
-            chatStore.setSelectedBackend(session.id, backend)
+  const chooseBackendTerminal = useCallback((backend: CliBackend) => {
+    setNativePickerKind(backend)
+  }, [])
 
-            if (origin === 'canvas') {
-              window.dispatchEvent(
-                new CustomEvent('open-session-modal', {
-                  detail: { sessionId: session.id, worktreeId, worktreePath },
-                })
-              )
-            } else if (origin === 'modal') {
-              window.dispatchEvent(
-                new CustomEvent('open-session-modal', {
-                  detail: { sessionId: session.id },
-                })
-              )
-            }
-          },
-        }
-      )
-    },
-    [close, createSession, installedBackendChoices, target]
-  )
+  const closeAll = useCallback(() => {
+    setNativePickerKind(null)
+    close()
+  }, [close])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || nativePickerKind !== null) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
@@ -171,6 +155,13 @@ export function NewSessionModeModal() {
         event.preventDefault()
         event.stopPropagation()
         chooseChat()
+        return
+      }
+
+      if (event.key === '1') {
+        event.preventDefault()
+        event.stopPropagation()
+        choosePlainTerminal()
         return
       }
 
@@ -186,68 +177,107 @@ export function NewSessionModeModal() {
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [chooseBackendTerminal, chooseChat, installedBackendChoices, open])
+  }, [
+    chooseBackendTerminal,
+    chooseChat,
+    choosePlainTerminal,
+    installedBackendChoices,
+    nativePickerKind,
+    open,
+  ])
 
   return (
-    <Dialog open={open} onOpenChange={nextOpen => !nextOpen && close()}>
-      <DialogContent className="w-[min(420px,calc(100vw-32px))] gap-3 p-4 sm:max-w-[420px]">
-        <DialogHeader className="space-y-1 pr-6">
-          <DialogTitle className="text-base font-semibold">
-            New session
-          </DialogTitle>
-          <DialogDescription className="text-xs leading-5">
-            Choose what to open for this worktree.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={open && nativePickerKind === null}
+        onOpenChange={nextOpen => !nextOpen && closeAll()}
+      >
+        <DialogContent className="w-[min(420px,calc(100vw-32px))] gap-3 p-4 sm:max-w-[420px]">
+          <DialogHeader className="space-y-1 pr-6">
+            <DialogTitle className="text-base font-semibold">
+              New session
+            </DialogTitle>
+            <DialogDescription className="text-xs leading-5">
+              Choose what to open for this worktree.
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="grid min-w-0 gap-2">
-          <NewSessionChoice
-            icon={
-              createSession.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <MessageSquarePlus className="size-4" />
+          <div className="grid min-w-0 gap-2">
+            <NewSessionChoice
+              icon={
+                createSession.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <MessageSquarePlus className="size-4" />
+                )
+              }
+              title="Jean Chat"
+              subtitle="Normal ChatWindow session with Jean features"
+              badge="Default"
+              shortcut="↵"
+              disabled={createSession.isPending}
+              onClick={chooseChat}
+            />
+
+            <NewSessionChoice
+              icon={<Terminal className="size-4" />}
+              title="Terminal"
+              subtitle="Open a plain terminal on this worktree"
+              shortcut="1"
+              disabled={createSession.isPending}
+              onClick={choosePlainTerminal}
+            />
+
+            <div
+              aria-hidden="true"
+              data-testid="new-session-backend-separator"
+              className="my-1 h-px bg-border/70"
+            />
+
+            {installedBackendChoices.map(choice => {
+              const Icon = getBackendIcon(choice.backend)
+              const label = getBackendPlainLabel(choice.backend)
+              return (
+                <NewSessionChoice
+                  key={choice.backend}
+                  icon={<Icon className="size-4" />}
+                  title={label}
+                  subtitle={`Open native ${label} in a terminal session`}
+                  shortcut={choice.shortcut}
+                  disabled={createSession.isPending}
+                  onClick={() => chooseBackendTerminal(choice.backend)}
+                />
               )
-            }
-            title="Jean Chat"
-            subtitle="Normal ChatWindow session with Jean features"
-            badge="Default"
-            shortcut="↵"
-            disabled={createSession.isPending}
-            onClick={chooseChat}
-          />
+            })}
 
-          {installedBackendChoices.map(choice => {
-            const Icon = getBackendIcon(choice.backend)
-            const label = getBackendPlainLabel(choice.backend)
-            return (
-              <NewSessionChoice
-                key={choice.backend}
-                icon={<Icon className="size-4" />}
-                title={label}
-                subtitle={`Open native ${label} in a terminal session`}
-                shortcut={choice.shortcut}
-                disabled={createSession.isPending}
-                onClick={() => chooseBackendTerminal(choice.backend)}
-              />
-            )
-          })}
+            {isCheckingBackends && installedBackendChoices.length === 0 && (
+              <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                Checking installed backends…
+              </div>
+            )}
 
-          {isCheckingBackends && installedBackendChoices.length === 0 && (
-            <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" />
-              Checking installed backends…
-            </div>
-          )}
-
-          {!isCheckingBackends && installedBackendChoices.length === 0 && (
-            <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
-              No installed backend CLIs found.
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+            {!isCheckingBackends && installedBackendChoices.length === 0 && (
+              <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
+                No installed backend CLIs found.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+      {target && (
+        <NativeCliSessionsModal
+          open={open && nativePickerKind !== null}
+          kind={nativePickerKind}
+          worktreeId={target.worktreeId}
+          worktreePath={target.worktreePath}
+          command={nativePickerCommand}
+          onBack={() => setNativePickerKind(null)}
+          onClose={closeAll}
+          onOpenSessionModal={openSessionModal}
+        />
+      )}
+    </>
   )
 }
 

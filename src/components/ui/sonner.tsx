@@ -155,7 +155,7 @@ function ToastGestureDismiss({ position }: Pick<ToasterProps, 'position'>) {
   return null
 }
 
-const Toaster = ({ position, ...props }: ToasterProps) => {
+const Toaster = ({ position, style, ...props }: ToasterProps) => {
   const { theme = 'system' } = useTheme()
   const resolvedPosition = position ?? 'bottom-right'
 
@@ -167,9 +167,10 @@ const Toaster = ({ position, ...props }: ToasterProps) => {
         className="toaster group"
         style={
           {
-            '--normal-bg': 'var(--sidebar)',
+            '--normal-bg': 'var(--toast-background)',
             '--normal-text': 'var(--popover-foreground)',
-            '--normal-border': 'var(--border)',
+            '--normal-border': 'var(--toast-border, var(--border))',
+            ...style,
           } as React.CSSProperties
         }
         {...props}

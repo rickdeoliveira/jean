@@ -56,6 +56,29 @@ pub async fn start_terminal(
     )
 }
 
+/// Prepare context-only command args for an embedded backend terminal session.
+///
+/// This intentionally avoids Jean chat execution controls such as model,
+/// effort, execution mode, approval policy, and sandbox settings. It only
+/// passes the combined Jean instructions and loaded context through the
+/// backend's native context mechanism.
+#[tauri::command]
+pub async fn prepare_backend_terminal_context(
+    app: AppHandle,
+    session_id: String,
+    worktree_id: String,
+    backend: String,
+) -> Result<crate::chat::context_instructions::PreparedBackendTerminalContext, String> {
+    let backend = crate::chat::context_instructions::TerminalContextBackend::parse(&backend)
+        .ok_or_else(|| format!("Unsupported backend terminal context: {backend}"))?;
+    crate::chat::context_instructions::prepare_backend_terminal_context(
+        &app,
+        &session_id,
+        &worktree_id,
+        backend,
+    )
+}
+
 /// Get the run script(s) from jean.json for a worktree
 #[tauri::command]
 pub async fn get_run_scripts(worktree_path: String) -> Vec<String> {

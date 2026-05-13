@@ -157,7 +157,9 @@ export interface Worktree {
   pr_push_remote?: string
   /** Branch on pr_push_remote most recently pushed to */
   pr_push_branch?: string
-  /** User-assigned label with color (e.g. "In Progress") */
+  /** User-assigned labels with colors (e.g. "In Progress") */
+  labels?: LabelData[]
+  /** Deprecated legacy single worktree label; use labels instead. */
   label?: LabelData
   /** Display order within project (lower = higher in list, base sessions ignore this) */
   order: number

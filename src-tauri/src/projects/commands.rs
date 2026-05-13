@@ -45,6 +45,7 @@ use super::types::{
     WorktreePathExistsEvent, WorktreePermanentlyDeletedEvent, WorktreeSetupCompleteEvent,
     WorktreeUnarchivedEvent,
 };
+use crate::chat::types::LabelData;
 use crate::claude_cli::resolve_cli_binary;
 use crate::coderabbit_cli::resolve_coderabbit_binary;
 use crate::codex_cli::resolve_cli_binary as resolve_codex_cli_binary;
@@ -1033,6 +1034,7 @@ pub async fn create_worktree(
         pr_push_branch: None,
         order: 0, // Placeholder, actual order is set in background thread
         archived_at: None,
+        labels: Vec::new(),
         label: None,
         last_opened_at: None,
     };
@@ -1588,6 +1590,7 @@ pub async fn create_worktree(
                     pr_push_branch: None,
                     order: max_order + 1,
                     archived_at: None,
+                    labels: Vec::new(),
                     label: None,
                     last_opened_at: None,
                 };
@@ -1791,6 +1794,7 @@ pub async fn create_worktree_from_existing_branch(
         pr_push_branch: None,
         order: 0, // Placeholder, actual order is set in background thread
         archived_at: None,
+        labels: Vec::new(),
         label: None,
         last_opened_at: None,
     };
@@ -2178,6 +2182,7 @@ pub async fn create_worktree_from_existing_branch(
                     pr_push_branch: None,
                     order: max_order + 1,
                     archived_at: None,
+                    labels: Vec::new(),
                     label: None,
                     last_opened_at: None,
                 };
@@ -2408,6 +2413,7 @@ pub async fn checkout_pr(
         pr_push_branch: None,
         order: 0, // Will be updated in background thread
         archived_at: None,
+        labels: Vec::new(),
         label: None,
         last_opened_at: None,
     };
@@ -2731,6 +2737,7 @@ pub async fn checkout_pr(
                     pr_push_branch: None,
                     order: max_order + 1,
                     archived_at: None,
+                    labels: Vec::new(),
                     label: None,
                     last_opened_at: None,
                 };
@@ -3065,6 +3072,7 @@ pub async fn create_base_session(app: AppHandle, project_id: String) -> Result<W
         pr_push_branch: None,
         order: 0, // Base sessions are always first
         archived_at: None,
+        labels: Vec::new(),
         label: None,
         last_opened_at: None,
     };
@@ -3478,6 +3486,7 @@ pub async fn import_worktree(
         pr_push_branch: None,
         order: max_order + 1,
         archived_at: None,
+        labels: Vec::new(),
         label: None,
         last_opened_at: None,
     };
@@ -4236,14 +4245,16 @@ pub async fn rename_worktree(
     Ok(updated_worktree)
 }
 
-/// Update the label on a worktree
+/// Update the labels on a worktree.
 #[tauri::command]
-pub async fn update_worktree_label(
+pub async fn update_worktree_labels(
     app: AppHandle,
     worktree_id: String,
-    label: Option<crate::chat::types::LabelData>,
+    mut labels: Vec<LabelData>,
 ) -> Result<(), String> {
-    log::trace!("Updating worktree label: {worktree_id}");
+    log::trace!("Updating worktree labels: {worktree_id}");
+
+    super::types::dedupe_labels_by_name(&mut labels);
 
     let mut data = load_projects_data(&app)?;
 
@@ -4251,12 +4262,23 @@ pub async fn update_worktree_label(
         .find_worktree_mut(&worktree_id)
         .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?;
 
-    worktree.label = label;
+    worktree.labels = labels;
+    worktree.label = None;
 
     save_projects_data(&app, &data)?;
 
-    log::trace!("Successfully updated worktree label for: {worktree_id}");
+    log::trace!("Successfully updated worktree labels for: {worktree_id}");
     Ok(())
+}
+
+/// Deprecated compatibility wrapper for old clients that only support one worktree label.
+#[tauri::command]
+pub async fn update_worktree_label(
+    app: AppHandle,
+    worktree_id: String,
+    label: Option<LabelData>,
+) -> Result<(), String> {
+    update_worktree_labels(app, worktree_id, label.into_iter().collect()).await
 }
 
 /// Update the last_opened_at timestamp on a worktree
@@ -5189,6 +5211,23 @@ pub struct TriggerCodeRabbitPrReviewResponse {
     pub comment_body: String,
 }
 
+const CODERABBIT_REVIEW_LABEL_NAME: &str = "CodeRabbit review";
+const CODERABBIT_REVIEW_LABEL_COLOR: &str = "#ff6a00";
+
+fn append_coderabbit_review_label(labels: &mut Vec<LabelData>) {
+    if labels.iter().any(|label| {
+        label
+            .name
+            .eq_ignore_ascii_case(CODERABBIT_REVIEW_LABEL_NAME)
+    }) {
+        return;
+    }
+    labels.push(LabelData {
+        name: CODERABBIT_REVIEW_LABEL_NAME.to_string(),
+        color: CODERABBIT_REVIEW_LABEL_COLOR.to_string(),
+    });
+}
+
 /// Trigger CodeRabbit by posting "@coderabbitai review" as a PR comment.
 #[tauri::command]
 pub async fn trigger_coderabbit_pr_review(
@@ -5250,6 +5289,8 @@ pub async fn trigger_coderabbit_pr_review(
                 if !pr_url.is_empty() {
                     wt.pr_url = Some(pr_url.clone());
                 }
+                append_coderabbit_review_label(&mut wt.labels);
+                wt.label = None;
                 let _ = save_projects_data(&app, &data);
             }
         }

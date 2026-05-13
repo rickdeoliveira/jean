@@ -86,10 +86,14 @@ fn load_projects_data_internal(app: &AppHandle) -> Result<ProjectsData, String> 
         format!("Failed to read projects file: {e}")
     })?;
 
-    let data: ProjectsData = serde_json::from_str(&contents).map_err(|e| {
+    let mut data: ProjectsData = serde_json::from_str(&contents).map_err(|e| {
         log::error!("Failed to parse projects JSON: {e}");
         format!("Failed to parse projects data: {e}")
     })?;
+
+    for worktree in &mut data.worktrees {
+        worktree.normalize_labels();
+    }
 
     let original_count = data.worktrees.len();
 

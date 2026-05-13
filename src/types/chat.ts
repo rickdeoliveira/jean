@@ -260,6 +260,14 @@ export interface Session {
   table_checked_rows?: Record<string, number[]>
   /** Unix timestamp when session was last opened/viewed by the user */
   last_opened_at?: number
+  /** Primary surface for this session. Terminal sessions render as full-screen CLI sessions. */
+  primary_surface?: 'chat' | 'terminal'
+  /** Command used by full-screen terminal sessions. Undefined/null means default shell. */
+  terminal_command?: string | null
+  /** Extra command args for full-screen terminal sessions. */
+  terminal_command_args?: string[]
+  /** Display label for the terminal tab/session. */
+  terminal_label?: string
   /** Status of the last run (for immediate status on app restart) */
   last_run_status?: RunStatus
   /** Execution mode of the last run (plan/build/yolo) */

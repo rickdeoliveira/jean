@@ -540,6 +540,19 @@ pub struct Session {
     /// Unix timestamp when session was last opened/viewed by the user
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_opened_at: Option<u64>,
+    /// Primary surface for this session ("chat" or "terminal").
+    /// Terminal sessions render as full-screen PTY-backed CLI sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_surface: Option<String>,
+    /// Command used by full-screen terminal sessions. None means default shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_command: Option<String>,
+    /// Extra command args for full-screen terminal sessions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terminal_command_args: Vec<String>,
+    /// Display label for the terminal tab/session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_label: Option<String>,
 
     // ========================================================================
     // Session-specific UI state (moved from ui-state.json)
@@ -709,6 +722,10 @@ impl Session {
             archived_at: None,
             archived_by_base_close: None,
             last_opened_at: None,
+            primary_surface: None,
+            terminal_command: None,
+            terminal_command_args: vec![],
+            terminal_label: None,
             // Session-specific UI state
             answered_questions: vec![],
             submitted_answers: HashMap::new(),
@@ -903,6 +920,10 @@ impl SessionMetadata {
             archived_at: self.archived_at,
             archived_by_base_close: self.archived_by_base_close,
             last_opened_at: self.last_opened_at,
+            primary_surface: self.primary_surface.clone(),
+            terminal_command: self.terminal_command.clone(),
+            terminal_command_args: self.terminal_command_args.clone(),
+            terminal_label: self.terminal_label.clone(),
             answered_questions: self.answered_questions.clone(),
             submitted_answers: self.submitted_answers.clone(),
             fixed_findings: self.fixed_findings.clone(),
@@ -957,6 +978,10 @@ impl SessionMetadata {
         self.session_naming_completed = session.session_naming_completed;
         self.archived_at = session.archived_at;
         self.archived_by_base_close = session.archived_by_base_close;
+        self.primary_surface = session.primary_surface.clone();
+        self.terminal_command = session.terminal_command.clone();
+        self.terminal_command_args = session.terminal_command_args.clone();
+        self.terminal_label = session.terminal_label.clone();
         self.answered_questions = session.answered_questions.clone();
         self.submitted_answers = session.submitted_answers.clone();
         self.fixed_findings = session.fixed_findings.clone();
@@ -1337,6 +1362,18 @@ pub struct SessionMetadata {
     /// Unix timestamp when session was last opened/viewed by the user
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_opened_at: Option<u64>,
+    /// Primary surface for this session ("chat" or "terminal").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_surface: Option<String>,
+    /// Command used by full-screen terminal sessions. None means default shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_command: Option<String>,
+    /// Extra command args for full-screen terminal sessions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terminal_command_args: Vec<String>,
+    /// Display label for the terminal tab/session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_label: Option<String>,
 
     /// Run history - each entry corresponds to one Claude CLI execution
     #[serde(default)]
@@ -1446,6 +1483,10 @@ impl SessionMetadata {
             label: None,
             queued_messages: vec![],
             last_opened_at: None,
+            primary_surface: None,
+            terminal_command: None,
+            terminal_command_args: vec![],
+            terminal_label: None,
             runs: vec![],
             scheduled_wakeup: None,
             version: 1,
@@ -1780,6 +1821,35 @@ mod tests {
         assert_eq!(metadata.order, 0);
         assert!(metadata.runs.is_empty());
         assert_eq!(metadata.version, 1);
+    }
+
+    #[test]
+    fn test_session_terminal_metadata_roundtrip() {
+        let mut session = Session::new("Codex".to_string(), 0, Backend::Codex);
+        session.primary_surface = Some("terminal".to_string());
+        session.terminal_command = Some("/usr/local/bin/codex".to_string());
+        session.terminal_command_args = vec!["--config".to_string(), "base=true".to_string()];
+        session.terminal_label = Some("Codex".to_string());
+
+        let mut metadata = SessionMetadata::new(
+            session.id.clone(),
+            "wt-456".to_string(),
+            session.name.clone(),
+            session.order,
+        );
+        metadata.update_from_session(&session);
+
+        let restored = metadata.to_session();
+        assert_eq!(restored.primary_surface.as_deref(), Some("terminal"));
+        assert_eq!(
+            restored.terminal_command.as_deref(),
+            Some("/usr/local/bin/codex")
+        );
+        assert_eq!(
+            restored.terminal_command_args,
+            session.terminal_command_args
+        );
+        assert_eq!(restored.terminal_label.as_deref(), Some("Codex"));
     }
 
     #[test]

@@ -32,8 +32,14 @@ interface LabelModalProps {
   onClose: () => void
   sessionId: string | null
   currentLabel: LabelData | null
+  /** Multi-label mode current labels. */
+  currentLabels?: LabelData[]
+  /** Label selection mode. Sessions stay single; worktrees can use multi. */
+  mode?: 'single' | 'multi'
   /** Custom apply handler. If provided, called instead of default setSessionLabel */
   onApply?: (label: LabelData | null) => void
+  /** Custom multi-label apply handler. */
+  onApplyLabels?: (labels: LabelData[]) => void
   /** Additional labels to include in the custom labels list (e.g. worktree labels) */
   extraLabels?: LabelData[]
   /** Callback when a label's color is edited (e.g. to propagate to worktree labels) */
@@ -45,7 +51,10 @@ export function LabelModal({
   onClose,
   sessionId,
   currentLabel,
+  currentLabels,
+  mode = 'single',
   onApply,
+  onApplyLabels,
   extraLabels,
   onColorChange,
 }: LabelModalProps) {
@@ -112,8 +121,32 @@ export function LabelModal({
     []
   )
 
+  const selectedLabels = useMemo(
+    () =>
+      mode === 'multi'
+        ? (currentLabels ?? [])
+        : currentLabel
+          ? [currentLabel]
+          : [],
+    [mode, currentLabels, currentLabel]
+  )
+
+  const isLabelSelected = useCallback(
+    (name: string) => selectedLabels.some(label => label.name === name),
+    [selectedLabels]
+  )
+
   const applyLabel = useCallback(
     (labelData: LabelData | null) => {
+      if (mode === 'multi') {
+        const next = labelData
+          ? isLabelSelected(labelData.name)
+            ? selectedLabels.filter(label => label.name !== labelData.name)
+            : [...selectedLabels, labelData]
+          : []
+        onApplyLabels?.(next)
+        return
+      }
       if (onApply) {
         onApply(labelData)
         onClose()
@@ -123,7 +156,15 @@ export function LabelModal({
       useChatStore.getState().setSessionLabel(sessionId, labelData)
       onClose()
     },
-    [sessionId, onClose, onApply]
+    [
+      mode,
+      selectedLabels,
+      isLabelSelected,
+      onApplyLabels,
+      onApply,
+      onClose,
+      sessionId,
+    ]
   )
 
   // Start editing an existing label's color
@@ -186,8 +227,12 @@ export function LabelModal({
         e.preventDefault()
         const labelName = allLabelNames[focusedIndex]
         if (labelName) {
-          const isAlreadySelected = currentLabel?.name === labelName
-          applyLabel(isAlreadySelected ? null : getLabelData(labelName))
+          const isAlreadySelected = isLabelSelected(labelName)
+          applyLabel(
+            isAlreadySelected
+              ? getLabelData(labelName)
+              : getLabelData(labelName)
+          )
         }
       } else if (e.key === 'Backspace') {
         const isInputFocused = (e.target as HTMLElement)?.tagName === 'INPUT'
@@ -204,10 +249,11 @@ export function LabelModal({
       selectedColor,
       allLabelNames,
       focusedIndex,
-      currentLabel,
+      isLabelSelected,
       getLabelData,
       applyLabel,
       saveEditedColor,
+      mode,
     ]
   )
 
@@ -233,14 +279,14 @@ export function LabelModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Tag className="h-4 w-4" />
-            Session Label
+            {mode === 'multi' ? 'Worktree Labels' : 'Session Label'}
           </DialogTitle>
           <DialogDescription>
             {editingLabelName
               ? `Choose a color for "${editingLabelName}".`
               : isCreatingCustom
                 ? 'Choose a color for your label.'
-                : 'Pick a label or create a custom one.'}
+                : 'Pick labels or create a custom one.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -312,7 +358,7 @@ export function LabelModal({
             <div className="flex flex-col gap-0.5">
               {allLabelNames.map((labelName, i) => {
                 const labelData = getLabelData(labelName)
-                const isSelected = currentLabel?.name === labelName
+                const isSelected = isLabelSelected(labelName)
                 const isCustom = !PRESET_LABELS.includes(labelName)
                 return (
                   <button
@@ -325,7 +371,9 @@ export function LabelModal({
                           : 'hover:bg-accent/50'
                     }`}
                     onClick={() =>
-                      isSelected ? applyLabel(null) : applyLabel(labelData)
+                      applyLabel(
+                        isSelected && mode === 'single' ? null : labelData
+                      )
                     }
                     onMouseEnter={() => setFocusedIndex(i)}
                     tabIndex={-1}
@@ -335,6 +383,7 @@ export function LabelModal({
                       style={{ backgroundColor: labelData.color }}
                     />
                     <span className="flex-1 truncate">{labelName}</span>
+                    {isSelected && <Check className="h-3 w-3 mr-1" />}
                     {isCustom && (
                       <Pencil
                         className="h-3 w-3 opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity mr-1"
@@ -372,7 +421,11 @@ export function LabelModal({
             <>
               <span>
                 <kbd className="px-1 rounded border bg-muted">↵</kbd>{' '}
-                {editingLabelName ? 'save' : 'create'}
+                {editingLabelName
+                  ? 'save'
+                  : mode === 'multi'
+                    ? 'add'
+                    : 'create'}
               </span>
               <span>
                 <kbd className="px-1 rounded border bg-muted">esc</kbd> back
@@ -384,7 +437,7 @@ export function LabelModal({
                 <kbd className="px-1 rounded border bg-muted">↵</kbd> apply
               </span>
               <span>
-                <kbd className="px-1 rounded border bg-muted">⌫</kbd> remove
+                <kbd className="px-1 rounded border bg-muted">⌫</kbd> clear
               </span>
               <span>
                 <kbd className="px-1 rounded border bg-muted">↑↓</kbd> navigate

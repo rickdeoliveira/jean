@@ -231,8 +231,11 @@ pub struct Worktree {
     /// Display order within project (lower = higher in list, base sessions ignore this)
     #[serde(default)]
     pub order: u32,
-    /// User-assigned label with color (e.g. "In Progress")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// User-assigned labels with colors (e.g. "In Progress").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<LabelData>,
+    /// Legacy single-label field. Deserialized for migration; never serialized.
+    #[serde(default, skip_serializing)]
     pub label: Option<LabelData>,
     /// Unix timestamp when worktree was archived (None = not archived)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -602,4 +605,62 @@ pub struct WorktreeBranchExistsEvent {
     pub security_context: Option<super::github_issues::SecurityAlertContext>,
     /// Advisory context to use when creating a new worktree with the suggested name
     pub advisory_context: Option<super::github_issues::AdvisoryContext>,
+}
+
+impl Worktree {
+    /// Normalize legacy single-label worktrees into the multi-label field.
+    pub fn normalize_labels(&mut self) {
+        if self.labels.is_empty() {
+            if let Some(label) = self.label.take() {
+                self.labels.push(label);
+            }
+        } else {
+            self.label = None;
+        }
+        dedupe_labels_by_name(&mut self.labels);
+    }
+}
+
+/// Deduplicate labels case-insensitively by name, preserving first occurrence order.
+pub fn dedupe_labels_by_name(labels: &mut Vec<LabelData>) {
+    let mut seen = std::collections::HashSet::new();
+    labels.retain(|label| seen.insert(label.name.to_lowercase()));
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_label_deserializes_and_normalizes_to_labels() {
+        let mut worktree: Worktree = serde_json::from_value(serde_json::json!({
+            "id": "wt", "project_id": "p", "name": "n", "path": "/tmp", "branch": "b",
+            "created_at": 1, "setup_output": null, "setup_script": null,
+            "order": 0, "label": { "name": "Needs testing", "color": "#eab308" }
+        }))
+        .expect("legacy worktree");
+
+        assert!(worktree.labels.is_empty());
+        worktree.normalize_labels();
+        assert_eq!(worktree.labels.len(), 1);
+        assert_eq!(worktree.labels[0].name, "Needs testing");
+        assert!(worktree.label.is_none());
+    }
+
+    #[test]
+    fn labels_win_over_legacy_label() {
+        let mut worktree: Worktree = serde_json::from_value(serde_json::json!({
+            "id": "wt", "project_id": "p", "name": "n", "path": "/tmp", "branch": "b",
+            "created_at": 1, "setup_output": null, "setup_script": null,
+            "order": 0,
+            "labels": [{ "name": "Keep", "color": "#22c55e" }],
+            "label": { "name": "Legacy", "color": "#eab308" }
+        }))
+        .expect("worktree");
+
+        worktree.normalize_labels();
+        assert_eq!(worktree.labels.len(), 1);
+        assert_eq!(worktree.labels[0].name, "Keep");
+        assert!(worktree.label.is_none());
+    }
 }
