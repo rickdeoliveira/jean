@@ -506,7 +506,7 @@ export default function useStreamingEvents({
     const unlistenPermissionDenied = listen<PermissionDeniedEvent>(
       'chat:permission_denied',
       event => {
-        const { session_id, denials } = event.payload
+        const { session_id, worktree_id, denials } = event.payload
         const {
           setPendingDenials,
           lastSentMessages,
@@ -514,6 +514,7 @@ export default function useStreamingEvents({
           executionModes,
           thinkingLevels,
           selectedModels,
+          worktreePaths,
         } = useChatStore.getState()
 
         // Store the denials for the approval UI
@@ -527,6 +528,22 @@ export default function useStreamingEvents({
             model: selectedModels[session_id],
             executionMode: executionModes[session_id] ?? 'plan',
             thinkingLevel: thinkingLevels[session_id] ?? 'off',
+          })
+        }
+
+        const worktreePath = worktreePaths[worktree_id]
+        if (worktreePath) {
+          invoke('update_session_state', {
+            worktreeId: worktree_id,
+            worktreePath,
+            sessionId: session_id,
+            waitingForInput: true,
+            pendingPermissionDenials: denials,
+          }).catch(err => {
+            console.error(
+              '[useStreamingEvents] Failed to persist Claude permission denial:',
+              err
+            )
           })
         }
       }
@@ -796,6 +813,9 @@ export default function useStreamingEvents({
             tc.name === 'question') &&
           !isQuestionAnswered(sessionId, tc.id)
       )
+      const hasPendingPermissionDenials =
+        (useChatStore.getState().pendingPermissionDenials[sessionId]?.length ??
+          0) > 0
 
       // Clear compacting state (safety net in case chat:compacted was missed)
       useChatStore.getState().setCompacting(sessionId, false)
@@ -1094,86 +1114,143 @@ export default function useStreamingEvents({
           )
         }
 
-        // 2. Update last_run_status + session state in caches so UI reflects immediately.
-        // CRITICAL: Include waiting_for_input/is_reviewing so useSessionStatePersistence's
-        // load effect doesn't overwrite Zustand with stale cache values.
-        queryClient.setQueryData<Session>(
-          chatQueryKeys.session(sessionId),
-          old =>
-            old
-              ? {
-                  ...old,
-                  last_run_status: 'completed',
-                  waiting_for_input: false,
-                  is_reviewing: true,
-                }
-              : old
-        )
-        queryClient.setQueryData<WorktreeSessions>(
-          chatQueryKeys.sessions(worktreeId),
-          old => {
-            if (!old) return old
-            return {
-              ...old,
-              sessions: old.sessions.map(s =>
-                s.id === sessionId
-                  ? {
-                      ...s,
-                      last_run_status: 'completed' as const,
-                      waiting_for_input: false,
-                      is_reviewing: true,
-                    }
-                  : s
-              ),
+        if (hasPendingPermissionDenials) {
+          // Claude reports command/tool permission denials as a completed turn,
+          // not as a backend-attached live approval request. Keep the session in
+          // a waiting state so the permission approval card remains visible.
+          queryClient.setQueryData<Session>(
+            chatQueryKeys.session(sessionId),
+            old =>
+              old
+                ? {
+                    ...old,
+                    last_run_status: 'completed',
+                    waiting_for_input: true,
+                    is_reviewing: false,
+                  }
+                : old
+          )
+          queryClient.setQueryData<WorktreeSessions>(
+            chatQueryKeys.sessions(worktreeId),
+            old => {
+              if (!old) return old
+              return {
+                ...old,
+                sessions: old.sessions.map(s =>
+                  s.id === sessionId
+                    ? {
+                        ...s,
+                        last_run_status: 'completed' as const,
+                        waiting_for_input: true,
+                        is_reviewing: false,
+                      }
+                    : s
+                ),
+              }
             }
+          )
+
+          completeSession(sessionId)
+          const store = useChatStore.getState()
+          store.setSessionReviewing(sessionId, false)
+          store.setWaitingForInput(sessionId, true)
+
+          if (needsBackendHydration) {
+            void hydrateCompletedSessionFromBackend(
+              queryClient,
+              sessionId,
+              worktreeId
+            )
           }
-        )
 
-        // 3. Batch-clear all streaming state in a single Zustand set() — one notification to subscribers
-        console.log(`[Done] about to completeSession session=${sessionId}`, {
-          currentSending: Object.keys(
-            useChatStore.getState().sendingSessionIds
-          ),
-        })
-        completeSession(sessionId)
-
-        if (needsBackendHydration) {
-          void hydrateCompletedSessionFromBackend(
-            queryClient,
-            sessionId,
-            worktreeId
+          const waitingSound = (preferences?.waiting_sound ??
+            'none') as NotificationSound
+          playNotificationSound(waitingSound, {
+            webAccessSoundsEnabled:
+              preferences?.web_access_sounds_enabled ?? true,
+          })
+        } else {
+          // 2. Update last_run_status + session state in caches so UI reflects immediately.
+          // CRITICAL: Include waiting_for_input/is_reviewing so useSessionStatePersistence's
+          // load effect doesn't overwrite Zustand with stale cache values.
+          queryClient.setQueryData<Session>(
+            chatQueryKeys.session(sessionId),
+            old =>
+              old
+                ? {
+                    ...old,
+                    last_run_status: 'completed',
+                    waiting_for_input: false,
+                    is_reviewing: true,
+                  }
+                : old
           )
-        }
-
-        // Reviewing state is persisted by the backend — no frontend persist needed.
-
-        // Play review sound
-        const reviewSound = (preferences?.review_sound ??
-          'none') as NotificationSound
-        playNotificationSound(reviewSound, {
-          webAccessSoundsEnabled:
-            preferences?.web_access_sounds_enabled ?? true,
-        })
-
-        // Auto-save context (fire-and-forget, no blocking)
-        if (preferences?.auto_save_context === true) {
-          const sessionData = queryClient.getQueryData<Session>(
-            chatQueryKeys.session(sessionId)
+          queryClient.setQueryData<WorktreeSessions>(
+            chatQueryKeys.sessions(worktreeId),
+            old => {
+              if (!old) return old
+              return {
+                ...old,
+                sessions: old.sessions.map(s =>
+                  s.id === sessionId
+                    ? {
+                        ...s,
+                        last_run_status: 'completed' as const,
+                        waiting_for_input: false,
+                        is_reviewing: true,
+                      }
+                    : s
+                ),
+              }
+            }
           )
-          // +1 for the optimistic assistant message just added
-          const messageCount = (sessionData?.messages?.length ?? 0) + 1
 
-          if (messageCount >= 3) {
-            const wtInfo = findWorktreeForAutoSave(queryClient, worktreeId)
-            if (wtInfo) {
-              autoSaveContext({
-                sessionId,
-                worktreeId,
-                worktreePath: wtInfo.path,
-                projectName: wtInfo.projectName,
-                preferences,
-                queryClient,
-              })
+          // 3. Batch-clear all streaming state in a single Zustand set() — one notification to subscribers
+          console.log(`[Done] about to completeSession session=${sessionId}`, {
+            currentSending: Object.keys(
+              useChatStore.getState().sendingSessionIds
+            ),
+          })
+          completeSession(sessionId)
+
+          if (needsBackendHydration) {
+            void hydrateCompletedSessionFromBackend(
+              queryClient,
+              sessionId,
+              worktreeId
+            )
+          }
+
+          // Reviewing state is persisted by the backend — no frontend persist needed.
+
+          // Play review sound
+          const reviewSound = (preferences?.review_sound ??
+            'none') as NotificationSound
+          playNotificationSound(reviewSound, {
+            webAccessSoundsEnabled:
+              preferences?.web_access_sounds_enabled ?? true,
+          })
+
+          // Auto-save context (fire-and-forget, no blocking)
+          if (preferences?.auto_save_context === true) {
+            const sessionData = queryClient.getQueryData<Session>(
+              chatQueryKeys.session(sessionId)
+            )
+            // +1 for the optimistic assistant message just added
+            const messageCount = (sessionData?.messages?.length ?? 0) + 1
+
+            if (messageCount >= 3) {
+              const wtInfo = findWorktreeForAutoSave(queryClient, worktreeId)
+              if (wtInfo) {
+                autoSaveContext({
+                  sessionId,
+                  worktreeId,
+                  worktreePath: wtInfo.path,
+                  projectName: wtInfo.projectName,
+                  preferences,
+                  queryClient,
+                })
+              }
             }
           }
         }

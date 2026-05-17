@@ -727,6 +727,52 @@ describe('ChatStore', () => {
 
       expect(getPendingDenials('session-1')).toHaveLength(0)
     })
+
+    it('preserves pending denials and context when a session completes', () => {
+      const deniedContext = {
+        message: 'run tests',
+        model: 'opus',
+        executionMode: 'plan' as const,
+        thinkingLevel: 'off' as const,
+      }
+
+      useChatStore.setState({
+        pendingPermissionDenials: { 'session-1': denials },
+        deniedMessageContext: { 'session-1': deniedContext },
+        sendingSessionIds: { 'session-1': true },
+        streamingContents: { 'session-1': 'Permission required' },
+      })
+
+      useChatStore.getState().completeSession('session-1')
+
+      const state = useChatStore.getState()
+      expect(state.pendingPermissionDenials['session-1']).toEqual(denials)
+      expect(state.deniedMessageContext['session-1']).toEqual(deniedContext)
+      expect(state.sendingSessionIds['session-1']).toBeUndefined()
+    })
+
+    it('preserves pending denials and context when a session fails', () => {
+      const deniedContext = {
+        message: 'run tests',
+        model: 'opus',
+        executionMode: 'plan' as const,
+        thinkingLevel: 'off' as const,
+      }
+
+      useChatStore.setState({
+        pendingPermissionDenials: { 'session-1': denials },
+        deniedMessageContext: { 'session-1': deniedContext },
+        sendingSessionIds: { 'session-1': true },
+        streamingContents: { 'session-1': 'Permission required' },
+      })
+
+      useChatStore.getState().failSession('session-1')
+
+      const state = useChatStore.getState()
+      expect(state.pendingPermissionDenials['session-1']).toEqual(denials)
+      expect(state.deniedMessageContext['session-1']).toEqual(deniedContext)
+      expect(state.sendingSessionIds['session-1']).toBeUndefined()
+    })
   })
 
   describe('pending Codex command approval requests', () => {
