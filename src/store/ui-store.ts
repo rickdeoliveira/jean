@@ -26,11 +26,13 @@ export type OnboardingStartStep = 'claude' | 'gh' | null
 export type WorktreePrimarySurface = 'chat' | 'terminal'
 
 export type NewSessionModeOrigin = 'chat' | 'modal' | 'canvas'
+export type NewSessionModeIntent = 'picker' | 'default'
 
 export interface NewSessionModeTarget {
   worktreeId: string
   worktreePath: string
   origin: NewSessionModeOrigin
+  intent?: NewSessionModeIntent
 }
 
 export type CliUpdateModalType =
@@ -802,7 +804,8 @@ export const useUIStore = create<UIState>()(
           state =>
             state.newSessionModeTarget?.worktreeId === target.worktreeId &&
             state.newSessionModeTarget?.worktreePath === target.worktreePath &&
-            state.newSessionModeTarget?.origin === target.origin
+            state.newSessionModeTarget?.origin === target.origin &&
+            state.newSessionModeTarget?.intent === target.intent
               ? state
               : { newSessionModeTarget: target },
           undefined,

@@ -985,6 +985,7 @@ export interface AppPreferences {
   confirm_session_close: boolean // Show confirmation dialog before closing sessions/worktrees
   default_execution_mode: ExecutionMode // Default execution mode for new sessions: 'plan', 'build', or 'yolo'
   default_backend: CliBackend // Default CLI backend for new sessions: 'claude', 'codex', 'opencode', or 'cursor'
+  default_new_session_kind: NewSessionKind // Default action for CMD+T: 'chat', 'terminal', or a CLI backend
   selected_codex_model: CodexModel // Default Codex model
   selected_opencode_model: string // Default OpenCode model (provider/model)
   selected_cursor_model: CursorModel // Default Cursor model
@@ -1464,6 +1465,27 @@ export const openInDefaultOptions: { value: OpenInDefault; label: string }[] = [
   { value: 'github', label: 'GitHub' },
 ]
 
+export type NewSessionKind = 'chat' | 'terminal' | CliBackend
+
+export const newSessionKindOptions: {
+  value: NewSessionKind
+  label: string
+}[] = [
+  { value: 'chat', label: 'Jean Chat' },
+  { value: 'terminal', label: 'Terminal' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'claude', label: 'Claude' },
+  { value: 'opencode', label: 'OpenCode' },
+  { value: 'cursor', label: 'Cursor' },
+]
+
+export function getNewSessionKindLabel(
+  kind: NewSessionKind | undefined
+): string {
+  const option = newSessionKindOptions.find(opt => opt.value === kind)
+  return option?.label ?? 'Jean Chat'
+}
+
 export function getOpenInDefaultLabel(
   openIn: OpenInDefault | undefined,
   editor: EditorApp | undefined,
@@ -1735,6 +1757,7 @@ export const defaultPreferences: AppPreferences = {
   confirm_session_close: true, // Default: enabled (show confirmation)
   default_execution_mode: 'plan', // Default: plan mode
   default_backend: 'claude', // Default: Claude
+  default_new_session_kind: 'chat', // Default: Jean Chat for CMD+T
   selected_codex_model: 'gpt-5.5', // Default: latest Codex model
   selected_opencode_model: 'opencode/gpt-5.3-codex', // Default OpenCode model
   selected_cursor_model: 'cursor/auto', // Default Cursor model

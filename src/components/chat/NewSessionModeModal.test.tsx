@@ -116,6 +116,36 @@ describe('NewSessionModeModal', () => {
     )
   })
 
+  it('auto-opens the default Jean chat session without showing the picker', async () => {
+    mutate.mockImplementation(
+      (
+        _args: unknown,
+        opts?: { onSuccess?: (session: { id: string }) => void }
+      ) => {
+        opts?.onSuccess?.({ id: 'session-default' })
+      }
+    )
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+      intent: 'default',
+    })
+
+    render(<NewSessionModeModal />)
+
+    await waitFor(() => {
+      expect(mutate).toHaveBeenCalledWith(
+        { worktreeId: 'worktree-1', worktreePath: '/tmp/worktree-1' },
+        expect.any(Object)
+      )
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(useChatStore.getState().activeSessionIds['worktree-1']).toBe(
+      'session-default'
+    )
+  })
+
   it('opens an installed backend picker and starts a new terminal session', async () => {
     mutate.mockImplementation(
       (

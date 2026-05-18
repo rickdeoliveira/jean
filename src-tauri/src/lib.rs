@@ -213,6 +213,8 @@ pub struct AppPreferences {
     pub default_execution_mode: String, // Default execution mode: "plan", "build", or "yolo"
     #[serde(default = "default_backend")]
     pub default_backend: String, // Default CLI backend: "claude", "codex", "opencode", or "cursor"
+    #[serde(default = "default_new_session_kind")]
+    pub default_new_session_kind: String, // Default new session action: "chat", "terminal", or a CLI backend
     #[serde(default = "default_codex_model")]
     pub selected_codex_model: String, // Default Codex model
     #[serde(default = "default_opencode_model")]
@@ -469,6 +471,10 @@ fn default_execution_mode() -> String {
 
 fn default_backend() -> String {
     "claude".to_string()
+}
+
+fn default_new_session_kind() -> String {
+    "chat".to_string()
 }
 
 fn default_cli_source() -> String {
@@ -1628,6 +1634,7 @@ impl Default for AppPreferences {
             confirm_session_close: default_confirm_session_close(),
             default_execution_mode: default_execution_mode(),
             default_backend: default_backend(),
+            default_new_session_kind: default_new_session_kind(),
             selected_codex_model: default_codex_model(),
             selected_opencode_model: default_opencode_model(),
             selected_cursor_model: default_cursor_model(),

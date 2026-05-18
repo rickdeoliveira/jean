@@ -502,6 +502,7 @@ export function SessionChatModal({
       worktreeId,
       worktreePath,
       origin: 'modal',
+      intent: 'picker',
     })
   }, [worktreeId, worktreePath])
 
@@ -509,14 +510,22 @@ export function SessionChatModal({
     if (!isOpen) return
     const handler = (e: Event) => {
       e.stopImmediatePropagation()
-      handleCreateSession()
+      const intent =
+        (e as CustomEvent<{ intent?: 'default' | 'picker' }>).detail?.intent ??
+        'picker'
+      useUIStore.getState().openNewSessionModeModal({
+        worktreeId,
+        worktreePath,
+        origin: 'modal',
+        intent,
+      })
     }
     window.addEventListener('create-new-session', handler, { capture: true })
     return () =>
       window.removeEventListener('create-new-session', handler, {
         capture: true,
       })
-  }, [handleCreateSession, isOpen])
+  }, [isOpen, worktreeId, worktreePath])
 
   // Sorted tab order: attention and active sessions first, review next,
   // idle/new empty sessions last.

@@ -81,7 +81,8 @@ export const DEFAULT_KEYBINDINGS: KeybindingsMap = {
   execute_run: 'mod+r',
   open_in_modal: 'mod+o',
   open_magic_modal: 'mod+m',
-  new_session: 'mod+t',
+  new_session: 'mod+t', // Open configured default new session
+  open_new_session_modal: 'mod+shift+t',
   next_session: 'mod+alt+arrowright',
   previous_session: 'mod+alt+arrowleft',
   close_session_or_worktree: 'mod+w',
@@ -90,7 +91,7 @@ export const DEFAULT_KEYBINDINGS: KeybindingsMap = {
   previous_worktree: 'mod+alt+arrowup',
   cycle_execution_mode: 'shift+tab',
   approve_plan: 'mod+enter',
-  restore_last_archived: 'mod+shift+t',
+  restore_last_archived: 'mod+alt+shift+t',
 }
 ```
 

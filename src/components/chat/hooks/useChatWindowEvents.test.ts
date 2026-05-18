@@ -126,6 +126,7 @@ describe('useChatWindowEvents worktree approval shortcuts', () => {
       worktreeId: 'worktree-1',
       worktreePath: '/tmp/worktree-1',
       origin: 'chat',
+      intent: 'picker',
     })
   })
 

@@ -132,6 +132,8 @@ import {
   type NotificationSound,
   openInDefaultOptions,
   type OpenInDefault,
+  newSessionKindOptions,
+  type NewSessionKind,
 } from '@/types/preferences'
 import {
   CURSOR_MODEL_OPTIONS,
@@ -811,6 +813,12 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const handleOpenInChange = (value: OpenInDefault) => {
     if (preferences) {
       patchPreferences.mutate({ open_in: value })
+    }
+  }
+
+  const handleNewSessionKindChange = (value: NewSessionKind) => {
+    if (preferences) {
+      patchPreferences.mutate({ default_new_session_kind: value })
     }
   }
 
@@ -3020,6 +3028,27 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Select>
               </InlineField>
             )}
+
+            <InlineField
+              label="New Session"
+              description="Default action for CMD+T"
+            >
+              <Select
+                value={preferences?.default_new_session_kind ?? 'chat'}
+                onValueChange={handleNewSessionKindChange}
+              >
+                <SelectTrigger className="w-full sm:min-w-96">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {newSessionKindOptions.map(option => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </InlineField>
 
             <InlineField
               label="Git poll interval"

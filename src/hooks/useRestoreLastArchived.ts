@@ -18,7 +18,7 @@ type ArchivedItem =
   | { type: 'session'; entry: ArchivedSessionEntry }
 
 /**
- * Hook to handle CMD+SHIFT+T keybinding for restoring the most recently archived item.
+ * Hook to handle the restore-last-archived keybinding for restoring the most recently archived item.
  * Similar to browser tab restore functionality.
  *
  * Fetches fresh archived data on each invocation (not from stale closure) to ensure
@@ -99,7 +99,7 @@ export function useRestoreLastArchived() {
         onSuccess: () => {
           navigateToRestoredItem(worktree.id, worktree.path)
           toast.success(`Restored worktree: ${worktree.name}`)
-          logger.info('Restored worktree via CMD+SHIFT+T', {
+          logger.info('Restored worktree via restore-last-archived shortcut', {
             worktree: worktree.name,
           })
         },
@@ -138,9 +138,12 @@ export function useRestoreLastArchived() {
                 entry.session.id
               )
               toast.success(`Restored session: ${entry.session.name}`)
-              logger.info('Restored session via CMD+SHIFT+T', {
-                session: entry.session.name,
-              })
+              logger.info(
+                'Restored session via restore-last-archived shortcut',
+                {
+                  session: entry.session.name,
+                }
+              )
             },
           }
         )

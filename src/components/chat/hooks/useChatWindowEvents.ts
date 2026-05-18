@@ -208,14 +208,18 @@ export function useChatWindowEvents({
     setIsPlanDialogOpen,
   ])
 
-  // CMD+T: Open new session picker
+  // CMD+T: Open configured default; CMD+SHIFT+T / plus buttons open picker
   useEffect(() => {
-    const handler = () => {
+    const handler = (event: Event) => {
       if (!activeWorktreeId || !activeWorktreePath) return
+      const intent =
+        (event as CustomEvent<{ intent?: 'default' | 'picker' }>).detail
+          ?.intent ?? 'picker'
       useUIStore.getState().openNewSessionModeModal({
         worktreeId: activeWorktreeId,
         worktreePath: activeWorktreePath,
         origin: isModal ? 'modal' : 'chat',
+        intent,
       })
     }
     window.addEventListener('create-new-session', handler)

@@ -318,7 +318,20 @@ function executeKeybindingAction(
       // When terminal is focused, CMD+T should create a terminal tab.
       if (addTerminalTabForShortcut()) break
       logger.debug('Keybinding: new_session')
-      window.dispatchEvent(new CustomEvent('create-new-session'))
+      window.dispatchEvent(
+        new CustomEvent('create-new-session', {
+          detail: { intent: 'default' },
+        })
+      )
+      break
+    }
+    case 'open_new_session_modal': {
+      logger.debug('Keybinding: open_new_session_modal')
+      window.dispatchEvent(
+        new CustomEvent('create-new-session', {
+          detail: { intent: 'picker' },
+        })
+      )
       break
     }
     case 'next_session':
@@ -554,10 +567,7 @@ export function useMainWindowEventListeners() {
         }
       }
 
-      if (
-        shortcut === 'mod+shift+escape' &&
-        blurFocusedTerminalForShortcut()
-      ) {
+      if (shortcut === 'mod+shift+escape' && blurFocusedTerminalForShortcut()) {
         e.preventDefault()
         e.stopPropagation()
         return
@@ -627,6 +637,7 @@ export function useMainWindowEventListeners() {
           if (
             shortcut === kb.toggle_terminal ||
             shortcut === kb.toggle_browser ||
+            shortcut === kb.open_new_session_modal ||
             shortcut === kb.cancel_prompt
           ) {
             // Let these fall through to the normal keybinding handler below

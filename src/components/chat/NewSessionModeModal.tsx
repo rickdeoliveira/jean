@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquarePlus, Loader2, Terminal } from 'lucide-react'
 import {
   Dialog,
@@ -21,6 +21,7 @@ import {
   getBackendPlainLabel,
 } from '@/components/ui/backend-label'
 import type { CliBackend } from '@/types/preferences'
+import { usePreferences } from '@/services/preferences'
 import {
   NativeCliSessionsModal,
   type NativeCliSessionKind,
@@ -43,8 +44,10 @@ export function NewSessionModeModal() {
   const codexStatus = useCodexCliStatus({ enabled: target !== null })
   const opencodeStatus = useOpencodeCliStatus({ enabled: target !== null })
   const cursorStatus = useCursorCliStatus({ enabled: target !== null })
+  const { data: preferences } = usePreferences()
   const [nativePickerKind, setNativePickerKind] =
     useState<NativeCliSessionKind | null>(null)
+  const autoHandledTargetRef = useRef<string | null>(null)
   const open = target !== null
 
   const installedBackendChoices = useMemo(
@@ -139,9 +142,35 @@ export function NewSessionModeModal() {
   }, [])
 
   const closeAll = useCallback(() => {
+    autoHandledTargetRef.current = null
     setNativePickerKind(null)
     close()
   }, [close])
+
+  useEffect(() => {
+    if (!target || target.intent !== 'default') {
+      autoHandledTargetRef.current = null
+      return
+    }
+    if (!preferences) return
+
+    const defaultKind = preferences.default_new_session_kind ?? 'chat'
+    const targetKey = `${target.worktreeId}:${target.worktreePath}:${target.origin}:${defaultKind}`
+    if (autoHandledTargetRef.current === targetKey) return
+    autoHandledTargetRef.current = targetKey
+
+    if (defaultKind === 'chat') {
+      chooseChat()
+      return
+    }
+
+    if (defaultKind === 'terminal') {
+      setNativePickerKind('terminal')
+      return
+    }
+
+    setNativePickerKind(defaultKind)
+  }, [chooseChat, preferences?.default_new_session_kind, target])
 
   useEffect(() => {
     if (!open || nativePickerKind !== null) return
@@ -189,7 +218,7 @@ export function NewSessionModeModal() {
   return (
     <>
       <Dialog
-        open={open && nativePickerKind === null}
+        open={open && nativePickerKind === null && target?.intent !== 'default'}
         onOpenChange={nextOpen => !nextOpen && closeAll()}
       >
         <DialogContent className="w-[min(420px,calc(100vw-32px))] gap-3 p-4 sm:max-w-[420px]">
@@ -275,6 +304,7 @@ export function NewSessionModeModal() {
           onBack={() => setNativePickerKind(null)}
           onClose={closeAll}
           onOpenSessionModal={openSessionModal}
+          autoStartNew={target.intent === 'default'}
         />
       )}
     </>
