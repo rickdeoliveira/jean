@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useTheme } from '@/hooks/use-theme'
+import { isNativeApp } from '@/lib/environment'
 import {
   Toaster as Sonner,
   toast,
@@ -14,6 +15,7 @@ const POINTER_DISMISS_THRESHOLD = 28
 const WHEEL_DISMISS_THRESHOLD = 32
 const WHEEL_DISMISS_RESET_MS = 180
 const TOASTER_Z_INDEX = 2147483647
+const MOBILE_BREAKPOINT = 768
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest('button, a'))
@@ -180,7 +182,10 @@ function isToastAction(action: ToastT['action']): action is Action {
 
 export function triggerLatestToastAction(toasts: ToastT[]): boolean {
   for (let index = toasts.length - 1; index >= 0; index -= 1) {
-    const action = toasts[index]?.action
+    const targetToast = toasts[index]
+    if (!targetToast) continue
+
+    const action = targetToast.action
     if (!isToastAction(action)) continue
 
     action.onClick(
@@ -189,10 +194,19 @@ export function triggerLatestToastAction(toasts: ToastT[]): boolean {
         MouseEvent
       >
     )
+    toast.dismiss(targetToast.id)
     return true
   }
 
   return false
+}
+
+export function shouldEnableToastActionHotkey(
+  viewportWidth = typeof window === 'undefined'
+    ? MOBILE_BREAKPOINT
+    : window.innerWidth
+): boolean {
+  return isNativeApp() && viewportWidth >= MOBILE_BREAKPOINT
 }
 
 function ToastActionHotkey() {
@@ -204,6 +218,8 @@ function ToastActionHotkey() {
   }, [toasts])
 
   useEffect(() => {
+    if (!shouldEnableToastActionHotkey()) return
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
         event.altKey &&

@@ -44,6 +44,11 @@ vi.mock('@/services/projects', () => ({
   updateWorktreeCachedStatus: vi.fn(),
 }))
 
+vi.mock('@/lib/environment', async importOriginal => ({
+  ...(await importOriginal()),
+  isNativeApp: () => true,
+}))
+
 vi.mock('sonner', () => ({
   toast: mockToast,
 }))
@@ -78,6 +83,10 @@ describe('git-status service', () => {
   beforeEach(async () => {
     queryClient = createTestQueryClient()
     vi.clearAllMocks()
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1024,
+    })
     mockToast.loading.mockReturnValue('toast-1')
     mockIsWorktreeRunningNonPlan.mockReturnValue(false)
     // Mock Tauri environment

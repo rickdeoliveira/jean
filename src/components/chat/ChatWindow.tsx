@@ -1773,7 +1773,6 @@ export function ChatWindow({
     handleSubmit,
     handleCancel,
     handleGitDiffAddToPrompt,
-    handleGitDiffExecutePrompt,
   } = useMessageSending({
     activeSessionId,
     activeWorktreeId,
@@ -1791,10 +1790,10 @@ export function ChatWindow({
     selectedBackendRef,
     preferences,
     sendMessage,
+    createSession,
     queryClient,
     markAtBottom,
     sessionsData,
-    setInputDraft,
     clearInputDraft,
     clearChatInputState: () => clearChatInputStateRef.current?.(),
   })
@@ -3210,7 +3209,6 @@ export function ChatWindow({
             diffRequest={diffRequest}
             onClose={() => setDiffRequest(null)}
             onAddToPrompt={handleGitDiffAddToPrompt}
-            onExecutePrompt={handleGitDiffExecutePrompt}
             uncommittedStats={{
               added: uncommittedAdded,
               removed: uncommittedRemoved,

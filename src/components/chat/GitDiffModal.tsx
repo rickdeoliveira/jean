@@ -17,7 +17,6 @@ import {
   GitBranch,
   GitCommitHorizontal,
   MessageSquarePlus,
-  Play,
   Pencil,
   X,
   Search,
@@ -195,8 +194,6 @@ interface GitDiffModalProps {
   onClose: () => void
   /** Callback when user wants to add comments to input for editing */
   onAddToPrompt?: (reference: string) => void
-  /** Callback when user wants to execute comments immediately */
-  onExecutePrompt?: (reference: string) => void
   /** Uncommitted change stats (for switcher) */
   uncommittedStats?: DiffStats
   /** Branch diff stats (for switcher) */
@@ -234,7 +231,6 @@ export function GitDiffModal({
   diffRequest,
   onClose,
   onAddToPrompt,
-  onExecutePrompt,
   uncommittedStats,
   branchStats,
 }: GitDiffModalProps) {
@@ -540,14 +536,6 @@ export function GitDiffModal({
     setComments([])
     onClose()
   }, [comments, onAddToPrompt, formatComments, onClose])
-
-  // Execute comments immediately
-  const handleExecutePrompt = useCallback(() => {
-    if (comments.length === 0 || !onExecutePrompt) return
-    onExecutePrompt(formatComments())
-    setComments([])
-    onClose()
-  }, [comments, onExecutePrompt, formatComments, onClose])
 
   // PERFORMANCE: Pre-compute annotations map for stable references
   // This ensures that files without comment changes don't re-render
@@ -1152,30 +1140,17 @@ export function GitDiffModal({
                   <TooltipContent>Unified view</TooltipContent>
                 </Tooltip>
               </div>
-              {/* Execute and Edit buttons */}
-              {comments.length > 0 && (onAddToPrompt || onExecutePrompt) && (
+              {/* Add selected comments to a new prompt session */}
+              {comments.length > 0 && onAddToPrompt && (
                 <div className="flex shrink-0 items-center gap-1">
-                  {onExecutePrompt && (
-                    <button
-                      type="button"
-                      onClick={handleExecutePrompt}
-                      className="flex h-7 shrink-0 items-center gap-1.5 px-2 sm:px-3 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded-md text-xs font-medium transition-colors"
-                    >
-                      <Play className="h-3.5 w-3.5 shrink-0" />
-                      <span className="hidden sm:inline">Execute</span> (
-                      {comments.length})
-                    </button>
-                  )}
-                  {onAddToPrompt && (
-                    <button
-                      type="button"
-                      onClick={handleAddToPrompt}
-                      className="flex h-7 shrink-0 items-center gap-1.5 px-2 sm:px-3 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded-md text-xs font-medium transition-colors"
-                    >
-                      <Pencil className="h-3.5 w-3.5 shrink-0" />
-                      <span className="hidden sm:inline">Add to prompt</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleAddToPrompt}
+                    className="flex h-7 shrink-0 items-center gap-1.5 px-2 sm:px-3 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md text-xs font-medium transition-colors"
+                  >
+                    <Pencil className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden sm:inline">Add to prompt</span>
+                  </button>
                 </div>
               )}
               {activeDiffType === 'uncommitted' &&
@@ -1260,7 +1235,7 @@ export function GitDiffModal({
               worktreePath={diffRequest.worktreePath}
               baseBranch={diffRequest.baseBranch}
               diffStyle={diffStyle}
-              onExecutePrompt={onExecutePrompt}
+              onAddToPrompt={onAddToPrompt}
               onClose={onClose}
             />
           )}
