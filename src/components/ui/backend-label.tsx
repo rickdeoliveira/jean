@@ -6,6 +6,7 @@ import { ClaudeIcon } from '@/components/icons/ClaudeIcon'
 import { CodexIcon } from '@/components/icons/CodexIcon'
 import { OpenCodeIcon } from '@/components/icons/OpenCodeIcon'
 import { CursorIcon } from '@/components/icons/CursorIcon'
+import { PiIcon } from '@/components/icons/PiIcon'
 import { CommandCodeIcon } from '@/components/icons/CommandCodeIcon'
 import type { CliBackend } from '@/types/preferences'
 
@@ -23,6 +24,8 @@ export function getBackendIcon(backend: CliBackend): BackendIconComponent {
       return OpenCodeIcon
     case 'cursor':
       return CursorIcon
+    case 'pi':
+      return PiIcon
     case 'commandcode':
       return CommandCodeIcon
   }
@@ -38,13 +41,15 @@ export function getBackendLabel(backend: CliBackend): string {
       return 'OpenCode'
     case 'cursor':
       return 'Cursor'
+    case 'pi':
+      return 'Pi'
     case 'commandcode':
       return 'Command Code'
   }
 }
 
 export function isBetaBackend(backend: CliBackend): boolean {
-  return backend === 'commandcode'
+  return backend === 'pi' || backend === 'commandcode'
 }
 
 export function getBackendPlainLabel(backend: CliBackend): string {

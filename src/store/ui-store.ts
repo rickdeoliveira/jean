@@ -7,6 +7,7 @@ export type PreferencePane =
   | 'codex'
   | 'opencode'
   | 'cursor'
+  | 'pi'
   | 'commandcode'
   | 'github'
   | 'coderabbit'
@@ -41,6 +42,7 @@ export type CliUpdateModalType =
   | 'gh'
   | 'codex'
   | 'opencode'
+  | 'pi'
   | 'coderabbit'
   | 'commandcode'
   | null
@@ -51,6 +53,7 @@ export type CliLoginModalType =
   | 'codex'
   | 'opencode'
   | 'cursor'
+  | 'pi'
   | 'commandcode'
   | 'coderabbit'
   | null

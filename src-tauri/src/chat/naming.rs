@@ -546,8 +546,7 @@ fn generate_names_codex(
         .map_err(|e| format!("Failed to parse Codex naming JSON: {e}, raw: {json_str}"))
 }
 
-/// Generate names using Cursor Agent in one-shot mode.
-
+/// Generate names using PI in one-shot mode.
 fn generate_names_pi(
     app: &AppHandle,
     prompt: &str,
@@ -563,7 +562,7 @@ fn generate_names_pi(
     )?;
     let json = extract_json_object(&text)
         .ok_or_else(|| "No JSON object found in PI naming response".to_string())?;
-    serde_json::from_str(&json).map_err(|e| format!("Failed to parse PI naming JSON: {e}"))
+    serde_json::from_str(json).map_err(|e| format!("Failed to parse PI naming JSON: {e}"))
 }
 
 fn generate_names_cursor(

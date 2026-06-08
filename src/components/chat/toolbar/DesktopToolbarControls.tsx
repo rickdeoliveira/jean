@@ -66,7 +66,13 @@ import { DockBurgerButton } from '@/components/chat/toolbar/DockBurgerButton'
 
 interface DesktopToolbarControlsProps {
   hasPendingQuestions: boolean
-  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+  selectedBackend:
+    | 'claude'
+    | 'codex'
+    | 'opencode'
+    | 'cursor'
+    | 'pi'
+    | 'commandcode'
   selectedModel: string
   selectedProvider: string | null
   selectedThinkingLevel: ThinkingLevel
@@ -116,6 +122,7 @@ interface DesktopToolbarControlsProps {
     | 'codex'
     | 'opencode'
     | 'cursor'
+    | 'pi'
     | 'commandcode'
   )[]
   onSetExecutionMode: (mode: ExecutionMode) => void
@@ -124,7 +131,7 @@ interface DesktopToolbarControlsProps {
 
   handleModelChange: (value: string) => void
   handleBackendModelChange: (
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode',
+    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode',
     model: string
   ) => void
   handleProviderChange: (value: string) => void

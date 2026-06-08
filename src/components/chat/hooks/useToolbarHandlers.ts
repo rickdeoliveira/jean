@@ -23,12 +23,19 @@ interface UseToolbarHandlersParams {
   activeWorktreeIdRef: RefObject<string | null | undefined>
   activeWorktreePathRef: RefObject<string | null | undefined>
   enabledMcpServersRef: RefObject<string[]>
-  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+  selectedBackend:
+    | 'claude'
+    | 'codex'
+    | 'opencode'
+    | 'cursor'
+    | 'pi'
+    | 'commandcode'
   installedBackends: (
     | 'claude'
     | 'codex'
     | 'opencode'
     | 'cursor'
+    | 'pi'
     | 'commandcode'
   )[]
   session: Session | null | undefined
@@ -89,7 +96,13 @@ export function useToolbarHandlers({
 }: UseToolbarHandlersParams) {
   const persistToolbarBackendAndModel = useCallback(
     (
-      backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode',
+      backend:
+        | 'claude'
+        | 'codex'
+        | 'opencode'
+        | 'cursor'
+        | 'pi'
+        | 'commandcode',
       model: string
     ) => {
       const currentMode =
@@ -212,7 +225,9 @@ export function useToolbarHandlers({
   )
 
   const handleToolbarBackendChange = useCallback(
-    (backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode') => {
+    (
+      backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
+    ) => {
       const model = resolveDefaultModelForBackend(backend, preferences)
 
       persistToolbarBackendAndModel(backend, model)
@@ -229,7 +244,13 @@ export function useToolbarHandlers({
 
   const handleToolbarBackendModelChange = useCallback(
     (
-      backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode',
+      backend:
+        | 'claude'
+        | 'codex'
+        | 'opencode'
+        | 'cursor'
+        | 'pi'
+        | 'commandcode',
       model: string
     ) => {
       persistToolbarBackendAndModel(backend, model)

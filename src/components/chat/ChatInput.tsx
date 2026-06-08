@@ -72,7 +72,13 @@ interface ChatInputProps {
   formRef: React.RefObject<HTMLFormElement | null>
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   installedBackends?: CliBackend[]
-  selectedBackend?: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+  selectedBackend?:
+    | 'claude'
+    | 'codex'
+    | 'opencode'
+    | 'cursor'
+    | 'pi'
+    | 'commandcode'
 }
 
 export const ChatInput = memo(function ChatInput({

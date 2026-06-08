@@ -138,7 +138,10 @@ import { buildMcpConfigJson } from '@/services/mcp'
 import type { McpServerInfo } from '@/types/chat'
 import { useGitStatus } from '@/services/git-status'
 import { useRemotePicker } from '@/hooks/useRemotePicker'
-import { supportsAdaptiveThinking } from '@/lib/model-utils'
+import {
+  getModelImpliedBackend,
+  supportsAdaptiveThinking,
+} from '@/lib/model-utils'
 import { copyToClipboard, copyHtmlToClipboard } from '@/lib/clipboard'
 import { useClaudeCliStatus } from '@/services/claude-cli'
 import { usePrStatus, usePrStatusEvents } from '@/services/pr-status'
@@ -599,15 +602,9 @@ export function ChatWindow({
     globalDefaultBackend
   // Model string is definitive backend source (matches Rust safety net in send_chat_message).
   // Prevents race where setSessionModel invalidation refetches before setSessionBackend persists.
-  const modelImpliedBackend: CliBackend | null =
-    session?.selected_model?.startsWith('cursor/')
-      ? 'cursor'
-      : session?.selected_model?.startsWith('opencode/')
-        ? 'opencode'
-        : session?.selected_model?.startsWith('codex') ||
-            session?.selected_model?.includes('codex')
-          ? 'codex'
-          : null
+  const modelImpliedBackend: CliBackend | null = getModelImpliedBackend(
+    session?.selected_model
+  )
   // Clamp to installed backends — prevents showing "Claude" when only Codex is installed
   const selectedBackend: CliBackend =
     modelImpliedBackend ??
@@ -1159,10 +1156,12 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : yoloBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : yoloBackend === 'commandcode'
-                ? (preferences?.selected_commandcode_model ??
-                  'commandcode/default')
-                : selectedModelRef.current)
+              : yoloBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : yoloBackend === 'commandcode'
+                  ? (preferences?.selected_commandcode_model ??
+                    'commandcode/default')
+                  : selectedModelRef.current)
       const yoloOverride =
         yoloModelRef.current || yoloBackend
           ? [yoloBackend, yoloModel].filter(Boolean).join(' / ')
@@ -1336,10 +1335,12 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : buildBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : buildBackend === 'commandcode'
-                ? (preferences?.selected_commandcode_model ??
-                  'commandcode/default')
-                : selectedModelRef.current)
+              : buildBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : buildBackend === 'commandcode'
+                  ? (preferences?.selected_commandcode_model ??
+                    'commandcode/default')
+                  : selectedModelRef.current)
       const buildOverride =
         buildModelRef.current || buildBackend
           ? [buildBackend, buildModel].filter(Boolean).join(' / ')
@@ -1592,10 +1593,12 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : modeBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : modeBackend === 'commandcode'
-                ? (preferences?.selected_commandcode_model ??
-                  'commandcode/default')
-                : selectedModelRef.current)
+              : modeBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : modeBackend === 'commandcode'
+                  ? (preferences?.selected_commandcode_model ??
+                    'commandcode/default')
+                  : selectedModelRef.current)
       const modeOverride =
         modeModelRef.current || modeBackend
           ? [modeBackend, modeModel].filter(Boolean).join(' / ')

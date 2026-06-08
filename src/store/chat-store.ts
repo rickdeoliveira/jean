@@ -140,7 +140,7 @@ interface ChatUIState {
   // Selected backend per session (claude, codex, opencode, or cursor)
   selectedBackends: Record<
     string,
-    'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+    'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
   >
 
   // Selected model per session (for tracking what model was used)
@@ -437,7 +437,7 @@ interface ChatUIState {
   // Actions - Selected backend (session-based)
   setSelectedBackend: (
     sessionId: string,
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
   ) => void
 
   // Actions - Selected model (session-based)

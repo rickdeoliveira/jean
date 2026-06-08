@@ -89,11 +89,12 @@ export interface ChatToolbarProps {
     | 'codex'
     | 'opencode'
     | 'cursor'
+    | 'pi'
     | 'commandcode'
   )[]
   onModelChange: (model: ClaudeModel) => void
   onBackendModelChange: (
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode',
+    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode',
     model: string
   ) => void
   onProviderChange: (provider: string | null) => void

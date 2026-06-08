@@ -34,13 +34,23 @@ export function usePiPathDetection(options?: { enabled?: boolean }) {
       package_manager: string | null
     }> => {
       if (!isTauri()) {
-        return { found: false, path: null, version: null, package_manager: null }
+        return {
+          found: false,
+          path: null,
+          version: null,
+          package_manager: null,
+        }
       }
       try {
         return await invoke('detect_pi_in_path')
       } catch (error) {
         logger.debug('PI path detection failed', { error })
-        return { found: false, path: null, version: null, package_manager: null }
+        return {
+          found: false,
+          path: null,
+          version: null,
+          package_manager: null,
+        }
       }
     },
     enabled: options?.enabled ?? true,
@@ -72,7 +82,8 @@ export function usePiCliAuth(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: piCliQueryKeys.auth(),
     queryFn: async (): Promise<PiAuthStatus> => {
-      if (!isTauri()) return { authenticated: false, error: 'Not in Tauri context' }
+      if (!isTauri())
+        return { authenticated: false, error: 'Not in Tauri context' }
       try {
         return await invoke<PiAuthStatus>('check_pi_cli_auth')
       } catch (error) {

@@ -8,20 +8,12 @@ import type {
 import type { AppPreferences } from '@/types/preferences'
 import type { Project } from '@/types/projects'
 import { getSessionProviderDisplayName } from '@/components/chat/toolbar/toolbar-utils'
+import { getModelImpliedBackend } from '@/lib/model-utils'
 
 export interface ResolvedSessionDebugDetails {
   selectedBackend: Backend
   selectedModel: string
   providerDisplay: string
-}
-
-function getModelImpliedBackend(model: string | undefined): Backend | null {
-  if (!model) return null
-  if (model.startsWith('cursor/')) return 'cursor'
-  if (model.startsWith('opencode/')) return 'opencode'
-  if (model.startsWith('codex') || model.includes('codex')) return 'codex'
-  if (model.startsWith('gpt-')) return 'codex'
-  return null
 }
 
 export function resolveSessionDebugDetails(params: {
@@ -76,9 +68,12 @@ export function resolveSessionDebugDetails(params: {
         ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
         : finalBackend === 'cursor'
           ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-          : finalBackend === 'commandcode'
-            ? (preferences?.selected_commandcode_model ?? 'commandcode/default')
-            : (preferences?.selected_model ?? 'claude-opus-4-8[1m]')
+          : finalBackend === 'pi'
+            ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+            : finalBackend === 'commandcode'
+              ? (preferences?.selected_commandcode_model ??
+                'commandcode/default')
+              : (preferences?.selected_model ?? 'claude-opus-4-8[1m]')
 
   return {
     selectedBackend: finalBackend,

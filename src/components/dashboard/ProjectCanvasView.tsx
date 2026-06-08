@@ -161,7 +161,6 @@ const LinkedProjectsModal = lazy(() =>
     default: mod.LinkedProjectsModal,
   }))
 )
-const EMPTY_PINNED_LABELS: LabelData[] = []
 import type { DiffRequest } from '@/types/git-diff'
 import { toast } from 'sonner'
 import {

@@ -38,7 +38,7 @@ interface UseMessageSendingParams {
   mcpServersDataRef: RefObject<McpServerInfo[] | undefined>
   enabledMcpServersRef: RefObject<string[]>
   selectedBackendRef: RefObject<
-    'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+    'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
   >
   preferences:
     | {

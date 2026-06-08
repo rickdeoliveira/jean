@@ -98,7 +98,7 @@ interface UseMessageHandlersParams {
   yoloThinkingLevelRef: RefObject<string | null>
   yoloEffortLevelRef: RefObject<string | null>
   selectedBackendRef: RefObject<
-    'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+    'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
   >
   getCustomProfileName: () => string | undefined
   executionModeRef: RefObject<ExecutionMode>
@@ -229,6 +229,9 @@ function getDefaultModelForBackend(
   }
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
+  }
+  if (backend === 'pi') {
+    return preferences?.selected_pi_model ?? 'pi/sonnet'
   }
   if (backend === 'commandcode') {
     return preferences?.selected_commandcode_model ?? 'commandcode/default'

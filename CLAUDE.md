@@ -372,7 +372,7 @@ No Rust changes needed — model is stored as `String` in `AppPreferences` and p
 
 #### Adding a New AI Backend
 
-When adding a backend like Claude, Codex, OpenCode, Cursor, or a future CLI/API backend, verify the integration is complete across Rust, TypeScript, UI, persistence, and web access.
+When adding a backend like Claude, Codex, OpenCode, Cursor, Pi, Command Code, or a future CLI/API backend, verify the integration is complete across Rust, TypeScript, UI, persistence, and web access.
 
 **Backend capability classification:**
 
@@ -434,13 +434,14 @@ When adding a backend like Claude, Codex, OpenCode, Cursor, or a future CLI/API 
 
 - [ ] Add permission/user-input approval structs, events, UI, persistence, and approve/deny commands if backend supports them
 - [ ] Add one-shot execution support for all magic prompt operations (session naming, context summary, PR content, commit message, code review, resolve conflicts, release notes, investigations, review comments)
-- [ ] Add robust structured JSON extraction for one-shot outputs
+- [ ] Add robust structured JSON extraction for one-shot outputs; define the backend-specific strategy (native JSON schema/tool call, strict JSON text, repair pass, or unsupported-with-UI-disable)
 - [ ] For non-JSON-capable backends, wrap prompts with strict JSON instructions and implement tolerant extraction/failure messages
 - [ ] Update Magic Prompts UI backend/model/default presets and per-prompt backend/provider/model/effort resolution
 - [ ] Add provider/profile support if backend supports custom routing; respect project/global/per-prompt provider precedence
-- [ ] Add MCP discovery/health/toggle support if backend supports MCP
+- [ ] Add MCP discovery/health/toggle support if backend supports MCP, including settings-pane grouping, chat status dots, and backend-specific auth hints
 - [ ] Update frontend chat/settings/onboarding/usage UI and backend-specific pending request components
 - [ ] Add backend to favorite models and fast-mode model handling if relevant
+- [ ] Update toolbar/model picker behavior for backend tabs, locked sessions, search scoping, keyboard shortcuts, favorites, and fast-mode controls
 
 **Web access, tests, and docs:**
 

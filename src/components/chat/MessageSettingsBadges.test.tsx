@@ -137,9 +137,10 @@ describe('MessageSettingsBadges', () => {
       />
     )
 
-    expect(screen.getByText('GPT 5.5 (OpenAI Codex)')).toBeVisible()
-    expect(screen.getByText('· plan')).toBeVisible()
+    expect(screen.getByText('PI · GPT 5.5 (OpenAI Codex)')).toBeVisible()
+    expect(screen.getByText('· Plan')).toBeVisible()
     expect(screen.getByText('· Low')).toBeVisible()
+    expect(screen.queryByText('· Megathink')).toBeNull()
   })
 
   it('falls back to raw ids for unknown non-slash models', () => {

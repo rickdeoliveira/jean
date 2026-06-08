@@ -42,7 +42,13 @@ interface SlashPopoverProps {
   handleRef?: React.RefObject<SlashPopoverHandle | null>
   installedBackends?: CliBackend[]
   /** Active session backend — gates codex-only built-ins (/goal). */
-  sessionBackend?: 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+  sessionBackend?:
+    | 'claude'
+    | 'codex'
+    | 'opencode'
+    | 'cursor'
+    | 'pi'
+    | 'commandcode'
 }
 
 const CODEX_GOAL_BUILTIN: ClaudeCommand = {

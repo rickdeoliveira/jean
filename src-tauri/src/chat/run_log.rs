@@ -991,7 +991,7 @@ fn should_inject_synthetic_exit_plan(
             .any(|tc| tc.name == "ExitPlanMode" || tc.name == "CodexPlan");
 
     match backend {
-        Backend::Opencode | Backend::Commandcode => base_match,
+        Backend::Opencode | Backend::Pi | Backend::Commandcode => base_match,
         Backend::Cursor => false, // Plan approval only on real createPlanToolCall / interaction_query
         _ => false,
     }
