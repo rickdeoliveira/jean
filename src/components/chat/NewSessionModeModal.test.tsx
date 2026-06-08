@@ -10,6 +10,8 @@ const mutate = vi.fn()
 const invoke = vi.fn()
 let sessionsData: { sessions: unknown[] }
 let nativeSessionsData: unknown[]
+let cursorInstalled: boolean
+let commandCodeInstalled: boolean
 
 vi.mock('@/services/chat', () => ({
   useCreateSession: () => ({
@@ -53,7 +55,20 @@ vi.mock('@/services/opencode-cli', () => ({
 
 vi.mock('@/services/cursor-cli', () => ({
   useCursorCliStatus: () => ({
-    data: { installed: false, path: null },
+    data: {
+      installed: cursorInstalled,
+      path: cursorInstalled ? '/usr/local/bin/cursor-agent' : null,
+    },
+    isLoading: false,
+  }),
+}))
+
+vi.mock('@/services/commandcode-cli', () => ({
+  useCommandCodeCliStatus: () => ({
+    data: {
+      installed: commandCodeInstalled,
+      path: commandCodeInstalled ? '/usr/local/bin/cmd' : null,
+    },
     isLoading: false,
   }),
 }))
@@ -65,6 +80,8 @@ describe('NewSessionModeModal', () => {
     invoke.mockReset()
     sessionsData = { sessions: [] }
     nativeSessionsData = []
+    cursorInstalled = false
+    commandCodeInstalled = false
     invoke.mockResolvedValue({
       commandArgs: ['--context-arg', 'context-value'],
     })
@@ -144,6 +161,25 @@ describe('NewSessionModeModal', () => {
     expect(useChatStore.getState().activeSessionIds['worktree-1']).toBe(
       'session-default'
     )
+  })
+
+  it('marks Command Code, not Cursor, as beta in backend choices', () => {
+    cursorInstalled = true
+    commandCodeInstalled = true
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+
+    expect(screen.getByText('Cursor')).toBeInTheDocument()
+    expect(screen.queryByText('Cursor (Beta)')).toBeNull()
+    expect(screen.getByText('Command Code (Beta)')).toBeInTheDocument()
+    expect(
+      screen.getByText('Open native Command Code (Beta) in a terminal session')
+    ).toBeInTheDocument()
   })
 
   it('opens an installed backend picker and starts a new terminal session', async () => {

@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils'
 import {
   getBackendIcon,
   getBackendPlainLabel,
+  isBetaBackend,
 } from '@/components/ui/backend-label'
 import {
   formatCursorModelLabel,
@@ -656,7 +657,7 @@ function SidebarBackends({
                     {index + 1}
                   </span>
                 )}
-                {backend === 'cursor' && (
+                {isBetaBackend(backend) && (
                   <span
                     aria-hidden
                     className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-yellow-500"
