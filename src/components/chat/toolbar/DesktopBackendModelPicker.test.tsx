@@ -22,6 +22,7 @@ Element.prototype.scrollIntoView = vi.fn()
 const modelMocks = vi.hoisted(() => ({
   opencodeModels: ['openai/gpt-5.4', 'groq/compound-mini'],
   cursorModels: [{ id: 'auto', label: 'Auto' }],
+  piModels: [{ id: 'openai-codex/gpt-5.5', label: 'gpt-5.5 (openai-codex)' }],
 }))
 
 vi.mock('@/services/opencode-cli', () => ({
@@ -36,9 +37,18 @@ vi.mock('@/services/cursor-cli', () => ({
   }),
 }))
 
+vi.mock('@/services/pi-cli', () => ({
+  useAvailablePiModels: () => ({
+    data: modelMocks.piModels,
+  }),
+}))
+
 beforeEach(() => {
   modelMocks.opencodeModels = ['openai/gpt-5.4', 'groq/compound-mini']
   modelMocks.cursorModels = [{ id: 'auto', label: 'Auto' }]
+  modelMocks.piModels = [
+    { id: 'openai-codex/gpt-5.5', label: 'gpt-5.5 (openai-codex)' },
+  ]
   vi.stubGlobal(
     'matchMedia',
     vi.fn().mockImplementation(() => ({
@@ -202,5 +212,33 @@ describe('DesktopBackendModelPicker', () => {
     expect(
       within(list as HTMLElement).getByRole('tab', { name: 'OpenCode' })
     ).toBeDisabled()
+  })
+
+  it('uses active PI provider models in the picker and trigger label', async () => {
+    const user = userEvent.setup()
+    const onModelChange = vi.fn()
+
+    render(
+      <DesktopBackendModelPicker
+        selectedBackend="pi"
+        selectedModel="pi/openai-codex/gpt-5.5"
+        selectedProvider={null}
+        installedBackends={['pi']}
+        customCliProfiles={[]}
+        onModelChange={onModelChange}
+        onBackendModelChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText(/gpt-5\.5 \(openai-codex\)/i)).toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole('button', { name: /choose backend and model/i })
+    )
+
+    expect(
+      await screen.findByText('gpt-5.5 (openai-codex)')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Sonnet (PI)')).toBeNull()
   })
 })

@@ -1104,6 +1104,12 @@ pub async fn dispatch_command(
                     }
                     Some(crate::chat::types::ThinkingLevel::Off)
                 }
+                Some("minimal") => {
+                    if effort_level.is_none() {
+                        effort_level = Some(crate::chat::types::EffortLevel::Minimal);
+                    }
+                    Some(crate::chat::types::ThinkingLevel::Off)
+                }
                 Some("medium") => {
                     if effort_level.is_none() {
                         effort_level = Some(crate::chat::types::EffortLevel::Medium);
@@ -1136,7 +1142,7 @@ pub async fn dispatch_command(
                 }
                 Some(other) => {
                     return Err(format!(
-                            "invalid args `thinkingLevel` for command `send_chat_message`: unknown variant `{other}`, expected one of `off`, `think`, `megathink`, `ultrathink`"
+                            "invalid args `thinkingLevel` for command `send_chat_message`: unknown variant `{other}`, expected one of `off`, `think`, `megathink`, `ultrathink`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultracode`"
                         ));
                 }
             };
@@ -2145,6 +2151,35 @@ pub async fn dispatch_command(
         "get_cursor_install_command" => {
             let result = crate::cursor_cli::get_cursor_install_command(app.clone()).await?;
             to_value(result)
+        }
+        "check_pi_cli_installed" => {
+            let result = crate::pi_cli::check_pi_cli_installed(app.clone()).await?;
+            to_value(result)
+        }
+        "detect_pi_in_path" => {
+            let result = crate::pi_cli::detect_pi_in_path(app.clone()).await?;
+            to_value(result)
+        }
+        "check_pi_cli_auth" => {
+            let result = crate::pi_cli::check_pi_cli_auth(app.clone()).await?;
+            to_value(result)
+        }
+        "list_pi_models" => {
+            let result = crate::pi_cli::list_pi_models(app.clone()).await?;
+            to_value(result)
+        }
+        "get_available_pi_versions" => {
+            let result = crate::pi_cli::get_available_pi_versions(app.clone()).await?;
+            to_value(result)
+        }
+        "install_pi_cli" => {
+            let version: Option<String> = from_field_opt(&args, "version")?;
+            crate::pi_cli::install_pi_cli(app.clone(), version).await?;
+            Ok(Value::Null)
+        }
+        "uninstall_pi_cli" => {
+            crate::pi_cli::uninstall_pi_cli(app.clone()).await?;
+            Ok(Value::Null)
         }
         "check_opencode_cli_installed" => {
             let result = crate::opencode_cli::check_opencode_cli_installed(app.clone()).await?;

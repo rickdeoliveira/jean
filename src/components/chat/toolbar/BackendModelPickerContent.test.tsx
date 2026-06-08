@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { render, screen } from '@/test/test-utils'
+import { render, screen, within } from '@/test/test-utils'
 import { BackendModelPickerContent } from './BackendModelPickerContent'
 
 class ResizeObserverMock {
@@ -25,6 +25,22 @@ vi.mock('@/services/opencode-cli', () => ({
   }),
 }))
 
+vi.mock('@/services/cursor-cli', () => ({
+  useAvailableCursorModels: () => ({
+    data: [{ id: 'auto', label: 'Auto' }],
+  }),
+}))
+
+const mockAvailablePiModels = vi.hoisted(() => ({
+  data: [{ id: 'openai-codex/gpt-5.5', label: 'gpt-5.5 (openai-codex)' }],
+}))
+
+vi.mock('@/services/pi-cli', () => ({
+  useAvailablePiModels: () => ({
+    data: mockAvailablePiModels.data,
+  }),
+}))
+
 const patchPreferencesMutate = vi.fn()
 let mockFavoriteModels: string[] = []
 let mockFastModeModels: string[] = []
@@ -42,6 +58,9 @@ vi.mock('@/services/preferences', () => ({
 beforeEach(() => {
   mockFavoriteModels = []
   mockFastModeModels = []
+  mockAvailablePiModels.data = [
+    { id: 'openai-codex/gpt-5.5', label: 'gpt-5.5 (openai-codex)' },
+  ]
   patchPreferencesMutate.mockClear()
   vi.stubGlobal(
     'matchMedia',
@@ -145,6 +164,81 @@ describe('BackendModelPickerContent', () => {
 
     expect(onModelChange).toHaveBeenCalledWith('gpt-5.4')
     expect(onBackendModelChange).not.toHaveBeenCalled()
+  })
+
+  it('uses active PI provider models instead of static fallback models', () => {
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="pi"
+        selectedModel="pi/openai-codex/gpt-5.5"
+        selectedProvider={null}
+        installedBackends={['pi']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('gpt-5.5 (openai-codex)')).toBeInTheDocument()
+    expect(screen.queryByText('Sonnet (PI)')).toBeNull()
+  })
+
+  it('sorts active PI provider models by raw model version descending', () => {
+    mockAvailablePiModels.data = [
+      {
+        id: 'openai-codex/gpt-5.3-codex-spark',
+        label: 'GPT 5.3 Codex Spark (OpenAI Codex)',
+      },
+      { id: 'openai-codex/gpt-5.4', label: 'GPT 5.4 (OpenAI Codex)' },
+      { id: 'openai-codex/gpt-5.4-mini', label: 'GPT 5.4 Mini (OpenAI Codex)' },
+      { id: 'openai-codex/gpt-5.5', label: 'GPT 5.5 (OpenAI Codex)' },
+    ]
+
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="pi"
+        selectedModel="pi/openai-codex/gpt-5.5"
+        selectedProvider={null}
+        installedBackends={['pi']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    const rows = screen
+      .getAllByRole('option')
+      .map(row => within(row).getByText(/^pi\//).textContent)
+
+    expect(rows).toEqual([
+      'pi/openai-codex/gpt-5.5',
+      'pi/openai-codex/gpt-5.4',
+      'pi/openai-codex/gpt-5.4-mini',
+      'pi/openai-codex/gpt-5.3-codex-spark',
+    ])
+  })
+
+  it('shows the beta dot on the PI backend tab', () => {
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="pi"
+        selectedModel="pi/openai-codex/gpt-5.5"
+        selectedProvider={null}
+        installedBackends={['cursor', 'pi']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    const piTab = screen.getByRole('tab', { name: /pi \(beta\)/i })
+    expect(within(piTab).getByTestId('backend-beta-dot')).toBeInTheDocument()
   })
 
   it('renders inline fast toggles only on codex models that support fast tier', () => {

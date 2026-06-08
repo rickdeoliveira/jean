@@ -7,6 +7,7 @@ export type PreferencePane =
   | 'codex'
   | 'opencode'
   | 'cursor'
+  | 'pi'
   | 'github'
   | 'coderabbit'
   | 'appearance'
@@ -40,6 +41,7 @@ export type CliUpdateModalType =
   | 'gh'
   | 'codex'
   | 'opencode'
+  | 'pi'
   | 'coderabbit'
   | null
 
@@ -49,6 +51,7 @@ export type CliLoginModalType =
   | 'codex'
   | 'opencode'
   | 'cursor'
+  | 'pi'
   | 'coderabbit'
   | null
 
@@ -170,11 +173,18 @@ interface UIState {
     branch?: string | null
   ) => void
   openCliUpdateModal: (
-    type: 'claude' | 'gh' | 'codex' | 'opencode' | 'coderabbit'
+    type: 'claude' | 'gh' | 'codex' | 'opencode' | 'pi' | 'coderabbit'
   ) => void
   closeCliUpdateModal: () => void
   openCliLoginModal: (
-    type: 'claude' | 'gh' | 'codex' | 'opencode' | 'cursor' | 'coderabbit',
+    type:
+      | 'claude'
+      | 'gh'
+      | 'codex'
+      | 'opencode'
+      | 'cursor'
+      | 'pi'
+      | 'coderabbit',
     command: string,
     commandArgs?: string[],
     action?: 'login' | 'update' | 'install'

@@ -26,7 +26,7 @@ interface UsePendingAttachmentsParams {
   isCodexBackendRef: RefObject<boolean>
   mcpServersDataRef: RefObject<McpServerInfo[] | undefined>
   enabledMcpServersRef: RefObject<string[]>
-  selectedBackendRef: RefObject<'claude' | 'codex' | 'opencode' | 'cursor'>
+  selectedBackendRef: RefObject<'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'>
   setInputDraft: (sessionId: string, draft: string) => void
   sendMessageNow: (queuedMsg: QueuedMessage) => void
 }

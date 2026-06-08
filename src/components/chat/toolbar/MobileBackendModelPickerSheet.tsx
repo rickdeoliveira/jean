@@ -14,14 +14,14 @@ interface MobileBackendModelPickerSheetProps {
   onOpenChange: (open: boolean) => void
   sessionHasMessages?: boolean
   providerLocked?: boolean
-  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor'
+  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
   selectedProvider: string | null
   selectedModel: string
-  installedBackends: ('claude' | 'codex' | 'opencode' | 'cursor')[]
+  installedBackends: ('claude' | 'codex' | 'opencode' | 'cursor' | 'pi')[]
   customCliProfiles: CustomCliProfile[]
   onModelChange: (model: string) => void
   onBackendModelChange: (
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor',
+    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi',
     model: string
   ) => void
 }

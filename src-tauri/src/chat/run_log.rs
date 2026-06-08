@@ -236,6 +236,30 @@ impl RunLogWriter {
         })
     }
 
+    /// Set the PI session ID on the run entry and metadata for resumption.
+    pub fn set_pi_session_id(&mut self, pi_session_id: &str) -> Result<(), String> {
+        let run_id = self.run_id.clone();
+        let sid = pi_session_id.to_string();
+
+        with_metadata_mut(
+            &self.app,
+            &self.session_id,
+            &self.worktree_id,
+            &self.session_name,
+            self.order,
+            |metadata| {
+                if let Some(run) = metadata.find_run_mut(&run_id) {
+                    run.pi_session_id = Some(sid.clone());
+                }
+                metadata.pi_session_id = Some(sid.clone());
+                Ok(())
+            },
+        )?;
+
+        log::trace!("Set PI session ID for run {}: {pi_session_id}", self.run_id);
+        Ok(())
+    }
+
     /// Set the Codex thread ID and (optionally) turn ID on the run entry.
     /// Called after thread/start or thread/resume returns the thread ID,
     /// and again after turn/started returns the turn ID.
@@ -385,6 +409,7 @@ pub fn start_run(
         codex_thread_id: None,
         codex_turn_id: None,
         cursor_chat_id: None,
+        pi_session_id: None,
     };
 
     with_metadata_mut(
@@ -991,7 +1016,7 @@ fn should_inject_synthetic_exit_plan(
             .any(|tc| tc.name == "ExitPlanMode" || tc.name == "CodexPlan");
 
     match backend {
-        Backend::Opencode => base_match,
+        Backend::Opencode | Backend::Pi => base_match,
         Backend::Cursor => false, // Plan approval only on real createPlanToolCall / interaction_query
         _ => false,
     }
@@ -1247,6 +1272,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            pi_session_id: None,
         }
     }
 

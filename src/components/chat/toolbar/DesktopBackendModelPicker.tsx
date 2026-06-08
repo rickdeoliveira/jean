@@ -13,6 +13,7 @@ import {
 import { getModelFastInfo, type CustomCliProfile } from '@/types/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
+import { useAvailablePiModels } from '@/services/pi-cli'
 import { cn } from '@/lib/utils'
 import { Kbd } from '@/components/ui/kbd'
 import { BackendLabel } from '@/components/ui/backend-label'
@@ -20,6 +21,7 @@ import { BackendModelPickerContent } from '@/components/chat/toolbar/BackendMode
 import {
   formatCursorModelLabel,
   formatOpencodeModelLabel,
+  formatPiModelLabel,
 } from '@/components/chat/toolbar/toolbar-utils'
 import { useToolbarDerivedState } from '@/components/chat/toolbar/useToolbarDerivedState'
 import { useToolbarDropdownShortcuts } from '@/components/chat/toolbar/useToolbarDropdownShortcuts'
@@ -30,14 +32,14 @@ interface DesktopBackendModelPickerProps {
   sessionHasMessages?: boolean
   providerLocked?: boolean
   triggerClassName?: string
-  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor'
+  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
   selectedModel: string
   selectedProvider: string | null
-  installedBackends: ('claude' | 'codex' | 'opencode' | 'cursor')[]
+  installedBackends: ('claude' | 'codex' | 'opencode' | 'cursor' | 'pi')[]
   customCliProfiles: CustomCliProfile[]
   onModelChange: (model: string) => void
   onBackendModelChange: (
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor',
+    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi',
     model: string
   ) => void
 }
@@ -69,6 +71,9 @@ export function DesktopBackendModelPicker({
   const { data: availableCursorModels } = useAvailableCursorModels({
     enabled: installedBackends.includes('cursor'),
   })
+  const { data: availablePiModels } = useAvailablePiModels({
+    enabled: installedBackends.includes('pi'),
+  })
 
   const opencodeModelOptions = useMemo(
     () =>
@@ -86,6 +91,14 @@ export function DesktopBackendModelPicker({
       })),
     [availableCursorModels]
   )
+  const piModelOptions = useMemo(
+    () =>
+      availablePiModels?.map(model => ({
+        value: `pi/${model.id}`,
+        label: model.label || formatPiModelLabel(model.id),
+      })),
+    [availablePiModels]
+  )
 
   const { backendModelSections, selectedModelLabel } = useToolbarDerivedState({
     selectedBackend,
@@ -93,6 +106,7 @@ export function DesktopBackendModelPicker({
     selectedModel,
     opencodeModelOptions,
     cursorModelOptions,
+    piModelOptions,
     customCliProfiles,
     installedBackends,
   })

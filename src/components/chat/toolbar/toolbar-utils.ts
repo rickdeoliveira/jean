@@ -1,6 +1,11 @@
 import type { Backend } from '@/types/chat'
 import type { PrDisplayStatus } from '@/types/pr-status'
 
+interface ModelOption {
+  value: string
+  label: string
+}
+
 export function getPrStatusDisplay(status: PrDisplayStatus): {
   label: string
   className: string
@@ -37,6 +42,7 @@ export function getSessionProviderDisplayName(
   if (selectedBackend === 'codex') return 'OpenAI'
   if (selectedBackend === 'opencode') return 'OpenCode'
   if (selectedBackend === 'cursor') return 'Cursor'
+  if (selectedBackend === 'pi') return 'PI'
   return getProviderDisplayName(selectedProvider ?? null)
 }
 
@@ -45,6 +51,7 @@ function formatProviderName(provider: string): string {
     anthropic: 'Anthropic',
     opencode: 'OpenCode',
     openai: 'OpenAI',
+    'openai-codex': 'OpenAI Codex',
     openrouter: 'OpenRouter',
     google: 'Google',
     deepseek: 'DeepSeek',
@@ -152,4 +159,71 @@ export function formatCursorModelLabel(raw: string): string {
   return (
     value.split('-').filter(Boolean).map(formatModelToken).join(' ') || value
   )
+}
+
+export function formatPiModelLabel(raw: string): string {
+  const value = raw.startsWith('pi/') ? raw.slice('pi/'.length) : raw
+  const [provider, ...modelParts] = value.split('/')
+  if (provider && modelParts.length > 0) {
+    const model = modelParts.join('/')
+    const modelLabel = model
+      .split(/[-_:]/)
+      .filter(Boolean)
+      .map(formatModelToken)
+      .join(' ')
+    return `${modelLabel || model} (${formatProviderName(provider)})`
+  }
+  return (
+    value
+      .split(/[-_:/]/)
+      .filter(Boolean)
+      .map(formatModelToken)
+      .join(' ') || value
+  )
+}
+
+function getRawModelSortKey(value: string): {
+  model: string
+  numbers: number[]
+  raw: string
+} {
+  const raw = value.toLowerCase().replace(/:[^/]*$/, '')
+  const model = raw.split('/').filter(Boolean).at(-1) ?? raw
+  const numbers = [...model.matchAll(/\d+(?:\.\d+)?/g)].flatMap(match =>
+    match[0].split('.').map(Number)
+  )
+
+  return { model, numbers, raw }
+}
+
+function compareRawModelValues(left: string, right: string): number {
+  const a = getRawModelSortKey(left)
+  const b = getRawModelSortKey(right)
+  const maxNumbers = Math.max(a.numbers.length, b.numbers.length)
+
+  for (let i = 0; i < maxNumbers; i++) {
+    const aNumber = a.numbers[i]
+    const bNumber = b.numbers[i]
+    if (aNumber === undefined && bNumber === undefined) continue
+    if (aNumber === undefined) return 1
+    if (bNumber === undefined) return -1
+    if (aNumber !== bNumber) return bNumber - aNumber
+  }
+
+  const modelCompare = a.model.localeCompare(b.model, undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  })
+  if (modelCompare !== 0) return modelCompare
+
+  return a.raw.localeCompare(b.raw, undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  })
+}
+
+export function sortModelOptionsByRawModel<T extends ModelOption>(
+  options: readonly T[]
+): T[] {
+  return [...options].sort((a, b) => compareRawModelValues(a.value, b.value))
 }

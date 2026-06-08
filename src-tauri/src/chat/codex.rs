@@ -4306,6 +4306,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            pi_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4347,6 +4348,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            pi_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4400,6 +4402,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            pi_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4468,6 +4471,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            pi_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4521,6 +4525,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            pi_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4579,6 +4584,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            pi_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4618,6 +4624,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            pi_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");

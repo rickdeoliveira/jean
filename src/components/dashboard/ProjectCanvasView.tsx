@@ -194,6 +194,8 @@ interface ProjectCanvasViewProps {
   projectId: string
 }
 
+const EMPTY_PINNED_LABELS: LabelData[] = []
+
 interface WorktreeSection {
   worktree: Worktree
   cards: SessionCardData[]
@@ -880,7 +882,9 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
       state.projectCanvasSettings[projectId]?.worktreeSortMode ?? 'created'
   )
   const projectPinnedLabels = useProjectsStore(
-    state => state.projectCanvasSettings[projectId]?.pinnedLabels ?? []
+    state =>
+      state.projectCanvasSettings[projectId]?.pinnedLabels ??
+      EMPTY_PINNED_LABELS
   )
 
   // Project action mutations

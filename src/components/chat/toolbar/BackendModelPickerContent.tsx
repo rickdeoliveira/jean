@@ -21,6 +21,7 @@ import {
 import { usePatchPreferences, usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
+import { useAvailablePiModels } from '@/services/pi-cli'
 import { cn } from '@/lib/utils'
 import {
   getBackendIcon,
@@ -29,6 +30,7 @@ import {
 import {
   formatCursorModelLabel,
   formatOpencodeModelLabel,
+  formatPiModelLabel,
   getProviderDisplayName,
 } from '@/components/chat/toolbar/toolbar-utils'
 import { useToolbarDerivedState } from '@/components/chat/toolbar/useToolbarDerivedState'
@@ -128,6 +130,9 @@ export function BackendModelPickerContent({
   const { data: availableCursorModels } = useAvailableCursorModels({
     enabled: installedBackends.includes('cursor'),
   })
+  const { data: availablePiModels } = useAvailablePiModels({
+    enabled: installedBackends.includes('pi'),
+  })
 
   const opencodeModelOptions = useMemo(
     () =>
@@ -145,6 +150,14 @@ export function BackendModelPickerContent({
       })),
     [availableCursorModels]
   )
+  const piModelOptions = useMemo(
+    () =>
+      availablePiModels?.map(model => ({
+        value: `pi/${model.id}`,
+        label: model.label || formatPiModelLabel(model.id),
+      })),
+    [availablePiModels]
+  )
 
   const { backendModelSections } = useToolbarDerivedState({
     selectedBackend,
@@ -152,6 +165,7 @@ export function BackendModelPickerContent({
     selectedModel,
     opencodeModelOptions,
     cursorModelOptions,
+    piModelOptions,
     customCliProfiles,
     installedBackends,
   })
@@ -627,9 +641,10 @@ function SidebarBackends({
                     {index + 1}
                   </span>
                 )}
-                {backend === 'cursor' && (
+                {(backend === 'cursor' || backend === 'pi') && (
                   <span
                     aria-hidden
+                    data-testid="backend-beta-dot"
                     className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-yellow-500"
                   />
                 )}

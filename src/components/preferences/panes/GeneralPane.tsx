@@ -67,6 +67,14 @@ import {
   opencodeCliQueryKeys,
   useOpenCodePathDetection,
 } from '@/services/opencode-cli'
+import {
+  usePiCliStatus,
+  usePiCliAuth,
+  useAvailablePiModels,
+  useAvailablePiVersions,
+  piCliQueryKeys,
+  usePiPathDetection,
+} from '@/services/pi-cli'
 import { useUIStore } from '@/store/ui-store'
 import {
   getCursorInstallCommand,
@@ -82,6 +90,7 @@ import type { CodexAuthStatus } from '@/types/codex-cli'
 import type { CodeRabbitAuthStatus } from '@/types/coderabbit-cli'
 import type { OpenCodeAuthStatus } from '@/types/opencode-cli'
 import type { CursorAuthStatus } from '@/types/cursor-cli'
+import type { PiAuthStatus } from '@/types/pi-cli'
 import {
   Select,
   SelectContent,
@@ -126,6 +135,7 @@ import {
   type CodexGoalExecutionMode,
   type CodexReasoningEffort,
   type CursorModel,
+  type PiModel,
   type CliBackend,
   type TerminalApp,
   type EditorApp,
@@ -138,10 +148,12 @@ import {
 import {
   CURSOR_MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
+  PI_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import {
   formatCursorModelLabel,
   formatOpencodeModelLabel,
+  formatPiModelLabel,
 } from '@/components/chat/toolbar/toolbar-utils'
 import { playNotificationSound } from '@/lib/sounds'
 import type { ThinkingLevel, EffortLevel } from '@/types/chat'
@@ -187,6 +199,7 @@ type PreferencesPaneScope =
   | 'codex'
   | 'opencode'
   | 'cursor'
+  | 'pi'
   | 'github'
   | 'coderabbit'
 
@@ -203,7 +216,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteCliTarget, setDeleteCliTarget] = useState<
-    'claude' | 'codex' | 'opencode' | 'gh' | 'coderabbit' | null
+    'claude' | 'codex' | 'opencode' | 'pi' | 'gh' | 'coderabbit' | null
   >(null)
   const [isDeletingCli, setIsDeletingCli] = useState(false)
 
@@ -214,6 +227,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const { data: ghPathDetection } = useGhPathDetection()
   const { data: coderabbitPathDetection } = useCodeRabbitPathDetection()
   const { data: cursorPathDetection } = useCursorPathDetection()
+  const { data: piPathDetection } = usePiPathDetection()
 
   // CLI status hooks
   const { data: cliStatus, isLoading: isCliLoading } = useClaudeCliStatus()
@@ -273,6 +287,17 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     !!opencodeStatus?.version &&
     !!opencodeLatestStable &&
     isNewerVersion(opencodeLatestStable.version, opencodeStatus.version)
+  const { data: piStatus, isLoading: isPiLoading } = usePiCliStatus()
+  const isPiPathSource = preferences?.pi_cli_source === 'path'
+  const { data: piVersions, isLoading: isPiVersionsLoading } =
+    useAvailablePiVersions({
+      enabled: isPiPathSource && !!piStatus?.installed,
+    })
+  const piLatestStable = piVersions?.find(v => !v.prerelease)
+  const piHasUpdate =
+    !!piStatus?.version &&
+    !!piLatestStable &&
+    isNewerVersion(piLatestStable.version, piStatus.version)
 
   // Auth status queries - only enabled when CLI is installed
   const { data: claudeAuth, isLoading: isClaudeAuthLoading } = useClaudeCliAuth(
@@ -294,6 +319,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     useOpenCodeCliAuth({
       enabled: !!opencodeStatus?.installed,
     })
+  const { data: piAuth, isLoading: isPiAuthLoading } = usePiCliAuth({
+    enabled: !!piStatus?.installed,
+  })
   const { data: cursorAuth, isLoading: isCursorAuthLoading } = useCursorCliAuth(
     {
       enabled: !!cursorStatus?.installed,
@@ -305,6 +333,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const { data: availableCursorModels } = useAvailableCursorModels({
     enabled: !!cursorStatus?.installed,
   })
+  const { data: availablePiModels } = useAvailablePiModels({
+    enabled: !!piStatus?.installed,
+  })
 
   // Re-check CLI status when the source preference changes (handles initial load
   // with source already set to "path" and any timing issues with onSuccess invalidation)
@@ -313,6 +344,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     gh: preferences?.gh_cli_source,
     codex: preferences?.codex_cli_source,
     opencode: preferences?.opencode_cli_source,
+    pi: preferences?.pi_cli_source,
     coderabbit: preferences?.coderabbit_cli_source,
   })
   useEffect(() => {
@@ -321,6 +353,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
       gh: preferences?.gh_cli_source,
       codex: preferences?.codex_cli_source,
       opencode: preferences?.opencode_cli_source,
+      pi: preferences?.pi_cli_source,
       coderabbit: preferences?.coderabbit_cli_source,
     }
     if (cur.claude !== prevSources.current.claude) {
@@ -335,6 +368,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     if (cur.opencode !== prevSources.current.opencode) {
       queryClient.invalidateQueries({ queryKey: opencodeCliQueryKeys.status() })
     }
+    if (cur.pi !== prevSources.current.pi) {
+      queryClient.invalidateQueries({ queryKey: piCliQueryKeys.status() })
+    }
     if (cur.coderabbit !== prevSources.current.coderabbit) {
       queryClient.invalidateQueries({
         queryKey: coderabbitCliQueryKeys.status(),
@@ -346,6 +382,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     preferences?.gh_cli_source,
     preferences?.codex_cli_source,
     preferences?.opencode_cli_source,
+    preferences?.pi_cli_source,
     preferences?.coderabbit_cli_source,
     queryClient,
   ])
@@ -369,9 +406,11 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const [checkingCodeRabbitAuth, setCheckingCodeRabbitAuth] = useState(false)
   const [checkingOpenCodeAuth, setCheckingOpenCodeAuth] = useState(false)
   const [checkingCursorAuth, setCheckingCursorAuth] = useState(false)
+  const [checkingPiAuth, setCheckingPiAuth] = useState(false)
   const [openCodeModelPopoverOpen, setOpenCodeModelPopoverOpen] =
     useState(false)
   const [cursorModelPopoverOpen, setCursorModelPopoverOpen] = useState(false)
+  const [piModelPopoverOpen, setPiModelPopoverOpen] = useState(false)
   const [buildModelPopoverOpen, setBuildModelPopoverOpen] = useState(false)
   const [yoloModelPopoverOpen, setYoloModelPopoverOpen] = useState(false)
 
@@ -566,6 +605,21 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     }
   }
 
+  const handlePiSourceChange = (value: 'jean' | 'path') => {
+    if (preferences) {
+      patchPreferences.mutate(
+        { pi_cli_source: value },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({
+              queryKey: piCliQueryKeys.all,
+            })
+          },
+        }
+      )
+    }
+  }
+
   const handleConfirmDeleteCli = async () => {
     if (!deleteCliTarget) return
     const target = deleteCliTarget
@@ -576,6 +630,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         name: 'OpenCode CLI',
         cmd: 'uninstall_opencode_cli' as const,
       },
+      pi: { name: 'PI CLI', cmd: 'uninstall_pi_cli' as const },
       gh: { name: 'GitHub CLI', cmd: 'uninstall_gh_cli' as const },
       coderabbit: {
         name: 'CodeRabbit CLI',
@@ -594,9 +649,11 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             ? 'codex_cli_source'
             : target === 'opencode'
               ? 'opencode_cli_source'
-              : target === 'gh'
-                ? 'gh_cli_source'
-                : 'coderabbit_cli_source'
+              : target === 'pi'
+                ? 'pi_cli_source'
+                : target === 'gh'
+                  ? 'gh_cli_source'
+                  : 'coderabbit_cli_source'
       await new Promise<void>((resolve, reject) => {
         patchPreferences.mutate(
           { [sourceKey]: 'path' } as Partial<AppPreferences>,
@@ -613,9 +670,11 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             ? codexCliQueryKeys.all
             : target === 'opencode'
               ? opencodeCliQueryKeys.all
-              : target === 'gh'
-                ? ghCliQueryKeys.all
-                : coderabbitCliQueryKeys.all
+              : target === 'pi'
+                ? piCliQueryKeys.all
+                : target === 'gh'
+                  ? ghCliQueryKeys.all
+                  : coderabbitCliQueryKeys.all
       queryClient.invalidateQueries({ queryKey: queryKeys })
       const pathFound =
         target === 'claude'
@@ -624,9 +683,11 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             ? codexPathDetection?.found
             : target === 'opencode'
               ? opencodePathDetection?.found
-              : target === 'gh'
-                ? ghPathDetection?.found
-                : coderabbitPathDetection?.found
+              : target === 'pi'
+                ? piPathDetection?.found
+                : target === 'gh'
+                  ? ghPathDetection?.found
+                  : coderabbitPathDetection?.found
       if (pathFound) {
         toast.success(`Jean-managed ${name} removed. Using system PATH.`, {
           id: toastId,
@@ -670,6 +731,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const codexInstalled = codexStatus?.installed
   const opencodeInstalled = opencodeStatus?.installed
   const cursorInstalled = cursorStatus?.installed
+  const piInstalled = piStatus?.installed
   const installedBackendOptions = useMemo(
     () =>
       backendOptions.filter(option =>
@@ -679,13 +741,16 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             ? codexStatus?.installed
             : option.value === 'opencode'
               ? opencodeStatus?.installed
-              : cursorStatus?.installed
+              : option.value === 'cursor'
+                ? cursorStatus?.installed
+                : piStatus?.installed
       ),
     [
       cliStatus?.installed,
       codexStatus?.installed,
       opencodeStatus?.installed,
       cursorStatus?.installed,
+      piStatus?.installed,
     ]
   )
 
@@ -695,6 +760,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
       codex: codexInstalled,
       opencode: opencodeInstalled,
       cursor: cursorInstalled,
+      pi: piInstalled,
     }
     if (installed[stored]) return stored
     const first = installedBackendOptions[0]
@@ -705,6 +771,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     codexInstalled,
     opencodeInstalled,
     cursorInstalled,
+    piInstalled,
     installedBackendOptions,
   ])
 
@@ -744,6 +811,12 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     }
   }
 
+  const handlePiModelChange = (value: PiModel) => {
+    if (preferences) {
+      patchPreferences.mutate({ selected_pi_model: value })
+    }
+  }
+
   const selectedOpenCodeModel =
     preferences?.selected_opencode_model ?? 'opencode/gpt-5'
   const formatOpenCodeModelLabelForSettings = (value: string) => {
@@ -779,6 +852,21 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const selectedCursorModelLabel =
     cursorModelOptions.find(option => option.value === selectedCursorModel)
       ?.label ?? formatCursorModelLabel(selectedCursorModel)
+  const selectedPiModel = preferences?.selected_pi_model ?? 'pi/sonnet'
+  const piModelOptions: { value: PiModel; label: string }[] = (
+    availablePiModels?.length
+      ? availablePiModels.map(model => ({
+          value: `pi/${model.id}` as PiModel,
+          label: model.label || formatPiModelLabel(model.id),
+        }))
+      : (PI_MODEL_OPTIONS as { value: PiModel; label: string }[])
+  ).map(option => ({
+    value: option.value,
+    label: option.label || formatPiModelLabel(option.value),
+  }))
+  const selectedPiModelLabel =
+    piModelOptions.find(option => option.value === selectedPiModel)?.label ??
+    formatPiModelLabel(selectedPiModel)
   const buildBackendOptions = backendOptions
   const effectiveBuildBackend = (preferences?.build_backend ??
     effectiveBackend) as CliBackend
@@ -1020,6 +1108,29 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     openCliLoginModal('opencode', opencodeStatus.path, ['auth', 'login'])
   }, [opencodeStatus?.path, openCliLoginModal, queryClient])
 
+  const handlePiLogin = useCallback(async () => {
+    if (!piStatus?.path) return
+
+    setCheckingPiAuth(true)
+    try {
+      await queryClient.invalidateQueries({
+        queryKey: piCliQueryKeys.auth(),
+      })
+      const result = await queryClient.fetchQuery<PiAuthStatus>({
+        queryKey: piCliQueryKeys.auth(),
+      })
+
+      if (result?.authenticated) {
+        toast.success('PI CLI is already authenticated')
+        return
+      }
+    } finally {
+      setCheckingPiAuth(false)
+    }
+
+    openCliLoginModal('pi', piStatus.path, ['login'])
+  }, [piStatus?.path, openCliLoginModal, queryClient])
+
   const handleClaudeRelogin = useCallback(() => {
     if (!cliStatus?.path) return
     const args = cliStatus.supports_auth_command ? ['auth', 'login'] : ['login']
@@ -1040,6 +1151,11 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     if (!opencodeStatus?.path) return
     openCliLoginModal('opencode', opencodeStatus.path, ['auth', 'login'])
   }, [opencodeStatus?.path, openCliLoginModal])
+
+  const handlePiRelogin = useCallback(() => {
+    if (!piStatus?.path) return
+    openCliLoginModal('pi', piStatus.path, ['login'])
+  }, [piStatus?.path, openCliLoginModal])
 
   const handleCodeRabbitRelogin = useCallback(() => {
     if (!coderabbitStatus?.path) return
@@ -1883,6 +1999,175 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         </SettingsSection>
       )}
 
+      {hasBackend() && scope === 'pi' && (
+        <SettingsSection
+          title={
+            <span className="inline-flex items-center gap-2">
+              <BackendLabel backend="pi" />
+              <span>CLI</span>
+            </span>
+          }
+          anchorId="pref-pi-section-cli"
+          actions={
+            piStatus?.installed ? (
+              checkingPiAuth || isPiAuthLoading ? (
+                <span className="text-sm text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="size-3 animate-spin" />
+                  Checking...
+                </span>
+              ) : piAuth?.authenticated ? (
+                <span className="text-sm text-muted-foreground flex items-center gap-2">
+                  Logged in
+                  <Button variant="outline" size="sm" onClick={handlePiRelogin}>
+                    Relogin
+                  </Button>
+                </span>
+              ) : (
+                <Button variant="outline" size="sm" onClick={handlePiLogin}>
+                  Login
+                </Button>
+              )
+            ) : (
+              <span className="text-sm text-muted-foreground">
+                Not installed
+              </span>
+            )
+          }
+        >
+          <div className="space-y-4">
+            <InlineField
+              label={piStatus?.installed ? 'Version' : 'Status'}
+              description={
+                piStatus?.installed
+                  ? 'Enables PI AI sessions'
+                  : 'Optional — enables PI AI sessions'
+              }
+            >
+              {isPiLoading ? (
+                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              ) : piStatus?.installed ? (
+                isPiPathSource ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">
+                      {piStatus.version ?? 'Installed'}
+                    </span>
+                    {isPiVersionsLoading ? (
+                      <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!piHasUpdate}
+                        onClick={() => {
+                          const action = getPathUpdateAction(
+                            piStatus.path,
+                            piPathDetection?.package_manager,
+                            'pi',
+                            null,
+                            '@earendil-works/pi-coding-agent',
+                            piLatestStable?.version
+                          )
+                          if (action) {
+                            openCliLoginModal(
+                              'pi',
+                              action[0],
+                              action[1],
+                              'update'
+                            )
+                          } else {
+                            openCliUpdateModal('pi')
+                          }
+                        }}
+                      >
+                        {piHasUpdate
+                          ? `Update to ${piLatestStable?.version}`
+                          : 'Up to date'}
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="w-full sm:w-40 justify-between"
+                    onClick={() => openCliUpdateModal('pi')}
+                  >
+                    {piStatus.version ?? 'Installed'}
+                  </Button>
+                )
+              ) : (
+                <Button
+                  className="w-full sm:w-40"
+                  onClick={() => openCliUpdateModal('pi')}
+                >
+                  Install
+                </Button>
+              )}
+            </InlineField>
+            {(piStatus?.installed || piPathDetection?.found) && (
+              <InlineField
+                label="Source"
+                description={
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() =>
+                          handleCopyPath(
+                            preferences?.pi_cli_source === 'path'
+                              ? piPathDetection?.path
+                              : piStatus?.path
+                          )
+                        }
+                        className="text-left hover:underline cursor-pointer"
+                      >
+                        {preferences?.pi_cli_source === 'path'
+                          ? (piPathDetection?.path ?? 'System PATH')
+                          : (piStatus?.path ?? 'Not installed')}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Click to copy path</TooltipContent>
+                  </Tooltip>
+                }
+              >
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={preferences?.pi_cli_source ?? 'jean'}
+                    onValueChange={handlePiSourceChange}
+                  >
+                    <SelectTrigger
+                      className="w-96"
+                      hideIcon={!piPathDetection?.found}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="jean">Jean (managed)</SelectItem>
+                      <SelectItem
+                        value="path"
+                        disabled={!piPathDetection?.found}
+                      >
+                        System PATH
+                        {!piPathDetection?.found && ' (not found)'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {preferences?.pi_cli_source === 'jean' &&
+                    piStatus?.installed && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setDeleteCliTarget('pi')}
+                      >
+                        Delete managed install
+                      </Button>
+                    )}
+                </div>
+              </InlineField>
+            )}
+          </div>
+        </SettingsSection>
+      )}
+
       {hasBackend() && scope === 'cursor' && (
         <SettingsSection
           title={
@@ -2344,6 +2629,88 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         </SettingsSection>
       )}
 
+      {scope === 'pi' && (
+        <SettingsSection
+          title={
+            <span className="inline-flex items-center gap-2">
+              <BackendLabel backend="pi" />
+              <span>Settings</span>
+            </span>
+          }
+          anchorId="pref-pi-section-settings"
+        >
+          <div className="space-y-4">
+            <InlineField
+              label="Model"
+              description={
+                <>
+                  Models come from the currently active PI provider via{' '}
+                  <code>pi --list-models</code>. Use the Login/Relogin button
+                  above to change provider.
+                </>
+              }
+            >
+              <Popover
+                open={piModelPopoverOpen}
+                onOpenChange={setPiModelPopoverOpen}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={piModelPopoverOpen}
+                    aria-label="Select PI model"
+                    className="w-80 max-w-full justify-between"
+                  >
+                    <span className="max-w-[16rem] truncate text-left">
+                      {selectedPiModelLabel}
+                    </span>
+                    {piModelOptions.length > 1 && (
+                      <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                >
+                  <Command>
+                    <CommandInput placeholder="Search models..." />
+                    <CommandList onWheel={e => e.stopPropagation()}>
+                      <CommandEmpty>No models found.</CommandEmpty>
+                      <CommandGroup>
+                        {piModelOptions.map(option => (
+                          <CommandItem
+                            key={option.value}
+                            value={`${option.label} ${option.value}`}
+                            onSelect={() => {
+                              handlePiModelChange(option.value)
+                              setPiModelPopoverOpen(false)
+                            }}
+                          >
+                            <span className="max-w-[18rem] truncate">
+                              {option.label}
+                            </span>
+                            <Check
+                              className={cn(
+                                'ml-auto h-4 w-4',
+                                selectedPiModel === option.value
+                                  ? 'opacity-100'
+                                  : 'opacity-0'
+                              )}
+                            />
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </InlineField>
+          </div>
+        </SettingsSection>
+      )}
+
       {isGeneralScope && (
         <SettingsSection
           title="Defaults"
@@ -2599,6 +2966,23 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                         </Command>
                       </PopoverContent>
                     </Popover>
+                  ) : effectiveBuildBackend === 'pi' ? (
+                    <Select
+                      value={preferences?.build_model ?? 'default'}
+                      onValueChange={handleBuildModelChange}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default model</SelectItem>
+                        {piModelOptions.map(option => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <Select
                       value={preferences?.build_model ?? 'default'}
@@ -2841,6 +3225,23 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                         </Command>
                       </PopoverContent>
                     </Popover>
+                  ) : effectiveYoloBackend === 'pi' ? (
+                    <Select
+                      value={preferences?.yolo_model ?? 'default'}
+                      onValueChange={handleYoloModelChange}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default model</SelectItem>
+                        {piModelOptions.map(option => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <Select
                       value={preferences?.yolo_model ?? 'default'}

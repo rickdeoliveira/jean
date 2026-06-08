@@ -1884,7 +1884,7 @@ export default function useStreamingEvents({
         case 'backend':
           store.setSelectedBackend(
             session_id,
-            value as 'claude' | 'codex' | 'opencode' | 'cursor'
+            value as 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
           )
           break
         case 'model':

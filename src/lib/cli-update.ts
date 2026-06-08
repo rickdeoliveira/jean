@@ -6,7 +6,13 @@
  * update toast notification so the two paths don't drift.
  */
 
-export type CliType = 'claude' | 'gh' | 'codex' | 'opencode' | 'coderabbit'
+export type CliType =
+  | 'claude'
+  | 'gh'
+  | 'codex'
+  | 'opencode'
+  | 'pi'
+  | 'coderabbit'
 
 /** Binary name used by the package manager (e.g. `brew upgrade <name>`). */
 export const CLI_BINARY_NAMES: Record<CliType, string> = {
@@ -14,12 +20,14 @@ export const CLI_BINARY_NAMES: Record<CliType, string> = {
   gh: 'gh',
   codex: 'codex',
   opencode: 'opencode',
+  pi: 'pi',
   coderabbit: 'coderabbit',
 }
 
 /** npm package name for CLIs that ship as npm/bun globals. */
 export const NPM_PACKAGE_NAMES: Partial<Record<CliType, string>> = {
   codex: '@openai/codex',
+  pi: '@earendil-works/pi-coding-agent',
 }
 
 /** Built-in self-update subcommand args, or null if the CLI has none. */
@@ -27,6 +35,7 @@ export const CLI_SELF_UPDATE_ARGS: Record<CliType, string[] | null> = {
   claude: ['update'],
   opencode: ['upgrade'],
   coderabbit: ['update'],
+  pi: null,
   gh: null,
   codex: null,
 }
@@ -36,6 +45,7 @@ export const CLI_DISPLAY_NAMES: Record<CliType, string> = {
   gh: 'GitHub CLI',
   codex: 'Codex CLI',
   opencode: 'OpenCode CLI',
+  pi: 'PI CLI',
   coderabbit: 'CodeRabbit CLI',
 }
 

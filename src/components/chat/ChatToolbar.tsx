@@ -32,13 +32,19 @@ import {
   EFFORT_LEVEL_OPTIONS,
   MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
+  PI_MODEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { useToolbarDropdownShortcuts } from '@/components/chat/toolbar/useToolbarDropdownShortcuts'
 import { useToolbarDerivedState } from '@/components/chat/toolbar/useToolbarDerivedState'
 import { useContextViewer } from '@/components/chat/toolbar/useContextViewer'
-import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
+import {
+  formatOpencodeModelLabel,
+  formatPiModelLabel,
+} from '@/components/chat/toolbar/toolbar-utils'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
+import { useAvailablePiModels } from '@/services/pi-cli'
 import { useIsMobile } from '@/hooks/use-mobile'
 import {
   BackendLabel,
@@ -53,6 +59,7 @@ export {
   OPENCODE_MODEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
 }
 export type { ChatToolbarProps }
 
@@ -160,6 +167,14 @@ export const ChatToolbar = memo(function ChatToolbar({
       value: model,
       label: formatOpencodeModelLabel(model),
     })) ?? OPENCODE_MODEL_OPTIONS
+  const { data: availablePiModels } = useAvailablePiModels({
+    enabled: selectedBackend === 'pi',
+  })
+  const piModelOptions =
+    availablePiModels?.map(model => ({
+      value: `pi/${model.id}`,
+      label: model.label || formatPiModelLabel(model.id),
+    })) ?? PI_MODEL_OPTIONS
 
   const { isCodex, activeMcpCount, backendModelSections, selectedModelLabel } =
     useToolbarDerivedState({
@@ -167,6 +182,7 @@ export const ChatToolbar = memo(function ChatToolbar({
       selectedProvider,
       selectedModel,
       opencodeModelOptions,
+      piModelOptions,
       customCliProfiles,
       installedBackends,
       availableMcpServers,

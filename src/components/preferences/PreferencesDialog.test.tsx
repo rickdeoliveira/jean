@@ -147,6 +147,7 @@ describe('PreferencesDialog', () => {
       'Codex',
       'OpenCode',
       'Cursor',
+      'PI',
       'GitHub CLI',
       'CodeRabbit CLI',
       'Terminal',

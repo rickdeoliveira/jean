@@ -69,7 +69,7 @@ export function DockBurgerButton({
 
   const activeBackend = (selectedBackend ??
     preferences?.default_backend ??
-    'claude') as 'claude' | 'codex' | 'opencode' | 'cursor'
+    'claude') as 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
 
   const codexStatus = useCodexCliStatus()
   const codexAuth = useCodexCliAuth({

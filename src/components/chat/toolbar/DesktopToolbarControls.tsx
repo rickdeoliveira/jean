@@ -54,6 +54,7 @@ import { cn } from '@/lib/utils'
 import {
   CODEX_EFFORT_LEVEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import {
@@ -66,7 +67,7 @@ import { DockBurgerButton } from '@/components/chat/toolbar/DockBurgerButton'
 
 interface DesktopToolbarControlsProps {
   hasPendingQuestions: boolean
-  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor'
+  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
   selectedModel: string
   selectedProvider: string | null
   selectedThinkingLevel: ThinkingLevel
@@ -111,14 +112,14 @@ interface DesktopToolbarControlsProps {
   onResolvePrConflicts: () => void
   onLoadContext: () => void
   onAttach: () => void
-  installedBackends: ('claude' | 'codex' | 'opencode' | 'cursor')[]
+  installedBackends: ('claude' | 'codex' | 'opencode' | 'cursor' | 'pi')[]
   onSetExecutionMode: (mode: ExecutionMode) => void
   availableExecutionModes: ExecutionMode[]
   onToggleMcpServer: (name: string) => void
 
   handleModelChange: (value: string) => void
   handleBackendModelChange: (
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor',
+    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi',
     model: string
   ) => void
   handleProviderChange: (value: string) => void
@@ -192,11 +193,17 @@ export function DesktopToolbarControls({
 }: DesktopToolbarControlsProps) {
   const effortLevelOptions = isCodex
     ? CODEX_EFFORT_LEVEL_OPTIONS
+    : selectedBackend === 'pi'
+      ? PI_EFFORT_LEVEL_OPTIONS
     : EFFORT_LEVEL_OPTIONS
   const displayedEffortLevel = isCodex
     ? selectedEffortLevel === 'max'
       ? 'high'
       : selectedEffortLevel === 'ultracode'
+        ? 'xhigh'
+        : selectedEffortLevel
+    : selectedBackend === 'pi'
+      ? selectedEffortLevel === 'max' || selectedEffortLevel === 'ultracode'
         ? 'xhigh'
         : selectedEffortLevel
     : selectedEffortLevel

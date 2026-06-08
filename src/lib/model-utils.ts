@@ -17,9 +17,10 @@ const ADAPTIVE_THINKING_MIN_CLI_VERSION = '2.1.32'
  */
 export function resolveBackend(
   model: string
-): 'claude' | 'codex' | 'opencode' | 'cursor' {
+): 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' {
   if (model.startsWith('cursor/')) return 'cursor'
   if (model.startsWith('opencode/')) return 'opencode'
+  if (model.startsWith('pi/')) return 'pi'
   if (model.startsWith('codex') || model.includes('codex')) return 'codex'
   return 'claude'
 }

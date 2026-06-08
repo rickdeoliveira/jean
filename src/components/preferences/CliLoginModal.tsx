@@ -16,6 +16,7 @@ import { ghCliQueryKeys } from '@/services/gh-cli'
 import { codexCliQueryKeys } from '@/services/codex-cli'
 import { opencodeCliQueryKeys } from '@/services/opencode-cli'
 import { cursorCliQueryKeys } from '@/services/cursor-cli'
+import { piCliQueryKeys } from '@/services/pi-cli'
 import { coderabbitCliQueryKeys } from '@/services/coderabbit-cli'
 import { githubQueryKeys } from '@/services/github'
 import {
@@ -70,6 +71,7 @@ interface CliLoginModalContentProps {
     | 'codex'
     | 'opencode'
     | 'cursor'
+    | 'pi'
     | 'coderabbit'
     | null
   command: string
@@ -103,14 +105,16 @@ function CliLoginModalContent({
         : cliType === 'coderabbit'
           ? 'CodeRabbit CLI'
           : cliType === 'opencode'
-            ? 'OpenCode CLI'
-            : cliType === 'cursor'
-              ? 'Cursor CLI'
+          ? 'OpenCode CLI'
+          : cliType === 'cursor'
+            ? 'Cursor CLI'
+            : cliType === 'pi'
+              ? 'PI CLI'
               : 'GitHub CLI'
   const cliTitle =
-    cliType === 'cursor' ? (
+    cliType === 'cursor' || cliType === 'pi' ? (
       <span className="inline-flex items-center gap-2">
-        <BackendLabel backend="cursor" />
+        <BackendLabel backend={cliType} />
         <span>CLI</span>
       </span>
     ) : (
@@ -234,6 +238,8 @@ function CliLoginModalContent({
           queryClient.invalidateQueries({ queryKey: opencodeCliQueryKeys.all })
         } else if (cliType === 'cursor') {
           queryClient.invalidateQueries({ queryKey: cursorCliQueryKeys.all })
+        } else if (cliType === 'pi') {
+          queryClient.invalidateQueries({ queryKey: piCliQueryKeys.all })
         } else if (cliType === 'coderabbit') {
           queryClient.invalidateQueries({
             queryKey: coderabbitCliQueryKeys.all,

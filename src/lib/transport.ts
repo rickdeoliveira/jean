@@ -622,6 +622,7 @@ class WsTransport {
     'install_claude_cli',
     'install_codex_cli',
     'install_opencode_cli',
+    'install_pi_cli',
     'install_gh_cli',
     'install_coderabbit_cli',
     'update_coderabbit_cli',

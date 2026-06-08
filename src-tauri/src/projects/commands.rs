@@ -5942,6 +5942,23 @@ fn extract_structured_output(output: &str) -> Result<String, String> {
     Err("No structured output found in Claude response".to_string())
 }
 
+fn extract_json_object_from_text(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        return Ok(trimmed.to_string());
+    }
+    let start = trimmed
+        .find('{')
+        .ok_or_else(|| "No JSON object found in response".to_string())?;
+    let end = trimmed
+        .rfind('}')
+        .ok_or_else(|| "No JSON object end found in response".to_string())?;
+    if end <= start {
+        return Err("Invalid JSON object bounds in response".to_string());
+    }
+    Ok(trimmed[start..=end].to_string())
+}
+
 fn build_claude_structured_output_args(model: &str, tools: &str, schema: &str) -> Vec<String> {
     vec![
         "--print".to_string(),
@@ -6645,6 +6662,24 @@ fn generate_pr_content_from_inputs(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating PR content with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(repo_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: PrContentResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI PR content JSON: {e}, content: {json_str}");
+            format!("Failed to parse PR content: {e}")
+        })?;
+        response.body = augment_pr_references_in_body(&response.body, related_pr_issue_refs);
+        return Ok(response);
+    }
+
     log::trace!("Generating PR content with Claude CLI (JSON schema)");
 
     let cli_path = resolve_cli_binary(app);
@@ -7190,6 +7225,22 @@ fn generate_commit_message_once(
         });
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating commit message with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI commit message JSON: {e}, content: {json_str}");
+            format!("Failed to parse commit message: {e}")
+        });
+    }
+
     log::trace!("Generating commit message with Claude CLI (JSON schema)");
 
     let cli_path = resolve_cli_binary(app);
@@ -7691,6 +7742,22 @@ fn generate_review(
             crate::chat::cursor::execute_one_shot_cursor(app, prompt, model_str, working_dir)?;
         return serde_json::from_str(&json_str).map_err(|e| {
             log::error!("Failed to parse Cursor review JSON: {e}, content: {json_str}");
+            format!("Failed to parse review: {e}")
+        });
+    }
+
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Running code review with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI review JSON: {e}, content: {json_str}");
             format!("Failed to parse review: {e}")
         });
     }
@@ -8764,6 +8831,25 @@ fn generate_release_notes_content(
         )?;
         let mut response: ReleaseNotesResponse = serde_json::from_str(&json_str).map_err(|e| {
             log::error!("Failed to parse Cursor release notes JSON: {e}, content: {json_str}");
+            format!("Failed to parse release notes: {e}")
+        })?;
+        response.body =
+            augment_pr_references_in_body(&response.body, &release_notes_context.pr_issue_refs);
+        return Ok(response);
+    }
+
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating release notes with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(project_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: ReleaseNotesResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI release notes JSON: {e}, content: {json_str}");
             format!("Failed to parse release notes: {e}")
         })?;
         response.body =

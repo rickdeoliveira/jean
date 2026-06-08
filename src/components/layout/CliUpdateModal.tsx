@@ -15,6 +15,7 @@ import { claudeCliQueryKeys } from '@/services/claude-cli'
 import { ghCliQueryKeys } from '@/services/gh-cli'
 import { codexCliQueryKeys } from '@/services/codex-cli'
 import { opencodeCliQueryKeys } from '@/services/opencode-cli'
+import { piCliQueryKeys } from '@/services/pi-cli'
 import { coderabbitCliQueryKeys } from '@/services/coderabbit-cli'
 import { githubQueryKeys } from '@/services/github'
 import {
@@ -22,6 +23,7 @@ import {
   GhCliReinstallModal,
   CodexCliReinstallModal,
   OpenCodeCliReinstallModal,
+  PiCliReinstallModal,
   CodeRabbitCliReinstallModal,
 } from '@/components/preferences/CliReinstallModal'
 
@@ -43,6 +45,8 @@ export function CliUpdateModal() {
         queryClient.invalidateQueries({ queryKey: codexCliQueryKeys.all })
       } else if (cliUpdateModalType === 'opencode') {
         queryClient.invalidateQueries({ queryKey: opencodeCliQueryKeys.all })
+      } else if (cliUpdateModalType === 'pi') {
+        queryClient.invalidateQueries({ queryKey: piCliQueryKeys.all })
       } else if (cliUpdateModalType === 'coderabbit') {
         queryClient.invalidateQueries({ queryKey: coderabbitCliQueryKeys.all })
       }
@@ -72,6 +76,10 @@ export function CliUpdateModal() {
       />
       <OpenCodeCliReinstallModal
         open={cliUpdateModalOpen && cliUpdateModalType === 'opencode'}
+        onOpenChange={handleOpenChange}
+      />
+      <PiCliReinstallModal
+        open={cliUpdateModalOpen && cliUpdateModalType === 'pi'}
         onOpenChange={handleOpenChange}
       />
       <CodeRabbitCliReinstallModal

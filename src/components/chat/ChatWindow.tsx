@@ -608,10 +608,12 @@ export function ChatWindow({
       ? 'cursor'
       : session?.selected_model?.startsWith('opencode/')
         ? 'opencode'
-        : session?.selected_model?.startsWith('codex') ||
-            session?.selected_model?.includes('codex')
-          ? 'codex'
-          : null
+        : session?.selected_model?.startsWith('pi/')
+          ? 'pi'
+          : session?.selected_model?.startsWith('codex') ||
+              session?.selected_model?.includes('codex')
+            ? 'codex'
+            : null
   // Clamp to installed backends — prevents showing "Claude" when only Codex is installed
   const selectedBackend: CliBackend =
     modelImpliedBackend ??
@@ -622,6 +624,7 @@ export function ChatWindow({
   const isCodexBackend = selectedBackend === 'codex'
   const isOpencodeBackend = selectedBackend === 'opencode'
   const isCursorBackend = selectedBackend === 'cursor'
+  const isPiBackend = selectedBackend === 'pi'
 
   // Per-session model selection, falls back to preferences default (backend-aware)
   const defaultModel: string = isCodexBackend
@@ -630,7 +633,9 @@ export function ChatWindow({
       ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
       : isCursorBackend
         ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-        : ((preferences?.selected_model as ClaudeModel) ?? DEFAULT_MODEL)
+        : isPiBackend
+          ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+          : ((preferences?.selected_model as ClaudeModel) ?? DEFAULT_MODEL)
   const selectedModel: string = session?.selected_model ?? defaultModel
 
   // Per-session thinking level, falls back to preferences default
@@ -669,6 +674,11 @@ export function ChatWindow({
       : rawSelectedEffortLevel === 'ultracode'
         ? 'xhigh'
         : rawSelectedEffortLevel
+    : isPiBackend
+      ? rawSelectedEffortLevel === 'max' ||
+        rawSelectedEffortLevel === 'ultracode'
+        ? 'xhigh'
+        : rawSelectedEffortLevel
     : rawSelectedEffortLevel
 
   // MCP servers: resolve enabled servers cascade (session → project → global)
@@ -685,8 +695,9 @@ export function ChatWindow({
   const { data: cliStatus } = useClaudeCliStatus()
   // Custom providers don't support Opus 4.6 adaptive thinking — use thinking levels instead
   const useAdaptiveThinkingFlag =
-    !isCustomProvider &&
-    supportsAdaptiveThinking(selectedModel, cliStatus?.version ?? null)
+    isPiBackend ||
+    (!isCustomProvider &&
+      supportsAdaptiveThinking(selectedModel, cliStatus?.version ?? null))
 
   // Hide thinking level UI entirely for providers that don't support it
   const customCliProfiles = preferences?.custom_cli_profiles ?? []
@@ -1167,7 +1178,9 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : yoloBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : selectedModelRef.current)
+              : yoloBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : selectedModelRef.current)
       const yoloOverride =
         yoloModelRef.current || yoloBackend
           ? [yoloBackend, yoloModel].filter(Boolean).join(' / ')
@@ -1184,7 +1197,7 @@ export function ChatWindow({
       if (yoloBackend) {
         store.setSelectedBackend(
           newSession.id,
-          yoloBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
+          yoloBackend as 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
         )
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model immediately.
@@ -1336,7 +1349,9 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : buildBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : selectedModelRef.current)
+              : buildBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : selectedModelRef.current)
       const buildOverride =
         buildModelRef.current || buildBackend
           ? [buildBackend, buildModel].filter(Boolean).join(' / ')
@@ -1353,7 +1368,7 @@ export function ChatWindow({
       if (buildBackend) {
         store.setSelectedBackend(
           newSession.id,
-          buildBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
+          buildBackend as 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
         )
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model immediately.
@@ -1584,7 +1599,9 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : modeBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : selectedModelRef.current)
+              : modeBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : selectedModelRef.current)
       const modeOverride =
         modeModelRef.current || modeBackend
           ? [modeBackend, modeModel].filter(Boolean).join(' / ')
@@ -1601,7 +1618,7 @@ export function ChatWindow({
       if (modeBackend) {
         store.setSelectedBackend(
           newSession.id,
-          modeBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
+          modeBackend as 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
         )
       }
       queryClient.setQueryData<Session>(

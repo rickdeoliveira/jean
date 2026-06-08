@@ -55,12 +55,14 @@ import { ClaudeIcon } from '@/components/icons/ClaudeIcon'
 import { CodexIcon } from '@/components/icons/CodexIcon'
 import { OpenCodeIcon } from '@/components/icons/OpenCodeIcon'
 import { CursorIcon } from '@/components/icons/CursorIcon'
+import { PiIcon } from '@/components/icons/PiIcon'
 import type { MagicPrompts } from '@/types/preferences'
 import { GeneralPane } from './panes/GeneralPane'
 import { ClaudePane } from './panes/ClaudePane'
 import { CodexPane } from './panes/CodexPane'
 import { OpenCodePane } from './panes/OpenCodePane'
 import { CursorPane } from './panes/CursorPane'
+import { PiPane } from './panes/PiPane'
 import { GitHubPane } from './panes/GitHubPane'
 import { CodeRabbitPane } from './panes/CodeRabbitPane'
 import { AppearancePane } from './panes/AppearancePane'
@@ -137,6 +139,12 @@ const navigationEntries: (NavigationItem | NavigationSeparator)[] = [
     id: 'cursor',
     name: 'Cursor',
     icon: CursorIcon,
+  },
+  {
+    type: 'item',
+    id: 'pi',
+    name: 'PI',
+    icon: PiIcon,
   },
   {
     type: 'item',
@@ -221,6 +229,7 @@ const paneIconMap: Record<PreferencePane, LucideIcon> = {
   codex: CodexIcon,
   opencode: OpenCodeIcon,
   cursor: CursorIcon,
+  pi: PiIcon,
   github: Github,
   coderabbit: Rabbit,
   opinionated: Sparkles,
@@ -248,6 +257,8 @@ const getPaneTitle = (pane: PreferencePane): string => {
       return 'OpenCode'
     case 'cursor':
       return 'Cursor'
+    case 'pi':
+      return 'PI'
     case 'github':
       return 'GitHub CLI'
     case 'coderabbit':
@@ -793,6 +804,11 @@ export function PreferencesDialog() {
               {activePane === 'cursor' && (
                 <div id="pref-pane-cursor">
                   <CursorPane />
+                </div>
+              )}
+              {activePane === 'pi' && (
+                <div id="pref-pane-pi">
+                  <PiPane />
                 </div>
               )}
               {activePane === 'github' && (

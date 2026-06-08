@@ -761,6 +761,10 @@ export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   review_comments_model: 'opencode/gpt-5.3-codex',
 }
 
+/** PI preset for all magic prompts */
+export const PI_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('pi/sonnet')
+
 /** Default reasoning efforts for Claude backend (null = use model default) */
 export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   investigate_issue_effort: null,
@@ -802,6 +806,11 @@ export const OPENCODE_DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts 
   {
     ...CODEX_DEFAULT_MAGIC_PROMPT_EFFORTS,
   }
+
+/** PI preset: same as Codex */
+export const PI_DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
+  ...CODEX_DEFAULT_MAGIC_PROMPT_EFFORTS,
+}
 
 /**
  * Per-prompt provider overrides. null = use global default_provider.
@@ -905,6 +914,7 @@ export const CLAUDE_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('claude')
 export const CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('codex')
 export const OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS =
   makeBackendsPreset('opencode')
+export const PI_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('pi')
 
 /**
  * Resolve a magic prompt provider for a given key.
@@ -1017,6 +1027,7 @@ export interface AppPreferences {
   selected_codex_model: CodexModel // Default Codex model
   selected_opencode_model: string // Default OpenCode model (provider/model)
   selected_cursor_model: CursorModel // Default Cursor model
+  selected_pi_model: PiModel // Default PI model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
   codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
@@ -1040,6 +1051,7 @@ export interface AppPreferences {
   wsl_mode_chosen: boolean // Whether WSL mode selection has been made (prevents re-asking on Windows)
   wsl_enabled: boolean // Route commands through WSL
   wsl_distro: string // WSL distro name, e.g. "Ubuntu"
+  pi_cli_source: 'jean' | 'path' // PI CLI source: 'jean' (managed) or 'path' (system PATH)
   coderabbit_cli_source?: 'jean' | 'path' // CodeRabbit CLI source: 'jean' (managed) or 'path' (system PATH)
   expand_tool_calls_by_default: boolean // Expand all tool call collapsibles by default
   window_vibrancy: boolean // macOS window vibrancy effect (high GPU cost, default false)
@@ -1404,11 +1416,13 @@ export type MagicPromptReasoningEffort =
 // =============================================================================
 export type OpenCodeModel = `opencode/${string}`
 export type CursorModel = `cursor/${string}`
+export type PiModel = `pi/${string}`
 export type MagicPromptModel =
   | ClaudeModel
   | CodexModel
   | OpenCodeModel
   | CursorModel
+  | PiModel
 
 /** Check if a model string identifies an OpenCode model */
 export function isOpenCodeModel(model: string): model is OpenCodeModel {
@@ -1418,6 +1432,11 @@ export function isOpenCodeModel(model: string): model is OpenCodeModel {
 /** Check if a model string identifies a Cursor model */
 export function isCursorModel(model: string): model is CursorModel {
   return model.startsWith('cursor/')
+}
+
+/** Check if a model string identifies a PI model */
+export function isPiModel(model: string): model is PiModel {
+  return model.startsWith('pi/')
 }
 
 /** Check if a model string identifies a Codex model */
@@ -1440,13 +1459,14 @@ export const codexReasoningOptions: {
 // =============================================================================
 // CLI Backend
 // =============================================================================
-export type CliBackend = 'claude' | 'codex' | 'opencode' | 'cursor'
+export type CliBackend = 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
 
 export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'cursor', label: 'Cursor' },
+  { value: 'pi', label: 'Pi (Beta)' },
 ]
 
 export type TerminalApp =
@@ -1535,6 +1555,7 @@ export const newSessionKindOptions: {
   { value: 'claude', label: 'Claude' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'cursor', label: 'Cursor' },
+  { value: 'pi', label: 'Pi (Beta)' },
 ]
 
 export function getNewSessionKindLabel(
@@ -1819,6 +1840,7 @@ export const defaultPreferences: AppPreferences = {
   selected_codex_model: 'gpt-5.5', // Default: latest Codex model
   selected_opencode_model: 'opencode/gpt-5.3-codex', // Default OpenCode model
   selected_cursor_model: 'cursor/auto', // Default Cursor model
+  selected_pi_model: 'pi/sonnet', // Default PI model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: false, // Default: disabled
@@ -1842,6 +1864,7 @@ export const defaultPreferences: AppPreferences = {
   wsl_mode_chosen: false, // Default: not yet chosen
   wsl_enabled: false, // Default: native Windows
   wsl_distro: '', // Default: empty
+  pi_cli_source: 'jean', // Default: Jean-managed
   coderabbit_cli_source: 'jean', // Default: Jean-managed
   expand_tool_calls_by_default: false, // Default: collapsed
   window_vibrancy: false, // Default: disabled (high GPU cost)

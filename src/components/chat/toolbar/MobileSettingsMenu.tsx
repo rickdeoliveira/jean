@@ -58,6 +58,7 @@ import { isNativeApp } from '@/lib/environment'
 import {
   CODEX_EFFORT_LEVEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import {
@@ -84,7 +85,7 @@ import { getResumeCommand } from '@/components/chat/session-card-utils'
 interface MobileSettingsMenuProps {
   isDisabled: boolean
   providerLocked?: boolean
-  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor'
+  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
   selectedProvider: string | null
   backendModelLabel: ReactNode
   backendModelLabelText: string
@@ -168,13 +169,20 @@ export function MobileSettingsMenu({
   worktreeId,
   onAttach,
 }: MobileSettingsMenuProps) {
+  const isPi = selectedBackend === 'pi'
   const effortLevelOptions = isCodex
     ? CODEX_EFFORT_LEVEL_OPTIONS
-    : EFFORT_LEVEL_OPTIONS
+    : isPi
+      ? PI_EFFORT_LEVEL_OPTIONS
+      : EFFORT_LEVEL_OPTIONS
   const displayedEffortLevel = isCodex
     ? selectedEffortLevel === 'max'
       ? 'high'
       : selectedEffortLevel === 'ultracode'
+        ? 'xhigh'
+        : selectedEffortLevel
+    : isPi
+      ? selectedEffortLevel === 'max' || selectedEffortLevel === 'ultracode'
         ? 'xhigh'
         : selectedEffortLevel
     : selectedEffortLevel

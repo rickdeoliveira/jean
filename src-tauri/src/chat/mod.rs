@@ -9,6 +9,7 @@ pub mod jean_mcp;
 mod naming;
 mod native_history;
 pub(crate) mod opencode;
+pub(crate) mod pi;
 pub mod registry;
 pub mod run_log;
 pub mod storage;

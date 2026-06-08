@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import {
   EFFORT_LEVEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { getMessageModelLabel } from '@/components/chat/message-settings-labels'
@@ -25,10 +26,15 @@ export const MessageSettingsBadges = memo(function MessageSettingsBadges({
   if (!model) return null
 
   const modelLabel = getMessageModelLabel(model)
-  const isCodex = isCodexModel(model) || model.includes('codex')
+  const isCodex =
+    !model.startsWith('pi/') && (isCodexModel(model) || model.includes('codex'))
+
+  const effortOptions = model.startsWith('pi/')
+    ? PI_EFFORT_LEVEL_OPTIONS
+    : EFFORT_LEVEL_OPTIONS
 
   const effortLabel = effortLevel
-    ? (EFFORT_LEVEL_OPTIONS.find(o => o.value === effortLevel)?.label ??
+    ? (effortOptions.find(o => o.value === effortLevel)?.label ??
       effortLevel)
     : null
 

@@ -166,6 +166,7 @@ export function NativeCliSessionsModal({
           session.claude_session_id,
           session.opencode_session_id,
           session.cursor_chat_id,
+          session.pi_session_id,
           ...(session.terminal_command_args ?? []),
         ])
         .filter((value): value is string => Boolean(value))

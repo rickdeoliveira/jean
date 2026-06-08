@@ -6,6 +6,7 @@ import { ClaudeIcon } from '@/components/icons/ClaudeIcon'
 import { CodexIcon } from '@/components/icons/CodexIcon'
 import { OpenCodeIcon } from '@/components/icons/OpenCodeIcon'
 import { CursorIcon } from '@/components/icons/CursorIcon'
+import { PiIcon } from '@/components/icons/PiIcon'
 import type { CliBackend } from '@/types/preferences'
 
 export type BackendIconComponent = ForwardRefExoticComponent<
@@ -22,6 +23,8 @@ export function getBackendIcon(backend: CliBackend): BackendIconComponent {
       return OpenCodeIcon
     case 'cursor':
       return CursorIcon
+    case 'pi':
+      return PiIcon
   }
 }
 
@@ -35,11 +38,15 @@ export function getBackendLabel(backend: CliBackend): string {
       return 'OpenCode'
     case 'cursor':
       return 'Cursor'
+    case 'pi':
+      return 'Pi'
   }
 }
 
 export function getBackendPlainLabel(backend: CliBackend): string {
-  return backend === 'cursor' ? 'Cursor (Beta)' : getBackendLabel(backend)
+  return backend === 'cursor' || backend === 'pi'
+    ? `${getBackendLabel(backend)} (Beta)`
+    : getBackendLabel(backend)
 }
 
 export function BackendLabel({
@@ -52,8 +59,9 @@ export function BackendLabel({
   badgeClassName?: string
 }) {
   const label = getBackendLabel(backend)
+  const isBeta = backend === 'cursor' || backend === 'pi'
 
-  if (backend !== 'cursor') return <span className={className}>{label}</span>
+  if (!isBeta) return <span className={className}>{label}</span>
 
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)}>

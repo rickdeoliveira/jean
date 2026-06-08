@@ -138,7 +138,7 @@ interface ChatUIState {
   effortLevels: Record<string, EffortLevel>
 
   // Selected backend per session (claude, codex, opencode, or cursor)
-  selectedBackends: Record<string, 'claude' | 'codex' | 'opencode' | 'cursor'>
+  selectedBackends: Record<string, 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'>
 
   // Selected model per session (for tracking what model was used)
   selectedModels: Record<string, string>
@@ -434,7 +434,7 @@ interface ChatUIState {
   // Actions - Selected backend (session-based)
   setSelectedBackend: (
     sessionId: string,
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor'
+    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
   ) => void
 
   // Actions - Selected model (session-based)

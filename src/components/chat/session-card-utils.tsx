@@ -402,6 +402,9 @@ export function getResumeCommand(session: Session): string | null {
   if (session.backend === 'cursor' && session.cursor_chat_id) {
     return `cursor-agent --resume ${session.cursor_chat_id}`
   }
+  if (session.backend === 'pi' && session.pi_session_id) {
+    return `pi --session ${session.pi_session_id}`
+  }
   return null
 }
 
@@ -436,6 +439,12 @@ export function getResumeArgs(
     return {
       command: cmd || 'cursor-agent',
       args: ['--resume', session.cursor_chat_id],
+    }
+  }
+  if (session.backend === 'pi' && session.pi_session_id) {
+    return {
+      command: cmd || 'pi',
+      args: ['--session', session.pi_session_id],
     }
   }
   return null
