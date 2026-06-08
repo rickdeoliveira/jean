@@ -56,6 +56,16 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -109,9 +119,13 @@ import { SessionChatModal } from '@/components/chat/SessionChatModal'
 import { LabelModal } from '@/components/chat/LabelModal'
 import { getLabelTextColor } from '@/lib/label-colors'
 import {
+  countWorktreesWithLabel,
+  deleteLabelFromRegistry,
   getWorktreeLabels,
   getPinnedWorktreeLabelTabs,
+  mergeLabelRegistry,
   mergePinnedLabels,
+  removeLabelFromLabels,
   setLabelPinned,
   type PinnedWorktreeLabelTab,
   updateWorktreeLabelsByName,
@@ -161,7 +175,6 @@ const LinkedProjectsModal = lazy(() =>
     default: mod.LinkedProjectsModal,
   }))
 )
-const EMPTY_PINNED_LABELS: LabelData[] = []
 import type { DiffRequest } from '@/types/git-diff'
 import { toast } from 'sonner'
 import {
@@ -194,6 +207,9 @@ import { openCanvasConflictResolution } from './conflict-resolution-navigation'
 interface ProjectCanvasViewProps {
   projectId: string
 }
+
+const EMPTY_PINNED_LABELS: LabelData[] = []
+const EMPTY_LABELS: LabelData[] = []
 
 interface WorktreeSection {
   worktree: Worktree
@@ -885,6 +901,9 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
       state.projectCanvasSettings[projectId]?.pinnedLabels ??
       EMPTY_PINNED_LABELS
   )
+  const projectLabels = useProjectsStore(
+    state => state.projectCanvasSettings[projectId]?.labels ?? EMPTY_LABELS
+  )
 
   // Project action mutations
   const createBaseSession = useCreateBaseSession()
@@ -1008,10 +1027,8 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     setActiveFilterTab('all')
   }, [activeFilterTab, pinnedLabelTabs])
 
-  // All worktree labels (unfiltered by search) for the label modal
-  const allWorktreeLabels = useMemo(() => {
+  const assignedWorktreeLabels = useMemo(() => {
     const labels: LabelData[] = []
-    labels.push(...projectPinnedLabels)
     for (const wt of readyWorktrees) {
       labels.push(...getWorktreeLabels(wt))
     }
@@ -1019,7 +1036,17 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
       labels.push(...getWorktreeLabels(wt))
     }
     return labels
-  }, [projectPinnedLabels, readyWorktrees, pendingWorktrees])
+  }, [readyWorktrees, pendingWorktrees])
+
+  // All worktree labels (unfiltered by search) for the label modal
+  const allWorktreeLabels = useMemo(
+    () =>
+      mergeLabelRegistry(
+        mergeLabelRegistry(projectLabels, projectPinnedLabels),
+        assignedWorktreeLabels
+      ),
+    [projectLabels, projectPinnedLabels, assignedWorktreeLabels]
+  )
 
   // Load sessions for all worktrees dynamically using useQueries
   const sessionQueries = useQueries({
@@ -2256,6 +2283,10 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     worktreeId: string
     currentLabels: LabelData[]
   } | null>(null)
+  const [labelDeleteTarget, setLabelDeleteTarget] = useState<{
+    label: LabelData
+    assignedCount: number
+  } | null>(null)
 
   const openWorktreeLabelModal = useCallback(
     (worktree: Worktree) => {
@@ -2368,6 +2399,18 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
           worktreeId: worktreeLabelTarget.worktreeId,
           labels,
         })
+        useProjectsStore
+          .getState()
+          .setProjectCanvasLabels(
+            projectId,
+            mergeLabelRegistry(
+              mergeLabelRegistry(
+                projectLabels,
+                worktreeLabelTarget.currentLabels
+              ),
+              labels
+            )
+          )
         setWorktreeLabelTarget(target =>
           target ? { ...target, currentLabels: labels } : target
         )
@@ -2378,7 +2421,7 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
         toast.error(`Failed to update labels: ${error}`)
       }
     },
-    [worktreeLabelTarget, queryClient, projectId]
+    [worktreeLabelTarget, queryClient, projectId, projectLabels]
   )
 
   const handleLabelPinnedChange = useCallback(
@@ -2392,6 +2435,12 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
       useProjectsStore
         .getState()
         .setProjectCanvasPinnedLabels(projectId, nextPinnedLabels)
+      useProjectsStore
+        .getState()
+        .setProjectCanvasLabels(
+          projectId,
+          mergeLabelRegistry(projectLabels, [{ ...label, pinned }])
+        )
 
       const worktreesToUpdate = worktreeSections
         .map(s => s.worktree)
@@ -2443,11 +2492,24 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
           : target
       )
     },
-    [projectId, projectPinnedLabels, queryClient, worktreeSections]
+    [
+      projectId,
+      projectLabels,
+      projectPinnedLabels,
+      queryClient,
+      worktreeSections,
+    ]
   )
 
   const handleLabelColorChange = useCallback(
     async (labelName: string, newColor: string) => {
+      useProjectsStore
+        .getState()
+        .setProjectCanvasLabels(
+          projectId,
+          updateWorktreeLabelsByName(projectLabels, labelName, newColor)
+        )
+
       if (
         projectPinnedLabels.some(
           label => label.name.toLowerCase() === labelName.toLowerCase()
@@ -2466,7 +2528,9 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
       const worktreesToUpdate = worktreeSections
         .map(s => s.worktree)
         .filter(wt =>
-          getWorktreeLabels(wt).some(label => label.name === labelName)
+          getWorktreeLabels(wt).some(
+            label => label.name.toLowerCase() === labelName.toLowerCase()
+          )
         )
 
       if (worktreesToUpdate.length === 0) return
@@ -2493,15 +2557,105 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
         queryKey: projectsQueryKeys.worktrees(projectId),
       })
     },
-    [projectId, projectPinnedLabels, worktreeSections, queryClient]
+    [
+      projectId,
+      projectLabels,
+      projectPinnedLabels,
+      worktreeSections,
+      queryClient,
+    ]
   )
+
+  const handleDeleteLabelRequest = useCallback(
+    (label: LabelData) => {
+      const allWorktrees = [...readyWorktrees, ...pendingWorktrees]
+      setLabelDeleteTarget({
+        label,
+        assignedCount: countWorktreesWithLabel(allWorktrees, label.name),
+      })
+    },
+    [readyWorktrees, pendingWorktrees]
+  )
+
+  const handleConfirmDeleteLabel = useCallback(async () => {
+    if (!labelDeleteTarget) return
+
+    const labelName = labelDeleteTarget.label.name
+    const allWorktrees = [...readyWorktrees, ...pendingWorktrees]
+    const worktreesToUpdate = allWorktrees.filter(wt =>
+      getWorktreeLabels(wt).some(
+        label => label.name.toLowerCase() === labelName.toLowerCase()
+      )
+    )
+
+    useProjectsStore
+      .getState()
+      .setProjectCanvasLabels(
+        projectId,
+        deleteLabelFromRegistry(projectLabels, labelName)
+      )
+    useProjectsStore
+      .getState()
+      .setProjectCanvasPinnedLabels(
+        projectId,
+        deleteLabelFromRegistry(projectPinnedLabels, labelName)
+      )
+
+    if (worktreesToUpdate.length > 0) {
+      const results = await Promise.allSettled(
+        worktreesToUpdate.map(wt =>
+          invoke('update_worktree_labels', {
+            worktreeId: wt.id,
+            labels: removeLabelFromLabels(getWorktreeLabels(wt), labelName),
+          })
+        )
+      )
+
+      const failures = results.filter(r => r.status === 'rejected')
+      if (failures.length > 0) {
+        toast.error(
+          `Failed to delete label from ${failures.length} worktree(s)`
+        )
+      } else {
+        toast.success(`Deleted label "${labelName}"`)
+      }
+
+      queryClient.invalidateQueries({
+        queryKey: projectsQueryKeys.worktrees(projectId),
+      })
+    } else {
+      toast.success(`Deleted label "${labelName}"`)
+    }
+
+    setWorktreeLabelTarget(target =>
+      target
+        ? {
+            ...target,
+            currentLabels: removeLabelFromLabels(
+              target.currentLabels,
+              labelName
+            ),
+          }
+        : target
+    )
+    setLabelDeleteTarget(null)
+  }, [
+    labelDeleteTarget,
+    pendingWorktrees,
+    projectId,
+    projectLabels,
+    projectPinnedLabels,
+    queryClient,
+    readyWorktrees,
+  ])
 
   // Keyboard navigation - disable when any modal/dialog is open
   const isModalOpen =
     !!selectedWorktreeModal ||
     !!planDialogPath ||
     !!planDialogContent ||
-    worktreeLabelModalOpen
+    worktreeLabelModalOpen ||
+    !!labelDeleteTarget
   const { cardRefs } = useCanvasKeyboardNav({
     cards: flatCards,
     selectedIndex,
@@ -3363,8 +3517,41 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
         onApplyLabels={handleWorktreeLabelApply}
         onColorChange={handleLabelColorChange}
         onPinnedChange={handleLabelPinnedChange}
+        onDeleteLabel={handleDeleteLabelRequest}
         extraLabels={allWorktreeLabels}
       />
+
+      <AlertDialog
+        open={!!labelDeleteTarget}
+        onOpenChange={open => {
+          if (!open) setLabelDeleteTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete label?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deleting <strong>{labelDeleteTarget?.label.name}</strong> will
+              remove it from the label list
+              {labelDeleteTarget?.assignedCount
+                ? ` and from ${labelDeleteTarget.assignedCount} worktree${
+                    labelDeleteTarget.assignedCount === 1 ? '' : 's'
+                  }`
+                : ''}
+              . This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleConfirmDeleteLabel}
+            >
+              Delete label
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Session Chat Modal */}
       <SessionChatModal

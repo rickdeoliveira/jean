@@ -66,6 +66,7 @@ function getDefaultModelForBackend(
         selected_codex_model?: string | null
         selected_opencode_model?: string | null
         selected_cursor_model?: string | null
+        selected_pi_model?: string | null
         selected_commandcode_model?: string | null
         selected_grok_model?: string | null
       }
@@ -79,6 +80,9 @@ function getDefaultModelForBackend(
   }
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
+  }
+  if (backend === 'pi') {
+    return preferences?.selected_pi_model ?? 'pi/sonnet'
   }
   if (backend === 'commandcode') {
     return preferences?.selected_commandcode_model ?? 'commandcode/default'
@@ -359,7 +363,13 @@ export function useClearContextApproval({
       if (backend) {
         store.setSelectedBackend(
           newSession.id,
-          backend as 'claude' | 'codex' | 'opencode' | 'cursor' | 'commandcode'
+          backend as
+            | 'claude'
+            | 'codex'
+            | 'opencode'
+            | 'cursor'
+            | 'pi'
+            | 'commandcode'
         )
         store.setSelectedBackend(newSession.id, backend as CliBackend)
       }

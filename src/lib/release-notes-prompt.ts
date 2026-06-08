@@ -16,7 +16,7 @@ Before generating notes, pull the latest commits to ensure complete data:
 1. Identify the current branch name.
 2. Inspect the target PR using the GitHub CLI to identify its base and head branches:
    - \`gh pr view <PR_NUMBER> --json number,title,body,baseRefName,headRefName,commits\`
-3. Identify the comparison branch from the PR base branch. If unavailable, use the repository's default release comparison branch (usually \`v4.x\` or \`main\`).
+3. Identify the comparison branch from the PR base branch. If unavailable, use the repository's default branch (usually \`main\`).
 4. Run \`git fetch origin\` to update remote tracking branches.
 5. Run \`git pull origin <current-branch>\` to update the current branch.
 6. Run \`git fetch origin <comparison-branch>:<comparison-branch>\` to update the comparison branch locally.
@@ -37,7 +37,7 @@ Then check the current branch's commits and merged PRs since it diverged from th
 ## Writing the notes
 Generate a brief, non-technical release description:
 - Start the body with a \`## What's Changed\` heading.
-- Group changes by category: \`### Security & Fixes\`, \`### New Services & Templates\`, \`### Improvements\`.
+- Group changes by category: \`### Features\`, \`### Fixes\`, \`### Improvements\`, \`### Breaking Changes\`.
 - Include only categories that have entries.
 - Use simple, user-friendly language (no technical jargon).
 - Keep each item to one short line.
@@ -46,7 +46,6 @@ Generate a brief, non-technical release description:
 - If the only known source PR for a line is the target PR, omit the PR ref but still include detected issue refs, for example \`(fixes #456, #789)\`.
 - IMPORTANT: If a source PR or its commits fix specific issues, add those after the source PR using the keyword found: \`(#234, fixes #456, #789)\` or \`(#345, closes #100)\`. If the source PR is the target PR, write only \`(fixes #456, #789)\` or \`(closes #100)\`.
 - Always use lowercase for the keyword in the final output: fixes, closes, resolves.
-- Include all new service templates and one-click services added.
 - Skip internal refactoring, dependency updates, and minor tweaks unless significant.
 - Do not add commit numbers or commit links into the notes.
 - Do not invent PR or issue numbers; only use references you actually detected.
@@ -55,13 +54,12 @@ Generate a brief, non-technical release description:
 ## Format
 ## What's Changed
 
-### Security & Fixes
+### Features
 - Brief user-facing description (#234, fixes #456, #789)
-- Target-PR-only fix description (fixes #456, #789)
+- Target-PR-only feature description (fixes #456, #789)
 
-### New Services & Templates
-- Added ServiceName template (#234)
-- Updated ExistingService to vX.X.X (#345)
+### Fixes
+- Fixed an issue with X (#345)
 
 ### Improvements
 - Enhancement description (#456)

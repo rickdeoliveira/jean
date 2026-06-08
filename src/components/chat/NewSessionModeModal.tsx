@@ -14,6 +14,7 @@ import { useClaudeCliStatus } from '@/services/claude-cli'
 import { useCodexCliStatus } from '@/services/codex-cli'
 import { useOpencodeCliStatus } from '@/services/opencode-cli'
 import { useCursorCliStatus } from '@/services/cursor-cli'
+import { usePiCliStatus } from '@/services/pi-cli'
 import { useCommandCodeCliStatus } from '@/services/commandcode-cli'
 import { useGrokCliStatus } from '@/services/grok-cli'
 import { useChatStore } from '@/store/chat-store'
@@ -34,6 +35,7 @@ const BACKEND_ORDER: CliBackend[] = [
   'claude',
   'opencode',
   'cursor',
+  'pi',
   'commandcode',
   'grok',
 ]
@@ -43,6 +45,7 @@ const backendCommands: Record<CliBackend, string> = {
   claude: 'claude',
   opencode: 'opencode',
   cursor: 'cursor-agent',
+  pi: 'pi',
   commandcode: 'commandcode',
   grok: 'grok',
 }
@@ -62,6 +65,7 @@ export function NewSessionModeModal() {
   const codexStatus = useCodexCliStatus({ enabled: target !== null })
   const opencodeStatus = useOpencodeCliStatus({ enabled: target !== null })
   const cursorStatus = useCursorCliStatus({ enabled: target !== null })
+  const piStatus = usePiCliStatus({ enabled: target !== null })
   const commandcodeStatus = useCommandCodeCliStatus({
     enabled: target !== null,
   })
@@ -86,9 +90,11 @@ export function NewSessionModeModal() {
                 ? opencodeStatus
                 : backend === 'cursor'
                   ? cursorStatus
-                  : backend === 'commandcode'
-                    ? commandcodeStatus
-                    : grokStatus
+                  : backend === 'pi'
+                    ? piStatus
+                    : backend === 'commandcode'
+                      ? commandcodeStatus
+                      : grokStatus
         return {
           backend,
           shortcut: String(index + 2),
@@ -103,6 +109,8 @@ export function NewSessionModeModal() {
       codexStatus.data?.path,
       cursorStatus.data?.installed,
       cursorStatus.data?.path,
+      piStatus.data?.installed,
+      piStatus.data?.path,
       commandcodeStatus.data?.installed,
       commandcodeStatus.data?.path,
       grokStatus.data?.installed,
@@ -117,6 +125,7 @@ export function NewSessionModeModal() {
     codexStatus.isLoading ||
     opencodeStatus.isLoading ||
     cursorStatus.isLoading ||
+    piStatus.isLoading ||
     commandcodeStatus.isLoading
 
   const nativePickerCommand = useMemo(() => {

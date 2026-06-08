@@ -1017,11 +1017,12 @@ export interface AppPreferences {
 
   confirm_session_close: boolean // Show confirmation dialog before closing sessions/worktrees
   default_execution_mode: ExecutionMode // Default execution mode for new sessions: 'plan', 'build', or 'yolo'
-  default_backend: CliBackend // Default CLI backend for new sessions: 'claude', 'codex', 'opencode', 'cursor', or 'commandcode'
+  default_backend: CliBackend // Default CLI backend for new sessions: 'claude', 'codex', 'opencode', 'cursor', 'pi', or 'commandcode'
   default_new_session_kind: NewSessionKind // Default action for CMD+T: 'chat', 'terminal', or a CLI backend
   selected_codex_model: CodexModel // Default Codex model
   selected_opencode_model: string // Default OpenCode model (provider/model)
   selected_cursor_model: CursorModel // Default Cursor model
+  selected_pi_model: PiModel // Default PI model
   selected_commandcode_model?: string // Default Command Code model (CLI default)
   selected_grok_model: GrokModel // Default Grok model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
@@ -1045,6 +1046,7 @@ export interface AppPreferences {
   opencode_cli_source: 'jean' | 'path' // OpenCode CLI source: 'jean' (managed) or 'path' (system PATH)
   grok_cli_source: 'path' // Grok CLI source: currently system PATH
   gh_cli_source: 'jean' | 'path' // GitHub CLI source: 'jean' (managed) or 'path' (system PATH)
+  pi_cli_source: 'jean' | 'path' // PI CLI source: 'jean' (managed) or 'path' (system PATH)
   commandcode_cli_source?: 'jean' | 'path' // Command Code CLI source: 'jean' (managed) or 'path' (system PATH)
   wsl_mode_chosen: boolean // Whether WSL mode selection has been made (prevents re-asking on Windows)
   wsl_enabled: boolean // Route commands through WSL
@@ -1413,6 +1415,7 @@ export type MagicPromptReasoningEffort =
 // =============================================================================
 export type OpenCodeModel = `opencode/${string}`
 export type CursorModel = `cursor/${string}`
+export type PiModel = `pi/${string}`
 export type CommandCodeModel = `commandcode/${string}`
 export type GrokModel = `grok/${string}`
 export type MagicPromptModel =
@@ -1420,6 +1423,7 @@ export type MagicPromptModel =
   | CodexModel
   | OpenCodeModel
   | CursorModel
+  | PiModel
   | CommandCodeModel
   | GrokModel
 
@@ -1431,6 +1435,11 @@ export function isOpenCodeModel(model: string): model is OpenCodeModel {
 /** Check if a model string identifies a Cursor model */
 export function isCursorModel(model: string): model is CursorModel {
   return model.startsWith('cursor/')
+}
+
+/** Check if a model string identifies a PI model */
+export function isPiModel(model: string): model is PiModel {
+  return model.startsWith('pi/')
 }
 
 /** Check if a model string identifies a Command Code model */
@@ -1467,6 +1476,7 @@ export type CliBackend =
   | 'codex'
   | 'opencode'
   | 'cursor'
+  | 'pi'
   | 'commandcode'
   | 'grok'
 
@@ -1475,7 +1485,8 @@ export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'cursor', label: 'Cursor' },
-  { value: 'commandcode', label: 'Command Code' },
+  { value: 'pi', label: 'Pi (Beta)' },
+  { value: 'commandcode', label: 'Command Code (Beta)' },
   { value: 'grok', label: 'Grok (Beta)' },
 ]
 
@@ -1850,6 +1861,7 @@ export const defaultPreferences: AppPreferences = {
   selected_codex_model: 'gpt-5.5', // Default: latest Codex model
   selected_opencode_model: 'opencode/gpt-5.3-codex', // Default OpenCode model
   selected_cursor_model: 'cursor/auto', // Default Cursor model
+  selected_pi_model: 'pi/sonnet', // Default PI model
   selected_commandcode_model: 'commandcode/default', // Default Command Code model
   selected_grok_model: 'grok/grok-composer-2.5-fast', // Default Grok model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
@@ -1873,6 +1885,7 @@ export const defaultPreferences: AppPreferences = {
   opencode_cli_source: 'jean', // Default: Jean-managed
   grok_cli_source: 'path', // Default: system PATH
   gh_cli_source: 'jean', // Default: Jean-managed
+  pi_cli_source: 'jean', // Default: Jean-managed
   commandcode_cli_source: 'jean', // Default: Jean-managed
   wsl_mode_chosen: false, // Default: not yet chosen
   wsl_enabled: false, // Default: native Windows

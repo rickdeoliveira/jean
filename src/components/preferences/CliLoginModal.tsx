@@ -16,6 +16,7 @@ import { ghCliQueryKeys } from '@/services/gh-cli'
 import { codexCliQueryKeys } from '@/services/codex-cli'
 import { opencodeCliQueryKeys } from '@/services/opencode-cli'
 import { cursorCliQueryKeys } from '@/services/cursor-cli'
+import { piCliQueryKeys } from '@/services/pi-cli'
 import { commandcodeCliQueryKeys } from '@/services/commandcode-cli'
 import { grokCliQueryKeys } from '@/services/grok-cli'
 import { coderabbitCliQueryKeys } from '@/services/coderabbit-cli'
@@ -72,6 +73,7 @@ interface CliLoginModalContentProps {
     | 'codex'
     | 'opencode'
     | 'cursor'
+    | 'pi'
     | 'commandcode'
     | 'grok'
     | 'coderabbit'
@@ -110,13 +112,18 @@ function CliLoginModalContent({
             ? 'OpenCode CLI'
             : cliType === 'cursor'
               ? 'Cursor CLI'
-              : cliType === 'commandcode'
-                ? 'Command Code CLI'
-                : cliType === 'grok'
-                  ? 'Grok CLI'
-                  : 'GitHub CLI'
+              : cliType === 'pi'
+                ? 'PI CLI'
+                : cliType === 'commandcode'
+                  ? 'Command Code CLI'
+                  : cliType === 'grok'
+                    ? 'Grok CLI'
+                    : 'GitHub CLI'
   const cliTitle =
-    cliType === 'cursor' || cliType === 'commandcode' || cliType === 'grok' ? (
+    cliType === 'cursor' ||
+    cliType === 'pi' ||
+    cliType === 'commandcode' ||
+    cliType === 'grok' ? (
       <span className="inline-flex items-center gap-2">
         <BackendLabel backend={cliType} />
         <span>CLI</span>
@@ -242,6 +249,8 @@ function CliLoginModalContent({
           queryClient.invalidateQueries({ queryKey: opencodeCliQueryKeys.all })
         } else if (cliType === 'cursor') {
           queryClient.invalidateQueries({ queryKey: cursorCliQueryKeys.all })
+        } else if (cliType === 'pi') {
+          queryClient.invalidateQueries({ queryKey: piCliQueryKeys.all })
         } else if (cliType === 'commandcode') {
           queryClient.invalidateQueries({
             queryKey: commandcodeCliQueryKeys.all,

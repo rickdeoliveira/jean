@@ -10,6 +10,8 @@
 import { compareVersions } from './version-utils'
 import type { CliBackend } from '@/types/preferences'
 
+export type ModelBackend = CliBackend
+
 /** Minimum CLI version that supports Claude 4.6 adaptive thinking */
 const ADAPTIVE_THINKING_MIN_CLI_VERSION = '2.1.32'
 
@@ -17,12 +19,21 @@ const ADAPTIVE_THINKING_MIN_CLI_VERSION = '2.1.32'
  * Resolve which CLI backend to use based on the model string.
  */
 export function resolveBackend(model: string): CliBackend {
+  return getModelImpliedBackend(model) ?? 'claude'
+}
+
+export function getModelImpliedBackend(
+  model: string | null | undefined
+): Exclude<CliBackend, 'claude'> | null {
+  if (!model) return null
   if (model.startsWith('commandcode/')) return 'commandcode'
   if (model.startsWith('cursor/')) return 'cursor'
   if (model.startsWith('grok/')) return 'grok'
   if (model.startsWith('opencode/')) return 'opencode'
+  if (model.startsWith('pi/')) return 'pi'
   if (model.startsWith('codex') || model.includes('codex')) return 'codex'
-  return 'claude'
+  if (model.startsWith('gpt-')) return 'codex'
+  return null
 }
 
 /**

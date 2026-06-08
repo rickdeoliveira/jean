@@ -113,7 +113,6 @@ export function useCommandContext(): CommandContext {
 ### Project Commands
 
 - `add-project` - Add an existing git repository as a project
-- `init-project` - Create a new project from scratch
 
 ### Debug Commands
 

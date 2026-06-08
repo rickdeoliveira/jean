@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { LabelData } from '@/types/chat'
 import type { Worktree } from '@/types/projects'
 import {
+  countWorktreesWithLabel,
+  deleteLabelFromRegistry,
+  mergeLabelRegistry,
   mergePinnedLabels,
   getPinnedWorktreeLabelTabs,
   getWorktreeLabels,
+  removeLabelFromLabels,
   setLabelPinned,
   updateWorktreeLabelsByName,
 } from './worktree-labels'
@@ -160,5 +164,73 @@ describe('setLabelPinned', () => {
         false
       )
     ).toEqual([])
+  })
+})
+
+describe('mergeLabelRegistry', () => {
+  it('keeps unassigned labels while adding newly assigned labels', () => {
+    expect(
+      mergeLabelRegistry(
+        [{ name: 'Preserved', color: '#22c55e' }],
+        [{ name: 'Assigned', color: '#eab308' }]
+      )
+    ).toEqual([
+      { name: 'Preserved', color: '#22c55e' },
+      { name: 'Assigned', color: '#eab308' },
+    ])
+  })
+
+  it('updates registry label metadata from assigned labels without duplicating by case', () => {
+    expect(
+      mergeLabelRegistry(
+        [{ name: 'Bug', color: '#eab308' }],
+        [{ name: 'bug', color: '#ef4444', pinned: true }]
+      )
+    ).toEqual([{ name: 'Bug', color: '#ef4444', pinned: true }])
+  })
+})
+
+describe('deleteLabelFromRegistry', () => {
+  it('removes a label from the preserved registry by name', () => {
+    expect(
+      deleteLabelFromRegistry(
+        [
+          { name: 'Bug', color: '#eab308' },
+          { name: 'Feature', color: '#22c55e' },
+        ],
+        'bug'
+      )
+    ).toEqual([{ name: 'Feature', color: '#22c55e' }])
+  })
+})
+
+describe('removeLabelFromLabels', () => {
+  it('removes a label from a worktree label array by name', () => {
+    expect(
+      removeLabelFromLabels(
+        [
+          { name: 'Bug', color: '#eab308' },
+          { name: 'Feature', color: '#22c55e' },
+        ],
+        'BUG'
+      )
+    ).toEqual([{ name: 'Feature', color: '#22c55e' }])
+  })
+})
+
+describe('countWorktreesWithLabel', () => {
+  it('counts non-deleting worktrees with a label name', () => {
+    expect(
+      countWorktreesWithLabel(
+        [
+          worktree('one', [{ name: 'Bug', color: '#eab308' }]),
+          worktree('two', [{ name: 'bug', color: '#22c55e' }]),
+          worktree('deleting', [{ name: 'Bug', color: '#ef4444' }], {
+            status: 'deleting',
+          }),
+        ],
+        'BUG'
+      )
+    ).toBe(2)
   })
 })

@@ -35,9 +35,62 @@ export function updateWorktreeLabelsByName(
   labelName: string,
   newColor: string
 ): LabelData[] {
+  const target = labelName.toLowerCase()
   return labels.map(label =>
-    label.name === labelName ? { ...label, color: newColor } : label
+    label.name.toLowerCase() === target ? { ...label, color: newColor } : label
   )
+}
+
+export function mergeLabelRegistry(
+  registryLabels: LabelData[],
+  assignedLabels: LabelData[]
+): LabelData[] {
+  const labelsByName = new Map<string, LabelData>()
+
+  for (const label of registryLabels) {
+    labelsByName.set(label.name.toLowerCase(), label)
+  }
+
+  for (const label of assignedLabels) {
+    const key = label.name.toLowerCase()
+    const existing = labelsByName.get(key)
+    labelsByName.set(key, {
+      ...(existing ?? label),
+      color: label.color,
+      pinned: label.pinned ?? existing?.pinned,
+    })
+  }
+
+  return [...labelsByName.values()]
+}
+
+export function deleteLabelFromRegistry(
+  registryLabels: LabelData[],
+  labelName: string
+): LabelData[] {
+  const target = labelName.toLowerCase()
+  return registryLabels.filter(label => label.name.toLowerCase() !== target)
+}
+
+export function removeLabelFromLabels(
+  labels: LabelData[],
+  labelName: string
+): LabelData[] {
+  const target = labelName.toLowerCase()
+  return labels.filter(label => label.name.toLowerCase() !== target)
+}
+
+export function countWorktreesWithLabel(
+  worktrees: Pick<Worktree, 'labels' | 'label' | 'status'>[],
+  labelName: string
+): number {
+  const target = labelName.toLowerCase()
+  return worktrees.filter(worktree => {
+    if (worktree.status === 'deleting') return false
+    return getWorktreeLabels(worktree).some(
+      label => label.name.toLowerCase() === target
+    )
+  }).length
 }
 
 export function mergePinnedLabels(

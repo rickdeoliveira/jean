@@ -361,6 +361,9 @@ fn generate_names(app: &AppHandle, request: &NamingRequest) -> Result<NamingOutp
     if backend == super::types::Backend::Cursor {
         return generate_names_cursor(app, &prompt, &request.model, request);
     }
+    if backend == super::types::Backend::Pi {
+        return generate_names_pi(app, &prompt, &request.model, request);
+    }
 
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
@@ -543,7 +546,25 @@ fn generate_names_codex(
         .map_err(|e| format!("Failed to parse Codex naming JSON: {e}, raw: {json_str}"))
 }
 
-/// Generate names using Cursor Agent in one-shot mode.
+/// Generate names using PI in one-shot mode.
+fn generate_names_pi(
+    app: &AppHandle,
+    prompt: &str,
+    model: &str,
+    request: &NamingRequest,
+) -> Result<NamingOutput, String> {
+    let text = super::pi::execute_one_shot_pi(
+        app,
+        prompt,
+        model,
+        Some(std::path::Path::new(&request.worktree_path)),
+        None,
+    )?;
+    let json = extract_json_object(&text)
+        .ok_or_else(|| "No JSON object found in PI naming response".to_string())?;
+    serde_json::from_str(json).map_err(|e| format!("Failed to parse PI naming JSON: {e}"))
+}
+
 fn generate_names_cursor(
     app: &tauri::AppHandle,
     prompt: &str,

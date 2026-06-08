@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Tag, Check, Pencil, Pin } from 'lucide-react'
+import { Tag, Check, Pencil, Pin, Trash2 } from 'lucide-react'
 import { useChatStore } from '@/store/chat-store'
 import type { LabelData } from '@/types/chat'
 import { getLabelTextColor } from '@/lib/label-colors'
@@ -46,6 +46,8 @@ interface LabelModalProps {
   onColorChange?: (labelName: string, newColor: string) => void
   /** Callback when a label is pinned/unpinned as a project filter tab. */
   onPinnedChange?: (label: LabelData, pinned: boolean) => void
+  /** Callback when a custom label should be deleted from the project. */
+  onDeleteLabel?: (label: LabelData) => void
 }
 
 export function LabelModal({
@@ -60,6 +62,7 @@ export function LabelModal({
   extraLabels,
   onColorChange,
   onPinnedChange,
+  onDeleteLabel,
 }: LabelModalProps) {
   const [inputValue, setInputValue] = useState('')
   const [selectedColor, setSelectedColor] = useState(
@@ -307,6 +310,14 @@ export function LabelModal({
     [mode, onApplyLabels, onPinnedChange, selectedLabels]
   )
 
+  const deleteLabel = useCallback(
+    (labelData: LabelData, e: React.MouseEvent) => {
+      e.stopPropagation()
+      onDeleteLabel?.(labelData)
+    },
+    [onDeleteLabel]
+  )
+
   // Are we in edit mode?
   const isEditing = isCreatingCustom || editingLabelName
 
@@ -438,10 +449,18 @@ export function LabelModal({
                     )}
                     {isSelected && <Check className="h-3 w-3 mr-1" />}
                     {isCustom && (
-                      <Pencil
-                        className="h-3 w-3 opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity mr-1"
-                        onClick={e => startEditColor(labelData, e)}
-                      />
+                      <>
+                        {onDeleteLabel && (
+                          <Trash2
+                            className="h-3 w-3 opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity mr-1 text-destructive"
+                            onClick={e => deleteLabel(labelData, e)}
+                          />
+                        )}
+                        <Pencil
+                          className="h-3 w-3 opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity mr-1"
+                          onClick={e => startEditColor(labelData, e)}
+                        />
+                      </>
                     )}
                   </button>
                 )

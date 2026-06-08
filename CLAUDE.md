@@ -188,6 +188,32 @@ To diagnose unnecessary re-renders, temporarily install [why-did-you-render](htt
 5. Check browser console for "Re-rendered because of hook changes" / "different objects that are equal by value"
 6. **Before releasing:** Remove all annotations, `wdyr.ts`, its import, and `bun remove @welldone-software/why-did-you-render`
 
+#### PI CLI JSON Output Format
+
+**Read this before changing PI chat parsing** (`src-tauri/src/chat/pi.rs`).
+
+PI runs with `--mode json` and streams newline-delimited JSON. Jean persists its
+own session/run JSONL (run logs) — PI's format is only used to _parse_ PI CLI
+output before writing Jean history. Reference: https://pi.dev/docs/latest/session-format
+
+- **Streaming assistant text** arrives as `message_update` / `assistant` events.
+  Deltas are read from `assistantMessageEvent.delta` (type `text_delta`), or a
+  top-level `delta`/`text` field. Thinking deltas use `delta.type == "thinking_delta"`.
+- **Final assistant content** (text, thinking, tool calls), tool results, and
+  usage are nested under `type: "message"` lifecycle entries — `message.role` is
+  `assistant` (content blocks: `text`, `thinking`, `toolCall`) or `toolResult`.
+- **Tool lifecycle** also emitted as discrete `tool_execution_start` / `tool_call`
+  and `tool_execution_end` / `tool_result` events.
+- **Session id** comes from `session_id` / `sessionId`, or a `type: "session"`
+  entry's `id`. This becomes Jean's `pi_session_id` resume id.
+- **Usage** is read from `usage` / `token_usage` on `message`, `message_end`,
+  `turn_end`, `agent_end`, or `result` events.
+
+**Parsing is incremental:** `merge_pi_line()` merges one parsed line into the
+accumulating `PiResponse`. Both the batch parser (`parse_pi_json_stream_inner`)
+and the live streaming parser (`parse_pi_stream`) call it per line — never
+re-parse the whole accumulated buffer (avoids O(n²) on long sessions).
+
 #### Claude CLI JSON Schema Pattern
 
 **CRITICAL:** When using `--json-schema` with Claude CLI, structured output is returned via a tool call, not plain text.
@@ -372,7 +398,7 @@ No Rust changes needed — model is stored as `String` in `AppPreferences` and p
 
 #### Adding a New AI Backend
 
-When adding a backend like Claude, Codex, OpenCode, Cursor, or a future CLI/API backend, verify the integration is complete across Rust, TypeScript, UI, persistence, and web access.
+When adding a backend like Claude, Codex, OpenCode, Cursor, Pi, Command Code, or a future CLI/API backend, verify the integration is complete across Rust, TypeScript, UI, persistence, and web access.
 
 **Backend capability classification:**
 
@@ -434,13 +460,14 @@ When adding a backend like Claude, Codex, OpenCode, Cursor, or a future CLI/API 
 
 - [ ] Add permission/user-input approval structs, events, UI, persistence, and approve/deny commands if backend supports them
 - [ ] Add one-shot execution support for all magic prompt operations (session naming, context summary, PR content, commit message, code review, resolve conflicts, release notes, investigations, review comments)
-- [ ] Add robust structured JSON extraction for one-shot outputs
+- [ ] Add robust structured JSON extraction for one-shot outputs; define the backend-specific strategy (native JSON schema/tool call, strict JSON text, repair pass, or unsupported-with-UI-disable)
 - [ ] For non-JSON-capable backends, wrap prompts with strict JSON instructions and implement tolerant extraction/failure messages
 - [ ] Update Magic Prompts UI backend/model/default presets and per-prompt backend/provider/model/effort resolution
 - [ ] Add provider/profile support if backend supports custom routing; respect project/global/per-prompt provider precedence
-- [ ] Add MCP discovery/health/toggle support if backend supports MCP
+- [ ] Add MCP discovery/health/toggle support if backend supports MCP, including settings-pane grouping, chat status dots, and backend-specific auth hints
 - [ ] Update frontend chat/settings/onboarding/usage UI and backend-specific pending request components
 - [ ] Add backend to favorite models and fast-mode model handling if relevant
+- [ ] Update toolbar/model picker behavior for backend tabs, locked sessions, search scoping, keyboard shortcuts, favorites, and fast-mode controls
 
 **Web access, tests, and docs:**
 

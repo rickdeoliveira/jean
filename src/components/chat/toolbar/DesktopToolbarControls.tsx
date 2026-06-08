@@ -626,7 +626,9 @@ export function DesktopToolbarControls({
         <div className="hidden @xl:block h-4 w-px bg-border/50" />
       )}
 
-      {hideReasoningControl ? null : useAdaptiveThinking || isCodex || isGrok ? (
+      {hideReasoningControl ? null : useAdaptiveThinking ||
+        isCodex ||
+        isGrok ? (
         <DropdownMenu
           open={thinkingDropdownOpen}
           onOpenChange={setThinkingDropdownOpen}

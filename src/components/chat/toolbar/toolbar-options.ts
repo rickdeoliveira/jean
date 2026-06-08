@@ -83,6 +83,13 @@ export const CURSOR_MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: 'cursor/grok-4.3', label: 'Grok 4.3 1M' },
 ]
 
+export const PI_MODEL_OPTIONS: { value: string; label: string }[] = [
+  { value: 'pi/sonnet', label: 'Sonnet (PI)' },
+  { value: 'pi/sonnet:high', label: 'Sonnet High (PI)' },
+  { value: 'pi/opus', label: 'Opus (PI)' },
+  { value: 'pi/haiku', label: 'Haiku (PI)' },
+]
+
 export const GROK_MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: 'grok/grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
   { value: 'grok/grok-build', label: 'Grok Build' },
@@ -119,6 +126,19 @@ export const EFFORT_LEVEL_OPTIONS: {
 export const CODEX_EFFORT_LEVEL_OPTIONS = EFFORT_LEVEL_OPTIONS.filter(
   option => option.value !== 'max' && option.value !== 'ultracode'
 )
+
+export const PI_EFFORT_LEVEL_OPTIONS: {
+  value: EffortLevel
+  label: string
+  description: string
+}[] = [
+  { value: 'off', label: 'Off', description: 'Disabled' },
+  { value: 'minimal', label: 'Minimal', description: 'Minimal' },
+  { value: 'low', label: 'Low', description: 'Low' },
+  { value: 'medium', label: 'Medium', description: 'Moderate' },
+  { value: 'high', label: 'High', description: 'High' },
+  { value: 'xhigh', label: 'xHigh', description: 'Extra high' },
+]
 
 // Grok supports low/medium/high/xhigh/max natively. ultracode is a Jean
 // main-loop concept (xHigh + workflows), not a Grok CLI effort level.

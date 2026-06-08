@@ -992,7 +992,7 @@ fn should_inject_synthetic_exit_plan(
             .any(|tc| tc.name == "ExitPlanMode" || tc.name == "CodexPlan");
 
     match backend {
-        Backend::Opencode | Backend::Commandcode => base_match,
+        Backend::Opencode | Backend::Pi | Backend::Commandcode => base_match,
         Backend::Cursor => false, // Plan approval only on real createPlanToolCall / interaction_query
         _ => false,
     }
@@ -1304,6 +1304,20 @@ mod tests {
         ));
 
         inject_synthetic_exit_plan(&Backend::Commandcode, &run.run_id, &mut msg);
+
+        assert_eq!(msg.tool_calls.len(), 1);
+        assert_eq!(msg.tool_calls[0].name, "ExitPlanMode");
+        assert_eq!(msg.tool_calls[0].id, "synthetic-exit-plan-run-123");
+    }
+
+    #[test]
+    fn injects_synthetic_exit_plan_for_completed_pi_plan_runs() {
+        let run = sample_run();
+        let mut msg = sample_assistant_message();
+
+        assert!(should_inject_synthetic_exit_plan(&Backend::Pi, &run, &msg));
+
+        inject_synthetic_exit_plan(&Backend::Pi, &run.run_id, &mut msg);
 
         assert_eq!(msg.tool_calls.len(), 1);
         assert_eq!(msg.tool_calls[0].name, "ExitPlanMode");

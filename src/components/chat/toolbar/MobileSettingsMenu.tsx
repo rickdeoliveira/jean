@@ -396,7 +396,9 @@ export function MobileSettingsMenu({
           )}
         </DropdownMenuItem>
 
-        {hideReasoningControl ? null : useAdaptiveThinking || isCodex || isGrok ? (
+        {hideReasoningControl ? null : useAdaptiveThinking ||
+          isCodex ||
+          isGrok ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="[&>svg:last-child]:!ml-2">
               <Brain className="mr-2 h-4 w-4 text-muted-foreground" />

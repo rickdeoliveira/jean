@@ -53,6 +53,7 @@ pub mod jean_mcp_stdio;
 mod opencode_cli;
 mod opencode_server;
 mod opinionated;
+mod pi_cli;
 mod platform;
 mod projects;
 mod terminal;
@@ -262,7 +263,7 @@ pub struct AppPreferences {
     #[serde(default = "default_execution_mode")]
     pub default_execution_mode: String, // Default execution mode: "plan", "build", or "yolo"
     #[serde(default = "default_backend")]
-    pub default_backend: String, // Default CLI backend: "claude", "codex", "opencode", "cursor", or "commandcode"
+    pub default_backend: String, // Default CLI backend: "claude", "codex", "opencode", "cursor", "pi", or "commandcode"
     #[serde(default = "default_new_session_kind")]
     pub default_new_session_kind: String, // Default new session action: "chat", "terminal", or a CLI backend
     #[serde(default = "default_codex_model")]
@@ -271,6 +272,8 @@ pub struct AppPreferences {
     pub selected_opencode_model: String, // Default OpenCode model (provider/model)
     #[serde(default = "default_cursor_model")]
     pub selected_cursor_model: String, // Default Cursor model
+    #[serde(default = "default_pi_model")]
+    pub selected_pi_model: String, // Default PI model
     #[serde(default = "default_commandcode_model")]
     pub selected_commandcode_model: String, // Default Command Code model
     #[serde(default = "default_grok_model")]
@@ -321,6 +324,8 @@ pub struct AppPreferences {
     pub wsl_enabled: bool, // Route commands through WSL
     #[serde(default)]
     pub wsl_distro: String, // WSL distro name, e.g. "Ubuntu"
+    #[serde(default = "default_cli_source")]
+    pub pi_cli_source: String, // PI CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub commandcode_cli_source: String, // Command Code CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
@@ -586,6 +591,10 @@ fn default_opencode_model() -> String {
 
 fn default_cursor_model() -> String {
     "cursor/auto".to_string()
+}
+
+fn default_pi_model() -> String {
+    "pi/sonnet".to_string()
 }
 
 fn default_commandcode_model() -> String {
@@ -1529,6 +1538,12 @@ pub fn is_cursor_model(model: &str) -> bool {
     model.starts_with("cursor/")
 }
 
+/// Returns true if the given model string identifies a PI model.
+/// PI model IDs are prefixed with "pi/" (e.g. "pi/sonnet").
+pub fn is_pi_model(model: &str) -> bool {
+    model.starts_with("pi/")
+}
+
 /// Returns true if the given model string identifies a Grok model.
 /// Grok model IDs are prefixed with "grok/" (e.g. "grok/grok-composer-2.5-fast").
 pub fn is_grok_model(model: &str) -> bool {
@@ -1540,6 +1555,7 @@ pub fn is_grok_model(model: &str) -> bool {
 pub fn is_codex_model(model: &str) -> bool {
     !is_opencode_model(model)
         && !is_cursor_model(model)
+        && !is_pi_model(model)
         && !is_grok_model(model)
         && (model.contains("codex") || model.starts_with("gpt-"))
 }
@@ -1770,6 +1786,7 @@ impl Default for AppPreferences {
             selected_codex_model: default_codex_model(),
             selected_opencode_model: default_opencode_model(),
             selected_cursor_model: default_cursor_model(),
+            selected_pi_model: default_pi_model(),
             selected_commandcode_model: default_commandcode_model(),
             selected_grok_model: default_grok_model(),
             default_codex_reasoning_effort: default_codex_reasoning_effort(),
@@ -1795,6 +1812,7 @@ impl Default for AppPreferences {
             wsl_mode_chosen: false,
             wsl_enabled: false,
             wsl_distro: String::new(),
+            pi_cli_source: default_cli_source(),
             commandcode_cli_source: default_cli_source(),
             coderabbit_cli_source: default_cli_source(),
             expand_tool_calls_by_default: false,
@@ -4103,6 +4121,14 @@ pub fn run() {
             commandcode_cli::install_commandcode_cli,
             commandcode_cli::uninstall_commandcode_cli,
             commandcode_cli::update_commandcode_cli,
+            // PI CLI management commands
+            pi_cli::check_pi_cli_installed,
+            pi_cli::detect_pi_in_path,
+            pi_cli::check_pi_cli_auth,
+            pi_cli::list_pi_models,
+            pi_cli::get_available_pi_versions,
+            pi_cli::install_pi_cli,
+            pi_cli::uninstall_pi_cli,
             // Cursor CLI management commands
             cursor_cli::check_cursor_cli_installed,
             cursor_cli::detect_cursor_in_path,

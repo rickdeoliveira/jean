@@ -27,6 +27,8 @@ export type ThinkingLevel = 'off' | 'think' | 'megathink' | 'ultrathink'
  * - ultracode: Claude Code ultracode mode (xhigh + Dynamic Workflows)
  */
 export type EffortLevel =
+  | 'off'
+  | 'minimal'
   | 'low'
   | 'medium'
   | 'high'
@@ -35,13 +37,14 @@ export type EffortLevel =
   | 'ultracode'
 
 /**
- * Backend for a chat session (Claude CLI, Codex CLI, OpenCode, Cursor, or Command Code)
+ * Backend for a chat session (Claude CLI, Codex CLI, OpenCode, Cursor, PI, or Command Code)
  */
 export type Backend =
   | 'claude'
   | 'codex'
   | 'opencode'
   | 'cursor'
+  | 'pi'
   | 'commandcode'
   | 'grok'
 
@@ -214,6 +217,8 @@ export interface Session {
   opencode_session_id?: string
   /** Cursor chat ID for resuming conversations */
   cursor_chat_id?: string
+  /** PI session ID for resuming conversations */
+  pi_session_id?: string
   /** Command Code uses standalone headless invocations; stores no native resume id */
   commandcode_session_id?: string
   /** Grok headless session ID for resuming conversations */

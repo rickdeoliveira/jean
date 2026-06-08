@@ -147,6 +147,7 @@ describe('PreferencesDialog', () => {
       'Codex',
       'OpenCode',
       'Cursor',
+      'PI',
       'Command Code',
       'Grok (Beta)',
       'GitHub CLI',

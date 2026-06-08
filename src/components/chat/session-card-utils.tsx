@@ -128,7 +128,8 @@ export function sessionCanBeWaiting(session: Session): boolean {
     session.last_run_status === 'running' ||
     session.last_run_status === 'resumable' ||
     (session.last_run_status === 'completed' &&
-      session.waiting_for_input_type === 'plan')
+      (session.waiting_for_input_type === 'plan' ||
+        session.waiting_for_input_type === 'question'))
   )
 }
 
@@ -402,6 +403,9 @@ export function getResumeCommand(session: Session): string | null {
   if (session.backend === 'cursor' && session.cursor_chat_id) {
     return `cursor-agent --resume ${session.cursor_chat_id}`
   }
+  if (session.backend === 'pi' && session.pi_session_id) {
+    return `pi --session ${session.pi_session_id}`
+  }
   if (session.backend === 'grok' && session.grok_session_id) {
     return `grok -s ${session.grok_session_id}`
   }
@@ -439,6 +443,12 @@ export function getResumeArgs(
     return {
       command: cmd || 'cursor-agent',
       args: ['--resume', session.cursor_chat_id],
+    }
+  }
+  if (session.backend === 'pi' && session.pi_session_id) {
+    return {
+      command: cmd || 'pi',
+      args: ['--session', session.pi_session_id],
     }
   }
   if (session.backend === 'grok' && session.grok_session_id) {

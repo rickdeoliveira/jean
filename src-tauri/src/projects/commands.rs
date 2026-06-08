@@ -5942,6 +5942,63 @@ fn extract_structured_output(output: &str) -> Result<String, String> {
     Err("No structured output found in Claude response".to_string())
 }
 
+/// Extract the first complete, balanced top-level JSON object from arbitrary
+/// text (PI/other CLIs may wrap JSON in prose). Brace-counts while respecting
+/// string literals and escapes, so braces inside strings don't break bounds.
+fn extract_json_object_from_text(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("Empty response from backend".to_string());
+    }
+
+    let mut start: Option<usize> = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in trimmed.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(idx);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth == 0 {
+                    continue;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    let s = start.ok_or_else(|| "Invalid JSON object start".to_string())?;
+                    let candidate = &trimmed[s..=idx];
+                    if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
+                        return Ok(candidate.to_string());
+                    }
+                    return Err("Found JSON-like object but failed to parse".to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Err("No valid JSON object found in response".to_string())
+}
+
 fn build_claude_structured_output_args(model: &str, tools: &str, schema: &str) -> Vec<String> {
     vec![
         "--print".to_string(),
@@ -6645,6 +6702,24 @@ fn generate_pr_content_from_inputs(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating PR content with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(repo_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: PrContentResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI PR content JSON: {e}, content: {json_str}");
+            format!("Failed to parse PR content: {e}")
+        })?;
+        response.body = augment_pr_references_in_body(&response.body, related_pr_issue_refs);
+        return Ok(response);
+    }
+
     if backend == crate::chat::types::Backend::Grok {
         log::trace!("Generating PR content with Grok");
         let json_str = crate::chat::grok::execute_one_shot_grok(
@@ -6653,6 +6728,7 @@ fn generate_pr_content_from_inputs(
             model_str,
             Some(std::path::Path::new(repo_path)),
         )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
         let mut response: PrContentResponse = serde_json::from_str(&json_str).map_err(|e| {
             log::error!("Failed to parse Grok PR content JSON: {e}, content: {json_str}");
             format!("Failed to parse PR content: {e}")
@@ -7206,10 +7282,27 @@ fn generate_commit_message_once(
         });
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating commit message with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI commit message JSON: {e}, content: {json_str}");
+            format!("Failed to parse commit message: {e}")
+        });
+    }
+
     if backend == crate::chat::types::Backend::Grok {
         log::trace!("Generating commit message with Grok");
         let json_str =
             crate::chat::grok::execute_one_shot_grok(app, prompt, model_str, working_dir)?;
+        let json_str = extract_json_object_from_text(&json_str)?;
         return serde_json::from_str(&json_str).map_err(|e| {
             log::error!("Failed to parse Grok commit message JSON: {e}, content: {json_str}");
             format!("Failed to parse commit message: {e}")
@@ -7721,10 +7814,27 @@ fn generate_review(
         });
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Running code review with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI review JSON: {e}, content: {json_str}");
+            format!("Failed to parse review: {e}")
+        });
+    }
+
     if backend == crate::chat::types::Backend::Grok {
         log::trace!("Running code review with Grok");
         let json_str =
             crate::chat::grok::execute_one_shot_grok(app, prompt, model_str, working_dir)?;
+        let json_str = extract_json_object_from_text(&json_str)?;
         return serde_json::from_str(&json_str).map_err(|e| {
             log::error!("Failed to parse Grok review JSON: {e}, content: {json_str}");
             format!("Failed to parse review: {e}")
@@ -8807,6 +8917,25 @@ fn generate_release_notes_content(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating release notes with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(project_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: ReleaseNotesResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI release notes JSON: {e}, content: {json_str}");
+            format!("Failed to parse release notes: {e}")
+        })?;
+        response.body =
+            augment_pr_references_in_body(&response.body, &release_notes_context.pr_issue_refs);
+        return Ok(response);
+    }
+
     if backend == crate::chat::types::Backend::Grok {
         log::trace!("Generating release notes with Grok");
         let json_str = crate::chat::grok::execute_one_shot_grok(
@@ -8815,6 +8944,7 @@ fn generate_release_notes_content(
             model_str,
             Some(std::path::Path::new(project_path)),
         )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
         let mut response: ReleaseNotesResponse = serde_json::from_str(&json_str).map_err(|e| {
             log::error!("Failed to parse Grok release notes JSON: {e}, content: {json_str}");
             format!("Failed to parse release notes: {e}")
@@ -10987,6 +11117,53 @@ pub async fn revert_last_local_commit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_json_object_plain() {
+        let out = extract_json_object_from_text(r#"{"title":"a","body":"b"}"#).unwrap();
+        assert_eq!(out, r#"{"title":"a","body":"b"}"#);
+    }
+
+    #[test]
+    fn extract_json_object_prose_wrapped() {
+        let text = "Sure, here is the JSON:\n{\"title\":\"a\"}\nHope that helps!";
+        assert_eq!(
+            extract_json_object_from_text(text).unwrap(),
+            r#"{"title":"a"}"#
+        );
+    }
+
+    #[test]
+    fn extract_json_object_with_braces_inside_strings() {
+        let text = r#"prefix {"body":"use {braces} and a \" quote"} suffix"#;
+        assert_eq!(
+            extract_json_object_from_text(text).unwrap(),
+            r#"{"body":"use {braces} and a \" quote"}"#
+        );
+    }
+
+    #[test]
+    fn extract_json_object_returns_first_of_multiple() {
+        let text = r#"{"a":1} then {"b":2}"#;
+        assert_eq!(extract_json_object_from_text(text).unwrap(), r#"{"a":1}"#);
+    }
+
+    #[test]
+    fn extract_json_object_nested() {
+        let text = r#"noise {"outer":{"inner":[1,2]}} noise"#;
+        assert_eq!(
+            extract_json_object_from_text(text).unwrap(),
+            r#"{"outer":{"inner":[1,2]}}"#
+        );
+    }
+
+    #[test]
+    fn extract_json_object_malformed_errors() {
+        assert!(extract_json_object_from_text("no json here").is_err());
+        assert!(extract_json_object_from_text("").is_err());
+        // Unbalanced — never closes the top-level object.
+        assert!(extract_json_object_from_text(r#"{"a":1"#).is_err());
+    }
 
     #[test]
     fn test_sanitize_folder_name() {

@@ -632,7 +632,11 @@ fn inject_synthetic_plan(response: &mut GrokResponse) -> bool {
 fn format_grok_command(cli_path: &Path, args: &[String]) -> String {
     fn quote(arg: &str) -> String {
         let shown = if arg.len() > 200 {
-            format!("{}…[{} chars]", &arg[..arg.char_indices().nth(200).map_or(arg.len(), |(i, _)| i)], arg.len())
+            format!(
+                "{}…[{} chars]",
+                &arg[..arg.char_indices().nth(200).map_or(arg.len(), |(i, _)| i)],
+                arg.len()
+            )
         } else {
             arg.to_string()
         };
@@ -1018,7 +1022,10 @@ mod tests {
             Some("session-1"),
             "/tmp/worktree",
         );
-        let idx = args.iter().position(|a| a == "--effort").expect("--effort flag present");
+        let idx = args
+            .iter()
+            .position(|a| a == "--effort")
+            .expect("--effort flag present");
         assert_eq!(args.get(idx + 1), Some(&"high".to_string()));
     }
 

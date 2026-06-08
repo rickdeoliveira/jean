@@ -4,10 +4,13 @@ use crate::platform::{get_wsl_config, silent_command};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-/// Primary Cursor Agent binary name.
+/// Cursor Agent binary name.
 ///
 /// Cursor's current CLI entrypoint is `agent`; `cursor-agent` remains a
-/// backwards-compatible alias on older installs.
+/// backwards-compatible alias and is the canonical, unambiguous name.
+/// Resolution prefers `cursor-agent` to avoid colliding with unrelated
+/// third-party binaries also named `agent` (e.g. grok builds); `agent` is
+/// the fallback.
 #[cfg(windows)]
 pub const CLI_BINARY_NAME: &str = "agent.exe";
 #[cfg(not(windows))]
@@ -18,12 +21,12 @@ pub const LEGACY_CLI_BINARY_NAME: &str = "cursor-agent.exe";
 #[cfg(not(windows))]
 pub const LEGACY_CLI_BINARY_NAME: &str = "cursor-agent";
 
-pub const CLI_BINARY_CANDIDATES: [&str; 2] = [CLI_BINARY_NAME, LEGACY_CLI_BINARY_NAME];
+pub const CLI_BINARY_CANDIDATES: [&str; 2] = [LEGACY_CLI_BINARY_NAME, CLI_BINARY_NAME];
 
 /// Bare tool names (without platform-specific extension) for WSL/Unix lookups.
 pub const CLI_TOOL_NAME: &str = "agent";
 pub const LEGACY_CLI_TOOL_NAME: &str = "cursor-agent";
-pub const CLI_TOOL_CANDIDATES: [&str; 2] = [CLI_TOOL_NAME, LEGACY_CLI_TOOL_NAME];
+pub const CLI_TOOL_CANDIDATES: [&str; 2] = [LEGACY_CLI_TOOL_NAME, CLI_TOOL_NAME];
 
 /// Resolve the Cursor Agent binary from system PATH.
 ///
@@ -83,15 +86,15 @@ mod tests {
     }
 
     #[test]
-    fn candidates_prefer_agent_before_legacy_cursor_agent() {
-        assert_eq!(CLI_BINARY_CANDIDATES[0], CLI_BINARY_NAME);
-        assert_eq!(CLI_BINARY_CANDIDATES[1], LEGACY_CLI_BINARY_NAME);
+    fn candidates_prefer_cursor_agent_before_agent() {
+        assert_eq!(CLI_BINARY_CANDIDATES[0], LEGACY_CLI_BINARY_NAME);
+        assert_eq!(CLI_BINARY_CANDIDATES[1], CLI_BINARY_NAME);
     }
 
     #[test]
-    fn wsl_tool_candidates_prefer_agent_before_legacy_cursor_agent() {
+    fn wsl_tool_candidates_prefer_cursor_agent_before_agent() {
         assert_eq!(CLI_TOOL_NAME, "agent");
-        assert_eq!(CLI_TOOL_CANDIDATES[0], CLI_TOOL_NAME);
-        assert_eq!(CLI_TOOL_CANDIDATES[1], LEGACY_CLI_TOOL_NAME);
+        assert_eq!(CLI_TOOL_CANDIDATES[0], LEGACY_CLI_TOOL_NAME);
+        assert_eq!(CLI_TOOL_CANDIDATES[1], CLI_TOOL_NAME);
     }
 }

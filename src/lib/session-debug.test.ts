@@ -107,6 +107,17 @@ describe('resolveSessionDebugDetails', () => {
     expect(opencodeResult.selectedBackend).toBe('opencode')
     expect(opencodeResult.providerDisplay).toBe('OpenCode')
   })
+
+  it('lets PI provider/model ids imply the PI backend even when provider contains codex', () => {
+    const result = resolveSessionDebugDetails({
+      selectedBackend: 'codex',
+      selectedModel: 'pi/openai-codex/gpt-5.5',
+      preferences,
+      installedBackends: ['codex', 'pi'],
+    })
+
+    expect(result.selectedBackend).toBe('pi')
+  })
 })
 
 describe('formatSessionDebugDetails', () => {

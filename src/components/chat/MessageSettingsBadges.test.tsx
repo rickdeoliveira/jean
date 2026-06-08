@@ -126,6 +126,23 @@ describe('MessageSettingsBadges', () => {
     expect(screen.getByText('Claude 3.5 Haiku (Anthropic)')).toBeVisible()
   })
 
+  it('treats PI models with codex provider names as PI models', () => {
+    render(
+      <MessageSettingsBadges
+        model="pi/openai-codex/gpt-5.5"
+        executionMode="plan"
+        thinkingLevel="megathink"
+        effortLevel="low"
+        isCursor={false}
+      />
+    )
+
+    expect(screen.getByText('PI · GPT 5.5 (OpenAI Codex)')).toBeVisible()
+    expect(screen.getByText('· Plan')).toBeVisible()
+    expect(screen.getByText('· Low')).toBeVisible()
+    expect(screen.queryByText('· Megathink')).toBeNull()
+  })
+
   it('falls back to raw ids for unknown non-slash models', () => {
     render(
       <MessageSettingsBadges

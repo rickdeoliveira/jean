@@ -12,6 +12,7 @@ import type { LabelData } from '@/types/chat'
 export interface ProjectCanvasSettingsState {
   worktree_sort_mode?: 'created' | 'last_activity' | 'manual'
   pinned_labels?: LabelData[]
+  labels?: LabelData[]
 }
 
 export type ModalTerminalDockMode = 'floating' | 'left' | 'right' | 'bottom'

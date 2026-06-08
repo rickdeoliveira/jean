@@ -39,12 +39,10 @@ describe('buildReleaseNotesSessionPrompt', () => {
   it('uses the release-command output categories and reference rules while avoiding self refs', () => {
     const prompt = buildReleaseNotesSessionPrompt(123)
 
-    expect(prompt).toContain('### Security & Fixes')
-    expect(prompt).toContain('### New Services & Templates')
+    expect(prompt).toContain('### Features')
+    expect(prompt).toContain('### Fixes')
     expect(prompt).toContain('### Improvements')
-    expect(prompt).toContain(
-      'Include all new service templates and one-click services added'
-    )
+    expect(prompt).toContain('### Breaking Changes')
     expect(prompt).toContain('For each line item, show the source PR number')
     expect(prompt).toContain(
       'Do not include the target PR number as a self-reference'

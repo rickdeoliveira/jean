@@ -11,8 +11,10 @@ import {
   GROK_MODEL_OPTIONS,
   MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
+  PI_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import type { CliBackend } from '@/types/preferences'
+import { sortModelOptionsByRawModel } from '@/components/chat/toolbar/toolbar-utils'
 
 interface UseToolbarDerivedStateArgs {
   selectedBackend: CliBackend
@@ -20,6 +22,7 @@ interface UseToolbarDerivedStateArgs {
   selectedModel: string
   opencodeModelOptions?: { value: string; label: string }[]
   cursorModelOptions?: { value: string; label: string }[]
+  piModelOptions?: { value: string; label: string }[]
   commandcodeModelOptions?: { value: string; label: string }[]
   grokModelOptions?: { value: string; label: string }[]
   customCliProfiles: CustomCliProfile[]
@@ -34,6 +37,7 @@ export function useToolbarDerivedState({
   selectedModel,
   opencodeModelOptions,
   cursorModelOptions,
+  piModelOptions,
   commandcodeModelOptions,
   customCliProfiles,
   grokModelOptions,
@@ -42,6 +46,7 @@ export function useToolbarDerivedState({
     'codex',
     'opencode',
     'cursor',
+    'pi',
     'commandcode',
     'grok',
   ],
@@ -51,6 +56,7 @@ export function useToolbarDerivedState({
   const isCodex = selectedBackend === 'codex'
   const isOpencode = selectedBackend === 'opencode'
   const isCursor = selectedBackend === 'cursor'
+  const isPi = selectedBackend === 'pi'
   const isCommandCode = selectedBackend === 'commandcode'
   const isGrok = selectedBackend === 'grok'
 
@@ -93,13 +99,18 @@ export function useToolbarDerivedState({
     ]
   }, [selectedProvider, customCliProfiles])
 
-  const codexModelOptions = CODEX_MODEL_OPTIONS as {
-    value: string
-    label: string
-  }[]
-  const resolvedOpencodeModelOptions =
+  const codexModelOptions = sortModelOptionsByRawModel(
+    CODEX_MODEL_OPTIONS as { value: string; label: string }[]
+  )
+  const resolvedOpencodeModelOptions = sortModelOptionsByRawModel(
     opencodeModelOptions ?? OPENCODE_MODEL_OPTIONS
-  const resolvedCursorModelOptions = cursorModelOptions ?? CURSOR_MODEL_OPTIONS
+  )
+  const resolvedCursorModelOptions = sortModelOptionsByRawModel(
+    cursorModelOptions ?? CURSOR_MODEL_OPTIONS
+  )
+  const resolvedPiModelOptions = sortModelOptionsByRawModel(
+    piModelOptions ?? PI_MODEL_OPTIONS
+  )
   const resolvedCommandCodeModelOptions =
     commandcodeModelOptions ?? COMMANDCODE_MODEL_OPTIONS
   const resolvedGrokModelOptions = grokModelOptions ?? GROK_MODEL_OPTIONS
@@ -136,6 +147,12 @@ export function useToolbarDerivedState({
           label: 'Cursor',
           options: resolvedCursorModelOptions,
         })
+      } else if (backend === 'pi') {
+        sections.push({
+          backend,
+          label: 'PI',
+          options: resolvedPiModelOptions,
+        })
       } else if (backend === 'commandcode') {
         sections.push({
           backend,
@@ -160,12 +177,14 @@ export function useToolbarDerivedState({
     resolvedCommandCodeModelOptions,
     resolvedGrokModelOptions,
     resolvedOpencodeModelOptions,
+    resolvedPiModelOptions,
   ])
 
   const filteredModelOptions = useMemo(() => {
     if (isCodex) return codexModelOptions
     if (isOpencode) return resolvedOpencodeModelOptions
     if (isCursor) return resolvedCursorModelOptions
+    if (isPi) return resolvedPiModelOptions
     if (isCommandCode) return resolvedCommandCodeModelOptions
     if (isGrok) return resolvedGrokModelOptions
     return claudeModelOptions
@@ -174,6 +193,7 @@ export function useToolbarDerivedState({
     codexModelOptions,
     isCodex,
     isCursor,
+    isPi,
     isCommandCode,
     isGrok,
     isOpencode,
@@ -181,6 +201,7 @@ export function useToolbarDerivedState({
     resolvedCursorModelOptions,
     resolvedGrokModelOptions,
     resolvedOpencodeModelOptions,
+    resolvedPiModelOptions,
   ])
 
   // Fast variants share a label with their base model (the Zap indicator
@@ -195,6 +216,7 @@ export function useToolbarDerivedState({
   return {
     isCodex,
     isCursor,
+    isPi,
     isCommandCode,
     isOpencode,
     activeMcpCount,
@@ -204,6 +226,9 @@ export function useToolbarDerivedState({
     commandcodeModelOptions: resolvedCommandCodeModelOptions,
     filteredModelOptions,
     opencodeModelOptions: resolvedOpencodeModelOptions,
+    piModelOptions: resolvedPiModelOptions,
+    grokModelOptions: resolvedGrokModelOptions,
+    isGrok,
     selectedModelLabel,
   }
 }

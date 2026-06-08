@@ -1,6 +1,5 @@
 import {
   FolderPlus,
-  FolderGit,
   Bug,
   Keyboard,
   Archive,
@@ -25,21 +24,6 @@ export const projectCommands: AppCommand[] = [
 
     execute: context => {
       context.addProject()
-    },
-  },
-
-  {
-    id: 'init-project',
-    label: 'Initialize Project',
-    description: 'Create a new project from scratch',
-    icon: FolderGit,
-    group: 'projects',
-    keywords: ['project', 'init', 'new', 'create', 'initialize'],
-
-    isAvailable: context => context.hasInstalledBackend(),
-
-    execute: context => {
-      context.initProject()
     },
   },
 

@@ -17,6 +17,7 @@ import {
 } from '@/types/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
+import { useAvailablePiModels } from '@/services/pi-cli'
 import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
 import { useAvailableGrokModels } from '@/services/grok-cli'
 import { cn } from '@/lib/utils'
@@ -26,6 +27,7 @@ import { BackendModelPickerContent } from '@/components/chat/toolbar/BackendMode
 import {
   formatCursorModelLabel,
   formatOpencodeModelLabel,
+  formatPiModelLabel,
 } from '@/components/chat/toolbar/toolbar-utils'
 import { useToolbarDerivedState } from '@/components/chat/toolbar/useToolbarDerivedState'
 import { useToolbarDropdownShortcuts } from '@/components/chat/toolbar/useToolbarDropdownShortcuts'
@@ -72,6 +74,9 @@ export function DesktopBackendModelPicker({
   const { data: availableCursorModels } = useAvailableCursorModels({
     enabled: installedBackends.includes('cursor'),
   })
+  const { data: availablePiModels } = useAvailablePiModels({
+    enabled: installedBackends.includes('pi'),
+  })
   const { data: availableCommandCodeModels } = useAvailableCommandCodeModels({
     enabled: installedBackends.includes('commandcode'),
   })
@@ -94,6 +99,14 @@ export function DesktopBackendModelPicker({
         label: model.label || formatCursorModelLabel(model.id),
       })),
     [availableCursorModels]
+  )
+  const piModelOptions = useMemo(
+    () =>
+      availablePiModels?.map(model => ({
+        value: `pi/${model.id}`,
+        label: model.label || formatPiModelLabel(model.id),
+      })),
+    [availablePiModels]
   )
   const commandcodeModelOptions = useMemo(
     () =>
@@ -118,6 +131,7 @@ export function DesktopBackendModelPicker({
     selectedModel,
     opencodeModelOptions,
     cursorModelOptions,
+    piModelOptions,
     commandcodeModelOptions,
     grokModelOptions,
     customCliProfiles,
