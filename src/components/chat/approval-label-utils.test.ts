@@ -64,5 +64,13 @@ describe('resolveApprovalLabel', () => {
         { forceModeOverride: true }
       )
     ).toContain('Cursor')
+    expect(
+      resolveApprovalLabel(
+        'build',
+        { ...prefs, build_backend: 'commandcode', build_model: null },
+        'claude',
+        { forceModeOverride: true }
+      )
+    ).toContain('CommandCode')
   })
 })

@@ -1284,6 +1284,8 @@ export function ChatWindow({
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
       preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )
@@ -1467,6 +1469,8 @@ export function ChatWindow({
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
       preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )
@@ -1740,6 +1744,8 @@ export function ChatWindow({
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
       preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )

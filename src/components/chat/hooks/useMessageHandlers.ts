@@ -1241,8 +1241,11 @@ export function useMessageHandlers({
       const prefs = queryClient.getQueryData<AppPreferences>(
         preferencesQueryKeys.preferences()
       )
+      const validatedOverrideBackend = asSessionBackend(
+        effectiveOverride?.backend
+      )
       const modeBackendOverride =
-        effectiveOverride?.backend ?? asSessionBackend(modeBackendRef.current)
+        validatedOverrideBackend ?? asSessionBackend(modeBackendRef.current)
       const resolvedBackend = modeBackendOverride
       const modelBackend = resolvedBackend ?? currentSessionBackend
       const resolvedModel =
@@ -1827,8 +1830,11 @@ export function useMessageHandlers({
       const prefs = queryClient.getQueryData<AppPreferences>(
         preferencesQueryKeys.preferences()
       )
+      const validatedOverrideBackend = asSessionBackend(
+        oneShotOverride?.backend
+      )
       const modeBackendOverride =
-        oneShotOverride?.backend ?? asSessionBackend(modeBackendRef.current)
+        validatedOverrideBackend ?? asSessionBackend(modeBackendRef.current)
       const resolvedBackend = modeBackendOverride
       const modelBackend = resolvedBackend ?? currentSessionBackend
       const resolvedModel =
