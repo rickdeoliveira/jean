@@ -227,7 +227,9 @@ describe('AutoFixPane', () => {
     const user = userEvent.setup()
     renderPane()
 
-    await user.click(screen.getByRole('button', { name: 'Excluded GitHub labels' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Excluded GitHub labels' })
+    )
     await user.click(await screen.findByText('wontfix'))
     await user.click(await screen.findByText('blocked'))
     await user.click(await screen.findByText('do not fix'))
@@ -245,7 +247,9 @@ describe('AutoFixPane', () => {
     const user = userEvent.setup()
     renderPane()
 
-    await user.click(screen.getByRole('button', { name: 'Included GitHub labels' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Included GitHub labels' })
+    )
     await user.click(await screen.findByText('bug'))
     await user.click(await screen.findByText('enhancement'))
     await user.click(screen.getByRole('button', { name: 'Save settings' }))

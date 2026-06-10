@@ -10290,7 +10290,7 @@ pub async fn fetch_worktrees_status(app: AppHandle, project_id: String) -> Resul
     // (EMFILE) and silently break both git status and coinciding claude CLI spawns.
     // Cap concurrency so fd usage stays flat regardless of worktree count.
     let base_branch = project.default_branch.clone();
-    let worker_count = worktrees.len().min(8).max(1);
+    let worker_count = worktrees.len().clamp(1, 8);
 
     // Shared job queue: workers pull worktrees until the receiver is drained.
     let (tx, rx) = mpsc::channel::<Worktree>();
