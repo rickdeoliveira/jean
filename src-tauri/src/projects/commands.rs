@@ -10284,19 +10284,46 @@ pub async fn fetch_worktrees_status(app: AppHandle, project_id: String) -> Resul
         project_id
     );
 
-    // Spawn threads to fetch status for each worktree in parallel
-    // Using std::thread since get_branch_status is synchronous (uses Command)
+    // Fetch status with a bounded worker pool. get_branch_status runs ~8-10 git
+    // subcommands (each a child process needing pipe fds); spawning one thread per
+    // worktree unbounded would, with 100+ worktrees, exhaust the process fd table
+    // (EMFILE) and silently break both git status and coinciding claude CLI spawns.
+    // Cap concurrency so fd usage stays flat regardless of worktree count.
     let base_branch = project.default_branch.clone();
+    let worker_count = worktrees.len().min(8).max(1);
 
+    // Shared job queue: workers pull worktrees until the receiver is drained.
+    let (tx, rx) = mpsc::channel::<Worktree>();
     for worktree in worktrees {
+        // Send cannot fail: receiver lives until all workers finish below.
+        let _ = tx.send(worktree);
+    }
+    drop(tx); // Close the channel so workers exit once the queue is empty.
+
+    let rx = std::sync::Arc::new(Mutex::new(rx));
+
+    for _ in 0..worker_count {
         let app_clone = app.clone();
         let base_branch_clone = base_branch.clone();
+        let rx = std::sync::Arc::clone(&rx);
 
-        thread::spawn(move || {
+        thread::spawn(move || loop {
+            // Pull the next worktree job (lock only while dequeuing).
+            let worktree = {
+                let guard = match rx.lock() {
+                    Ok(g) => g,
+                    Err(_) => break,
+                };
+                match guard.recv() {
+                    Ok(w) => w,
+                    Err(_) => break, // Channel drained — worker done.
+                }
+            };
+
             let info = ActiveWorktreeInfo {
                 worktree_id: worktree.id.clone(),
                 worktree_path: worktree.path.clone(),
-                base_branch: base_branch_clone,
+                base_branch: base_branch_clone.clone(),
                 pr_number: worktree.pr_number,
                 pr_url: worktree.pr_url.clone(),
                 pr_push_remote: worktree.pr_push_remote.clone(),
@@ -10354,9 +10381,11 @@ pub async fn fetch_worktrees_status(app: AppHandle, project_id: String) -> Resul
         });
     }
 
-    // Don't wait for threads - fire and forget
+    // Don't wait for workers - fire and forget
     // Status updates will be emitted via events as they complete
-    log::trace!("[fetch_worktrees_status] Spawned status fetch threads for project: {project_id}");
+    log::trace!(
+        "[fetch_worktrees_status] Spawned {worker_count} status workers for project: {project_id}"
+    );
     Ok(())
 }
 

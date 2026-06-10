@@ -3262,6 +3262,12 @@ pub fn run() {
         return;
     }
 
+    // Raise the open-file-descriptor soft limit to the hard limit. macOS GUI apps
+    // start with a low default (often 256); bulk git-status refresh across many
+    // worktrees plus child CLI spawns can exhaust it (EMFILE), silently breaking
+    // claude CLI runs. Must run before any subprocess work. No-op on Windows.
+    crate::platform::raise_fd_limit();
+
     let cli_args = parse_cli_args();
     let headless = cli_args.headless;
 
