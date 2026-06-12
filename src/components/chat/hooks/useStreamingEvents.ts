@@ -1050,6 +1050,56 @@ export default function useStreamingEvents({
           )
         }
 
+        const hasQueuedMessages =
+          (useChatStore.getState().messageQueues[sessionId]?.length ?? 0) > 0
+        if (hasQueuedMessages) {
+          // A queued prompt means the user already chose to continue past this
+          // plain plan-mode response. Do not park the session on approval; clear
+          // sending/waiting so the queue processor can immediately send it.
+          queryClient.setQueryData<Session>(
+            chatQueryKeys.session(sessionId),
+            old =>
+              old
+                ? {
+                    ...old,
+                    last_run_status: 'completed',
+                    waiting_for_input: false,
+                    waiting_for_input_type: undefined,
+                    is_reviewing: true,
+                  }
+                : old
+          )
+          queryClient.setQueryData<WorktreeSessions>(
+            chatQueryKeys.sessions(worktreeId),
+            old => {
+              if (!old) return old
+              return {
+                ...old,
+                sessions: old.sessions.map(s =>
+                  s.id === sessionId
+                    ? {
+                        ...s,
+                        last_run_status: 'completed' as const,
+                        waiting_for_input: false,
+                        waiting_for_input_type: undefined,
+                        is_reviewing: true,
+                      }
+                    : s
+                ),
+              }
+            }
+          )
+          completeSession(sessionId)
+          if (needsBackendHydration) {
+            void hydrateCompletedSessionFromBackend(
+              queryClient,
+              sessionId,
+              worktreeId
+            )
+          }
+          return
+        }
+
         // 2. Update caches with plan-waiting state
         queryClient.setQueryData<Session>(
           chatQueryKeys.session(sessionId),

@@ -8,6 +8,7 @@ import {
   cancelChatMessage,
   persistEnqueue,
   steerCodexTurn,
+  steerOpencodeTurn,
   steerPiTurn,
 } from '@/services/chat'
 import { skillQueryKeys } from '@/services/skills'
@@ -51,6 +52,8 @@ interface UseMessageSendingParams {
         ai_language?: string
         codex_goal_execution_mode?: 'build' | 'yolo'
         codex_auto_steer_enabled?: boolean
+        opencode_auto_steer_enabled?: boolean
+        pi_auto_steer_enabled?: boolean
       }
     | undefined
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -468,15 +471,28 @@ export function useMessageSending({
           textFiles.length > 0 ||
           skills.length > 0
         const backend = selectedBackendRef.current
+        const autoSteerEnabled =
+          backend === 'opencode'
+            ? (preferences?.opencode_auto_steer_enabled ?? true)
+            : backend === 'pi'
+              ? (preferences?.pi_auto_steer_enabled ?? true)
+              : (preferences?.codex_auto_steer_enabled ?? true)
         if (
-          (backend === 'codex' || backend === 'pi') &&
-          (preferences?.codex_auto_steer_enabled ?? true) &&
+          (backend === 'codex' || backend === 'opencode' || backend === 'pi') &&
+          autoSteerEnabled &&
           !hasAttachments
         ) {
           try {
             const steerMessage = buildMessageWithRefs(queuedMessage)
             if (backend === 'pi') {
               await steerPiTurn(activeWorktreeId, activeSessionId, steerMessage)
+            } else if (backend === 'opencode') {
+              await steerOpencodeTurn(
+                activeWorktreeId,
+                activeWorktreePath,
+                activeSessionId,
+                steerMessage
+              )
             } else {
               await steerCodexTurn(
                 activeWorktreeId,

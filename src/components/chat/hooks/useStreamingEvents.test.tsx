@@ -209,6 +209,99 @@ describe('useStreamingEvents cancellation sanitization', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not park a plain plan completion when prompts are queued', async () => {
+    const queryClient = createQueryClient()
+    const wrapper = createWrapper(queryClient)
+
+    queryClient.setQueryData(['chat', 'session', 'session-1'], {
+      id: 'session-1',
+      name: 'Test',
+      order: 0,
+      created_at: 1,
+      updated_at: 1,
+      messages: [
+        {
+          id: 'user-1',
+          session_id: 'session-1',
+          role: 'user',
+          content: 'hello',
+          timestamp: 1,
+          tool_calls: [],
+        },
+      ],
+    })
+    queryClient.setQueryData(['chat', 'sessions', 'worktree-1'], {
+      worktree_id: 'worktree-1',
+      sessions: [
+        {
+          id: 'session-1',
+          name: 'Test',
+          order: 0,
+          created_at: 1,
+          updated_at: 1,
+          messages: [],
+        },
+      ],
+    })
+
+    useChatStore.setState({
+      streamingContents: { 'session-1': 'Hello. What would you like to do?' },
+      streamingContentBlocks: {
+        'session-1': [
+          { type: 'text', text: 'Hello. What would you like to do?' },
+        ],
+      },
+      sendingSessionIds: { 'session-1': true },
+      sendStartedAt: { 'session-1': 1000 },
+      sessionWorktreeMap: { 'session-1': 'worktree-1' },
+      worktreePaths: { 'worktree-1': '/tmp/worktree' },
+      messageQueues: {
+        'session-1': [
+          {
+            id: 'queued-1',
+            message: 'who are you',
+            pendingImages: [],
+            pendingFiles: [],
+            pendingSkills: [],
+            pendingTextFiles: [],
+            model: 'opencode/gpt-5.3-codex',
+            provider: null,
+            executionMode: 'plan',
+            thinkingLevel: 'off',
+            backend: 'opencode',
+            queuedAt: 1,
+          },
+        ],
+      },
+    })
+
+    renderHook(() => useStreamingEvents({ queryClient }), { wrapper })
+
+    await waitFor(() => expect(registeredListeners.has('chat:done')).toBe(true))
+
+    registeredListeners.get('chat:done')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        waiting_for_plan: true,
+      },
+    })
+
+    expect(
+      useChatStore.getState().waitingForInputSessionIds['session-1']
+    ).toBeUndefined()
+    expect(useChatStore.getState().sendingSessionIds['session-1']).toBe(
+      undefined
+    )
+    expect(
+      queryClient.getQueryData<{ waiting_for_input?: boolean }>([
+        'chat',
+        'session',
+        'session-1',
+      ])?.waiting_for_input
+    ).not.toBe(true)
+  })
+
   it('removes optimistic prompt and partial assistant content when cancelling a partial response', async () => {
     const queryClient = createQueryClient()
     const wrapper = createWrapper(queryClient)
@@ -265,11 +358,11 @@ describe('useStreamingEvents cancellation sanitization', () => {
     })
 
     const session = queryClient.getQueryData<{
-      messages: Array<{
+      messages: {
         role: string
         content: string
         content_blocks?: unknown
-      }>
+      }[]
     }>(['chat', 'session', 'session-1'])
     expect(session?.messages).toEqual([])
     expect(mockInvoke).not.toHaveBeenCalledWith(
@@ -359,7 +452,7 @@ describe('useStreamingEvents cancellation sanitization', () => {
     })
 
     const session = queryClient.getQueryData<{
-      messages: Array<{ id: string; role: string; content: string }>
+      messages: { id: string; role: string; content: string }[]
     }>(['chat', 'session', 'session-1'])
 
     expect(session?.messages.map(message => message.id)).toEqual([
