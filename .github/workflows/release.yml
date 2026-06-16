@@ -47,7 +47,7 @@ jobs:
     needs: prepare-release
     uses: ./.github/workflows/preflight.yml
     with:
-      version: ${{ needs.prepare-release.outputs.version }}
+      version: ${{ needs.prepare-release.outputs.tag }}
 
   publish-tauri:
     name: Publish Tauri (${{ matrix.platform }})
@@ -71,14 +71,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Patch version from release tag
-        shell: bash
-        run: |
-          VERSION="${{ needs.prepare-release.outputs.version }}"
-          echo "Patching version to $VERSION"
-          node -e "const p=require('./package.json'); p.version='$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2)+'\n')"
-          node -e "const c=require('./src-tauri/tauri.conf.json'); c.version='$VERSION'; require('fs').writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(c,null,2)+'\n')"
-          sed -i.bak "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml && rm -f src-tauri/Cargo.toml.bak
+      - name: Assert release version
+        run: node scripts/assert-release-version.js "${{ needs.prepare-release.outputs.tag }}"
 
       - name: Install Linux dependencies
         if: startsWith(matrix.platform, 'ubuntu')

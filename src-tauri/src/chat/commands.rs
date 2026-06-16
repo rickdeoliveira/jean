@@ -4138,6 +4138,18 @@ pub async fn send_chat_message(
         !unified_response.content.is_empty() || has_tool_calls || has_content_blocks;
     let resume_id_for_log = unified_response.resume_id.clone();
     let response_backend = unified_response.backend.clone();
+    let has_persisted_visible_codex_artifacts = unified_response.cancelled
+        && response_backend == Backend::Codex
+        && !has_assistant_payload
+        && run_log::read_run_log(&app, &session_id, &run_id)
+            .map(|lines| {
+                super::codex::codex_run_log_has_visible_assistant_artifacts(
+                    &lines,
+                    execution_mode.as_deref() == Some("plan"),
+                )
+            })
+            .unwrap_or(false);
+    let has_resume_worthy_payload = has_assistant_payload || has_persisted_visible_codex_artifacts;
 
     // Handle error_emitted: backend emitted chat:error during execution (e.g., Codex usage limit).
     // Treat like undo_send so the user message doesn't persist in history.
@@ -4175,12 +4187,13 @@ pub async fn send_chat_message(
         && !has_meaningful_content
         && !has_tool_calls
         && !has_content_blocks
+        && !has_persisted_visible_codex_artifacts
     {
         // Instant cancellation with no content
         let resume_sid = resume_id_for_persisted_claude_run(
             &response_backend,
             &resume_id_for_log,
-            has_assistant_payload,
+            has_resume_worthy_payload,
         );
         // Cancel the run log, persisting session ID if available so next run can --resume
         if let Err(e) = run_log_writer.cancel(None, resume_sid) {
@@ -4308,7 +4321,7 @@ pub async fn send_chat_message(
         let cancel_resume_sid = resume_id_for_persisted_claude_run(
             &response_backend,
             &resume_id_for_log,
-            has_assistant_payload,
+            has_resume_worthy_payload,
         );
         if let Err(e) = run_log_writer.cancel(Some(&assistant_msg_id), cancel_resume_sid) {
             log::warn!("Failed to cancel run log: {e}");
@@ -4317,7 +4330,7 @@ pub async fn send_chat_message(
         let resume_sid = resume_id_for_persisted_claude_run(
             &response_backend,
             &resume_id_for_log,
-            has_assistant_payload,
+            has_resume_worthy_payload,
         );
         if let Err(e) =
             run_log_writer.complete(&assistant_msg_id, resume_sid, unified_response.usage)
@@ -4336,7 +4349,7 @@ pub async fn send_chat_message(
     // back the conversation cache even though the CLI ran successfully (#209).
     if let Err(e) = with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
         if let Some(session) = sessions.find_session_mut(&session_id) {
-            if !resume_id_for_log.is_empty() && has_assistant_payload {
+            if !resume_id_for_log.is_empty() && has_resume_worthy_payload {
                 match response_backend {
                     Backend::Claude => {
                         session.claude_session_id = Some(resume_id_for_log.clone());

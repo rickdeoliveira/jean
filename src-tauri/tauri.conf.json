@@ -30,7 +30,9 @@
         "shadow": true,
         "dragDropEnabled": false,
         "windowEffects": {
-          "effects": ["sidebar"],
+          "effects": [
+            "sidebar"
+          ],
           "radius": 12,
           "state": "active"
         }
@@ -41,7 +43,10 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**/.jean/images/**", "$APPDATA/**"],
+          "allow": [
+            "**/.jean/images/**",
+            "$APPDATA/**"
+          ],
           "requireLiteralLeadingDot": false
         }
       }
