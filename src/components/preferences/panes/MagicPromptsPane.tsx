@@ -494,9 +494,14 @@ export function getMagicPromptItemId(key: keyof MagicPrompts): string {
 
 const CLAUDE_MODEL_OPTIONS: { value: MagicPromptModel; label: string }[] = [
   { value: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)' },
+  { value: 'claude-opus-4-8', label: 'Opus 4.8' },
   { value: 'claude-opus-4-7[1m]', label: 'Opus 4.7 (1M)' },
+  { value: 'claude-opus-4-7', label: 'Opus 4.7' },
   { value: 'claude-opus-4-6[1m]', label: 'Opus 4.6 (1M)' },
-  { value: 'sonnet', label: 'Sonnet 4.6' },
+  { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+  { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet 4.6 (1M)' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { value: 'sonnet', label: 'Sonnet 4.6 (provider alias)' },
   { value: 'haiku', label: 'Haiku' },
 ]
 

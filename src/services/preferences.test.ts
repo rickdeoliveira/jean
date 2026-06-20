@@ -88,20 +88,26 @@ const createWrapper = (queryClient: QueryClient) => {
 }
 
 describe('model option helpers', () => {
-  it('uses 1M Claude variants where available and keeps no-1M-only models', () => {
+  it('offers Claude 1M variants alongside standard context models', () => {
     expect(modelOptions.map(option => option.value)).toEqual([
       'claude-fable-5',
       'claude-opus-4-8[1m]',
+      'claude-opus-4-8',
       'claude-opus-4-7[1m]',
+      'claude-opus-4-7',
       'claude-opus-4-6[1m]',
+      'claude-opus-4-6',
       'claude-opus-4-5-20251101',
       'claude-sonnet-4-6[1m]',
+      'claude-sonnet-4-6',
       'haiku',
     ])
     expect(normalizeClaudeModel('sonnet')).toBe('claude-sonnet-4-6[1m]')
     expect(normalizeClaudeModel('claude-fable-5')).toBe('claude-fable-5')
-    expect(normalizeClaudeModel('claude-opus-4-8')).toBe('claude-opus-4-8[1m]')
-    expect(normalizeClaudeModel('claude-opus-4-7')).toBe('claude-opus-4-7[1m]')
+    expect(normalizeClaudeModel('claude-opus-4-8')).toBe('claude-opus-4-8')
+    expect(normalizeClaudeModel('claude-opus-4-7')).toBe('claude-opus-4-7')
+    expect(normalizeClaudeModel('claude-opus-4-6')).toBe('claude-opus-4-6')
+    expect(normalizeClaudeModel('claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
   })
 
   it('offers Codex fast modes for default selectors', () => {

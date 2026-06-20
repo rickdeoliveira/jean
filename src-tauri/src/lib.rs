@@ -137,7 +137,7 @@ fn is_wsl_available() -> bool {
 pub struct AppPreferences {
     pub theme: String,
     #[serde(default = "default_model")]
-    pub selected_model: String, // Claude model: claude-fable-5, claude-opus-4-8[1m], claude-opus-4-7[1m], haiku
+    pub selected_model: String, // Claude model: claude-fable-5, claude-opus-4-8[1m], claude-opus-4-8, haiku
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String, // Thinking level: off, think, megathink, ultrathink
     #[serde(default = "default_effort_level")]
@@ -451,11 +451,8 @@ fn default_model() -> String {
 
 fn migrate_default_claude_model(model: &str) -> Option<&'static str> {
     match model {
-        "claude-opus-4-8" => Some("claude-opus-4-8[1m]"),
-        "claude-opus-4-7" => Some("claude-opus-4-7[1m]"),
         "claude-opus-4-7[1m]" => Some("claude-opus-4-8[1m]"),
         "claude-opus-4-7[1m]-fast" => Some("claude-opus-4-8[1m]-fast"),
-        "claude-opus-4-6" => Some("claude-opus-4-6[1m]"),
         "claude-opus-4-6-fast" => Some("claude-opus-4-6[1m]-fast"),
         "sonnet" => Some("claude-sonnet-4-6[1m]"),
         _ => None,
@@ -719,6 +716,13 @@ mod tests {
 
         prefs.http_server_localhost_only = false;
         assert_eq!(resolve_http_server_bind_host(&prefs), "0.0.0.0");
+    }
+
+    #[test]
+    fn migrate_default_claude_model_keeps_standard_non_1m_models() {
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-8"), None);
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-7"), None);
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-6"), None);
     }
 
     #[test]

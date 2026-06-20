@@ -6048,6 +6048,10 @@ fn extract_claude_stream_error(stdout: &str) -> Option<String> {
         if parsed.get("type").and_then(|t| t.as_str()) == Some("result")
             && parsed.get("is_error").and_then(|v| v.as_bool()) == Some(true)
         {
+            if parsed.get("subtype").and_then(|v| v.as_str()) == Some("error_max_turns") {
+                return Some("reached max turns before producing structured output".to_string());
+            }
+
             if let Some(result) = parsed.get("result").and_then(|v| v.as_str()) {
                 let result = result.trim();
                 if !result.is_empty() {
@@ -6074,7 +6078,13 @@ fn extract_claude_stream_error(stdout: &str) -> Option<String> {
     }
 
     let assistant_text = assistant_text.trim();
-    if assistant_text.is_empty() {
+    let lower = assistant_text.to_lowercase();
+    let looks_like_error = lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("authenticate")
+        || lower.contains("unauthorized");
+
+    if assistant_text.is_empty() || !looks_like_error {
         None
     } else {
         Some(assistant_text.to_string())
@@ -6183,11 +6193,9 @@ fn build_claude_structured_output_args(model: &str, tools: &str, schema: &str) -
         "--tools".to_string(),
         tools.to_string(),
         "--max-turns".to_string(),
-        "2".to_string(),
+        "3".to_string(),
         "--json-schema".to_string(),
         schema.to_string(),
-        "--permission-mode".to_string(),
-        "plan".to_string(),
     ]
 }
 
@@ -11648,6 +11656,20 @@ Body
     }
 
     #[test]
+    fn format_claude_cli_failure_does_not_report_max_turns_summary_as_error() {
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}]}}
+{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}"#;
+
+        let result = format_claude_cli_failure("", stdout);
+
+        assert_eq!(
+            result,
+            "Claude CLI failed: reached max turns before producing structured output"
+        );
+        assert!(!result.contains("Looking at the diff"));
+    }
+
+    #[test]
     fn validate_commit_message_rejects_commit_guidance_meta_subject() {
         let result = validate_commit_message(
             "chore: inspect commit message guidance",
@@ -11778,11 +11800,11 @@ Body
     }
 
     #[test]
-    fn test_build_claude_structured_output_args_uses_two_turns_and_plan_mode() {
+    fn test_build_claude_structured_output_args_disables_tools_without_plan_mode() {
         let args = build_claude_structured_output_args("sonnet", "none", REVIEW_SCHEMA);
 
-        assert!(args.windows(2).any(|w| w == ["--max-turns", "2"]));
-        assert!(args.windows(2).any(|w| w == ["--permission-mode", "plan"]));
+        assert!(args.windows(2).any(|w| w == ["--max-turns", "3"]));
+        assert!(!args.iter().any(|arg| arg == "--permission-mode"));
         assert!(args.windows(2).any(|w| w == ["--tools", "none"]));
         assert!(args.windows(2).any(|w| w == ["--model", "sonnet"]));
         assert!(args
