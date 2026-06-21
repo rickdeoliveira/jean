@@ -589,14 +589,26 @@ pub fn build_turn_start_params(
 /// The request fails server-side when `expectedTurnId` no longer matches the
 /// active turn (turn ended), which callers treat as a fallback signal.
 pub fn build_turn_steer_params(thread_id: &str, turn_id: &str, text: &str) -> serde_json::Value {
-    serde_json::json!({
-        "threadId": thread_id,
-        "expectedTurnId": turn_id,
-        "input": [{
+    build_turn_steer_params_with_input(
+        thread_id,
+        turn_id,
+        vec![serde_json::json!({
             "type": "text",
             "text": text,
             "text_elements": [],
-        }],
+        })],
+    )
+}
+
+pub fn build_turn_steer_params_with_input(
+    thread_id: &str,
+    turn_id: &str,
+    input: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "threadId": thread_id,
+        "expectedTurnId": turn_id,
+        "input": input,
     })
 }
 

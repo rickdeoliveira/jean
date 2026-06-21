@@ -2665,9 +2665,15 @@ export async function persistMoveQueuedFront(
 export async function steerCodexTurn(
   worktreeId: string,
   sessionId: string,
-  message: string
+  message: string,
+  queuedMessage?: QueuedMessage
 ): Promise<void> {
-  await invoke('steer_codex_turn', { worktreeId, sessionId, message })
+  await invoke('steer_codex_turn', {
+    worktreeId,
+    sessionId,
+    message,
+    queuedMessage,
+  })
 }
 
 /**

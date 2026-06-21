@@ -77,6 +77,25 @@ beforeEach(() => {
 })
 
 describe('BackendModelPickerContent', () => {
+  it('shows a manual refresh button for CDN-backed Claude and Codex model lists', () => {
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="codex"
+        selectedModel="gpt-5.5"
+        selectedProvider={null}
+        installedBackends={['claude', 'codex']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByRole('button', { name: /refresh model list/i })
+    ).toBeInTheDocument()
+  })
   it('keeps Claude 1M variants plus standard models', () => {
     render(
       <BackendModelPickerContent

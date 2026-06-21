@@ -2573,7 +2573,16 @@ pub async fn dispatch_command(
             let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
             let session_id: String = field(&args, "sessionId", "session_id")?;
             let message: String = from_field(&args, "message")?;
-            crate::chat::steer_codex_turn(app.clone(), worktree_id, session_id, message).await?;
+            let queued_message: Option<Value> =
+                field_opt(&args, "queuedMessage", "queued_message")?;
+            crate::chat::steer_codex_turn(
+                app.clone(),
+                worktree_id,
+                session_id,
+                message,
+                queued_message,
+            )
+            .await?;
             Ok(Value::Null)
         }
         "steer_opencode_turn" => {
