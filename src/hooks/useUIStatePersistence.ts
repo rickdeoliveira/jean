@@ -429,7 +429,17 @@ export function useUIStatePersistence() {
         logger.warn('Failed to query active terminals during UI hydrate', {
           error,
         })
-        return
+        const fallbackTerminalIds = Object.values(persistedTerminals)
+          .flat()
+          .map(terminal => terminal.id)
+        if (fallbackTerminalIds.length === 0) return
+
+        // If the liveness query fails transiently, keep persisted terminal
+        // metadata in the store instead of presenting an empty terminal list.
+        // TerminalView's auto-create effect runs after uiStateInitialized; an
+        // empty list there would spawn a duplicate PTY while the original may
+        // still be alive on the backend.
+        liveTerminalIds = new Set(fallbackTerminalIds)
       }
 
       if (liveTerminalIds.size === 0) {

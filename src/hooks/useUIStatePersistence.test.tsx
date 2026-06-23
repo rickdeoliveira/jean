@@ -288,11 +288,104 @@ describe('useUIStatePersistence — terminal restore on web refresh', () => {
       wrapper: createWrapper(queryClient),
     })
 
-    // Wait long enough for any potential restore to run.
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitFor(() => {
+      expect(useUIStore.getState().uiStateInitialized).toBe(true)
+    })
 
     expect(useTerminalStore.getState().terminals).toEqual({})
     expect(mockInvoke).not.toHaveBeenCalledWith('get_active_terminals')
+  })
+
+  it('regression: failed active-terminal query hydrates fallback terminals before uiStateInitialized flips', async () => {
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_active_terminals') {
+        throw new Error('transient websocket failure')
+      }
+      if (command === 'load_ui_state') return buildUiState()
+      return undefined
+    })
+    mockUseUIState.mockReturnValue({
+      data: buildUiState({
+        terminal_instances: {
+          'worktree-1': [
+            {
+              id: 'fallback-panel',
+              command: null,
+              command_args: null,
+              label: 'Shell',
+              kind: 'panel',
+            },
+            {
+              id: 'fallback-session',
+              command: 'codex',
+              command_args: ['resume', 'abc123'],
+              label: 'Codex',
+              kind: 'session',
+            },
+          ],
+        },
+        terminal_active_ids: { 'worktree-1': 'fallback-panel' },
+        terminal_panel_open: { 'worktree-1': true },
+        terminal_visible: true,
+        session_terminal_ids: { 'session-1': 'fallback-session' },
+        session_primary_surface: { 'session-1': 'terminal' },
+      }),
+      isSuccess: true,
+    })
+
+    const order: string[] = []
+    const unsubTerm = useTerminalStore.subscribe(state => {
+      if (state.terminals['worktree-1']?.length === 2) {
+        order.push('fallback_terminals_restored')
+      }
+    })
+    const unsubUI = useUIStore.subscribe(state => {
+      if (state.uiStateInitialized) {
+        order.push('uiStateInitialized_true')
+      }
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    renderHook(() => useUIStatePersistence(), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => {
+      expect(useUIStore.getState().uiStateInitialized).toBe(true)
+    })
+
+    unsubTerm()
+    unsubUI()
+
+    const terminalState = useTerminalStore.getState()
+    expect(terminalState.terminals['worktree-1']?.map(t => t.id)).toEqual([
+      'fallback-panel',
+      'fallback-session',
+    ])
+    expect(terminalState.activeTerminalIds['worktree-1']).toBe(
+      'fallback-panel'
+    )
+    expect(terminalState.runningTerminals.has('fallback-panel')).toBe(true)
+    expect(terminalState.runningTerminals.has('fallback-session')).toBe(true)
+    expect(terminalState.terminalPanelOpen['worktree-1']).toBe(true)
+    expect(terminalState.terminalVisible).toBe(true)
+    expect(useUIStore.getState().sessionTerminalIds['session-1']).toBe(
+      'fallback-session'
+    )
+    expect(useUIStore.getState().sessionPrimarySurface['session-1']).toBe(
+      'terminal'
+    )
+
+    const restoreIdx = order.indexOf('fallback_terminals_restored')
+    const flagIdx = order.indexOf('uiStateInitialized_true')
+    expect(restoreIdx).toBeGreaterThanOrEqual(0)
+    expect(flagIdx).toBeGreaterThanOrEqual(0)
+    expect(restoreIdx).toBeLessThan(flagIdx)
   })
 
   // REGRESSION GUARD for the race in TerminalView's auto-create effect.

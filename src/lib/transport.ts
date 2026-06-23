@@ -723,14 +723,14 @@ class WsTransport {
   requestTerminalReplay(terminalId: string, lastSeq = 0): void {
     this._activeTerminals.add(terminalId)
     const currentLastSeq = this._lastSeqByTerminal.get(terminalId)
-    if (currentLastSeq == null || lastSeq > currentLastSeq) {
-      this._lastSeqByTerminal.set(terminalId, lastSeq)
-    }
+    const effectiveLastSeq =
+      currentLastSeq == null ? lastSeq : Math.max(lastSeq, currentLastSeq)
+    this._lastSeqByTerminal.set(terminalId, effectiveLastSeq)
 
     const payload = JSON.stringify({
       type: 'terminal_replay',
       terminal_id: terminalId,
-      last_seq: lastSeq,
+      last_seq: effectiveLastSeq,
     })
 
     if (this.ws?.readyState === WebSocket.OPEN) {

@@ -226,6 +226,31 @@ describe('transport bootstrap', () => {
     )
   })
 
+  it('uses highest known sequence for explicit terminal replay requests', async () => {
+    const transport = await loadTransportModule()
+
+    transport.connectTransport()
+    await flushAsync()
+
+    const ws = getWs(0)
+    ws.receive({
+      type: 'event',
+      event: 'terminal:output',
+      payload: { terminal_id: 'term-1', data: 'running' },
+      seq: 21,
+    })
+
+    transport.requestTerminalReplay('term-1', 0)
+
+    expect(ws.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        type: 'terminal_replay',
+        terminal_id: 'term-1',
+        last_seq: 21,
+      })
+    )
+  })
+
   it('requests terminal_replay for active terminals after websocket reconnect', async () => {
     const transport = await loadTransportModule()
 
