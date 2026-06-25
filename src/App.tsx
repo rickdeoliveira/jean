@@ -9,7 +9,8 @@ import {
   setWsDataReady,
   useWsAuthError,
   preloadInitialData,
-  refetchInitialData,
+  prefetchReconnectInitialData,
+  consumeReconnectInitialData,
   setAppDataDir,
   hasPreloadedData,
   listen,
@@ -673,19 +674,28 @@ function App() {
   const wsDataReady = useWsDataReady()
   const hadWsConnectionRef = useRef(false)
   useEffect(() => {
-    if (isNativeApp() || !wsConnected) return
+    if (isNativeApp()) return
+
+    if (!wsConnected) {
+      if (hadWsConnectionRef.current) {
+        const activeSessionIds = useChatStore.getState().activeSessionIds
+        const selectedProjectId = useProjectsStore.getState().selectedProjectId
+        void prefetchReconnectInitialData(activeSessionIds, selectedProjectId)
+      }
+      return
+    }
 
     const reconnected = hadWsConnectionRef.current
     hadWsConnectionRef.current = true
 
     if (reconnected) {
-      // Try to use the prefetch that was started during the backoff wait.
+      // Use the prefetch that was started during the backoff wait.
       // Falls back to a fresh fetch with the browser's active session IDs
       // so the server loads the correct sessions even when ui_state.json
       // on disk is stale (debounced save hasn't flushed yet).
       const activeSessionIds = useChatStore.getState().activeSessionIds
       const selectedProjectId = useProjectsStore.getState().selectedProjectId
-      const dataPromise = refetchInitialData(
+      const dataPromise = consumeReconnectInitialData(
         activeSessionIds,
         selectedProjectId
       )
