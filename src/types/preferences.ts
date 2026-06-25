@@ -56,6 +56,8 @@ export interface MagicPrompts {
   investigate_workflow_run: string | null
   /** Prompt for generating release notes */
   release_notes: string | null
+  /** Prompt for generating short social release posts */
+  release_post: string | null
   /** Prompt for generating session names from the first message */
   session_naming: string | null
   /** System prompt for parallel execution (appended to every chat session when enabled) */
@@ -514,6 +516,24 @@ export const DEFAULT_RELEASE_NOTES_PROMPT = `Generate release notes for changes 
 - Write in past tense ("Added", "Fixed", "Improved").
 - Keep it concise and user-facing (skip internal implementation details).`
 
+/** Default prompt for generating short social release posts */
+export const DEFAULT_RELEASE_POST_PROMPT = `Write one short release announcement for Twitter/X, Mastodon, Bluesky, LinkedIn, and similar platforms.
+
+Release: {release_name}
+Tag: {tag}
+GitHub release link: {release_url}
+
+Release notes:
+{release_body}
+
+Instructions:
+- Be a bit more generous than a terse tweet, but keep the full post under 280 characters including the GitHub release link.
+- Include the exact GitHub release link.
+- Put each feature, fix, or improvement on its own line.
+- Mention the most user-facing changes or theme.
+- Keep it clear, upbeat, and not hype-heavy.
+- Do not use markdown headings.`
+
 /** Default prompt for generating session names */
 export const DEFAULT_SESSION_NAMING_PROMPT = `<task>Generate a short, human-friendly name for this chat session based on the user's request.</task>
 
@@ -676,6 +696,7 @@ export const DEFAULT_MAGIC_PROMPTS: MagicPrompts = {
   resolve_conflicts: null,
   investigate_workflow_run: null,
   release_notes: null,
+  release_post: null,
   session_naming: null,
   parallel_execution: null,
   global_system_prompt: null,
@@ -699,6 +720,7 @@ export interface MagicPromptModels {
   context_summary_model: MagicPromptModel
   resolve_conflicts_model: MagicPromptModel
   release_notes_model: MagicPromptModel
+  release_post_model: MagicPromptModel
   session_naming_model: MagicPromptModel
   investigate_security_alert_model: MagicPromptModel
   investigate_advisory_model: MagicPromptModel
@@ -720,6 +742,7 @@ export interface MagicPromptReasoningEfforts {
   context_summary_effort: MagicPromptReasoningEffort
   resolve_conflicts_effort: MagicPromptReasoningEffort
   release_notes_effort: MagicPromptReasoningEffort
+  release_post_effort: MagicPromptReasoningEffort
   session_naming_effort: MagicPromptReasoningEffort
   investigate_security_alert_effort: MagicPromptReasoningEffort
   investigate_advisory_effort: MagicPromptReasoningEffort
@@ -738,6 +761,7 @@ export const DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   context_summary_model: 'claude-opus-4-8[1m]',
   resolve_conflicts_model: 'claude-opus-4-8[1m]',
   release_notes_model: 'sonnet',
+  release_post_model: 'sonnet',
   session_naming_model: 'sonnet',
   investigate_security_alert_model: 'claude-opus-4-8[1m]',
   investigate_advisory_model: 'claude-opus-4-8[1m]',
@@ -758,6 +782,7 @@ function makeMagicPromptModelsPreset(
     context_summary_model: model,
     resolve_conflicts_model: model,
     release_notes_model: model,
+    release_post_model: model,
     session_naming_model: model,
     investigate_security_alert_model: model,
     investigate_advisory_model: model,
@@ -785,12 +810,17 @@ export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   context_summary_model: 'opencode/gpt-5.3-codex',
   resolve_conflicts_model: 'opencode/gpt-5.3-codex',
   release_notes_model: 'opencode/gpt-5.3-codex',
+  release_post_model: 'opencode/gpt-5.3-codex',
   session_naming_model: 'opencode/gpt-5.3-codex',
   investigate_security_alert_model: 'opencode/gpt-5.3-codex',
   investigate_advisory_model: 'opencode/gpt-5.3-codex',
   investigate_linear_issue_model: 'opencode/gpt-5.3-codex',
   review_comments_model: 'opencode/gpt-5.3-codex',
 }
+
+/** Grok preset for all magic prompts */
+export const GROK_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('grok/grok-composer-2.5-fast')
 
 /** Default reasoning efforts for Claude backend (null = use model default) */
 export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
@@ -803,6 +833,7 @@ export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   context_summary_effort: null,
   resolve_conflicts_effort: null,
   release_notes_effort: null,
+  release_post_effort: null,
   session_naming_effort: null,
   investigate_security_alert_effort: null,
   investigate_advisory_effort: null,
@@ -850,6 +881,7 @@ export const CODEX_DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   context_summary_effort: 'medium',
   resolve_conflicts_effort: 'medium',
   release_notes_effort: 'low',
+  release_post_effort: 'low',
   session_naming_effort: 'low',
   investigate_security_alert_effort: 'medium',
   investigate_advisory_effort: 'medium',
@@ -877,6 +909,7 @@ export interface MagicPromptProviders {
   context_summary_provider: string | null
   resolve_conflicts_provider: string | null
   release_notes_provider: string | null
+  release_post_provider: string | null
   session_naming_provider: string | null
   investigate_security_alert_provider: string | null
   investigate_advisory_provider: string | null
@@ -895,6 +928,7 @@ export const DEFAULT_MAGIC_PROMPT_PROVIDERS: MagicPromptProviders = {
   context_summary_provider: null,
   resolve_conflicts_provider: null,
   release_notes_provider: null,
+  release_post_provider: null,
   session_naming_provider: null,
   investigate_security_alert_provider: null,
   investigate_advisory_provider: null,
@@ -917,6 +951,7 @@ export interface MagicPromptBackends {
   context_summary_backend: string | null
   resolve_conflicts_backend: string | null
   release_notes_backend: string | null
+  release_post_backend: string | null
   session_naming_backend: string | null
   investigate_security_alert_backend: string | null
   investigate_advisory_backend: string | null
@@ -935,6 +970,7 @@ export const DEFAULT_MAGIC_PROMPT_BACKENDS: MagicPromptBackends = {
   context_summary_backend: null,
   resolve_conflicts_backend: null,
   release_notes_backend: null,
+  release_post_backend: null,
   session_naming_backend: null,
   investigate_security_alert_backend: null,
   investigate_advisory_backend: null,
@@ -953,6 +989,7 @@ function makeBackendsPreset(backend: string): MagicPromptBackends {
     context_summary_backend: backend,
     resolve_conflicts_backend: backend,
     release_notes_backend: backend,
+    release_post_backend: backend,
     session_naming_backend: backend,
     investigate_security_alert_backend: backend,
     investigate_advisory_backend: backend,
@@ -965,6 +1002,7 @@ export const CLAUDE_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('claude')
 export const CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('codex')
 export const OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS =
   makeBackendsPreset('opencode')
+export const GROK_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('grok')
 
 /**
  * Resolve a magic prompt provider for a given key.
@@ -1080,6 +1118,7 @@ export interface AppPreferences {
   selected_cursor_model: CursorModel // Default Cursor model
   selected_pi_model: PiModel // Default PI model
   selected_commandcode_model?: string // Default Command Code model (CLI default)
+  selected_grok_model: GrokModel // Default Grok model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
   codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
@@ -1102,6 +1141,7 @@ export interface AppPreferences {
   claude_cli_source: 'jean' | 'path' // Claude CLI source: 'jean' (managed) or 'path' (system PATH)
   codex_cli_source: 'jean' | 'path' // Codex CLI source: 'jean' (managed) or 'path' (system PATH)
   opencode_cli_source: 'jean' | 'path' // OpenCode CLI source: 'jean' (managed) or 'path' (system PATH)
+  grok_cli_source: 'path' // Grok CLI source: currently system PATH
   gh_cli_source: 'jean' | 'path' // GitHub CLI source: 'jean' (managed) or 'path' (system PATH)
   pi_cli_source: 'jean' | 'path' // PI CLI source: 'jean' (managed) or 'path' (system PATH)
   commandcode_cli_source?: 'jean' | 'path' // Command Code CLI source: 'jean' (managed) or 'path' (system PATH)
@@ -1478,6 +1518,7 @@ export type OpenCodeModel = `opencode/${string}`
 export type CursorModel = `cursor/${string}`
 export type PiModel = `pi/${string}`
 export type CommandCodeModel = `commandcode/${string}`
+export type GrokModel = `grok/${string}`
 export type MagicPromptModel =
   | ClaudeModel
   | CodexModel
@@ -1485,6 +1526,7 @@ export type MagicPromptModel =
   | CursorModel
   | PiModel
   | CommandCodeModel
+  | GrokModel
 
 /** Check if a model string identifies an OpenCode model */
 export function isOpenCodeModel(model: string): model is OpenCodeModel {
@@ -1504,6 +1546,10 @@ export function isPiModel(model: string): model is PiModel {
 /** Check if a model string identifies a Command Code model */
 export function isCommandCodeModel(model: string): model is CommandCodeModel {
   return model.startsWith('commandcode/')
+}
+/** Check if a model string identifies a Grok model */
+export function isGrokModel(model: string): model is GrokModel {
+  return model.startsWith('grok/')
 }
 
 /** Check if a model string identifies a Codex model */
@@ -1533,6 +1579,7 @@ export type CliBackend =
   | 'cursor'
   | 'pi'
   | 'commandcode'
+  | 'grok'
 
 export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -1541,6 +1588,7 @@ export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'cursor', label: 'Cursor' },
   { value: 'pi', label: 'Pi (Beta)' },
   { value: 'commandcode', label: 'Command Code (Beta)' },
+  { value: 'grok', label: 'Grok (Beta)' },
 ]
 
 export type TerminalApp =
@@ -1629,6 +1677,7 @@ export const newSessionKindOptions: {
   { value: 'claude', label: 'Claude' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'cursor', label: 'Cursor' },
+  { value: 'grok', label: 'Grok (Beta)' },
 ]
 
 export function getNewSessionKindLabel(
@@ -1916,6 +1965,7 @@ export const defaultPreferences: AppPreferences = {
   selected_cursor_model: 'cursor/auto', // Default Cursor model
   selected_pi_model: 'pi/sonnet', // Default PI model
   selected_commandcode_model: 'commandcode/default', // Default Command Code model
+  selected_grok_model: 'grok/grok-composer-2.5-fast', // Default Grok model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: false, // Default: disabled
@@ -1938,6 +1988,7 @@ export const defaultPreferences: AppPreferences = {
   claude_cli_source: 'jean', // Default: Jean-managed
   codex_cli_source: 'jean', // Default: Jean-managed
   opencode_cli_source: 'jean', // Default: Jean-managed
+  grok_cli_source: 'path', // Default: system PATH
   gh_cli_source: 'jean', // Default: Jean-managed
   pi_cli_source: 'jean', // Default: Jean-managed
   commandcode_cli_source: 'jean', // Default: Jean-managed

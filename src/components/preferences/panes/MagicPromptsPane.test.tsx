@@ -87,4 +87,10 @@ describe('MagicPromptsPane', () => {
     expect(screen.getByTestId('magic-prompts-sidebar')).toHaveClass('hidden')
     expect(screen.getByTestId('magic-prompts-sidebar')).toHaveClass('md:block')
   })
+
+  it('includes release post as an editable magic prompt', () => {
+    render(<MagicPromptsPane />)
+
+    expect(screen.getByText('Release Post')).toBeInTheDocument()
+  })
 })

@@ -27,6 +27,7 @@ import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
 import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
+import { useAvailableGrokModels } from '@/services/grok-cli'
 import {
   formatCursorModelLabel,
   formatOpencodeModelLabel,
@@ -35,6 +36,7 @@ import {
   COMMANDCODE_MODEL_OPTIONS as COMMANDCODE_FALLBACK_OPTIONS,
   CURSOR_MODEL_OPTIONS as CURSOR_FALLBACK_OPTIONS,
   OPENCODE_MODEL_OPTIONS as OPENCODE_FALLBACK_OPTIONS,
+  GROK_MODEL_OPTIONS as GROK_FALLBACK_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import {
   DEFAULT_INVESTIGATE_ISSUE_PROMPT,
@@ -49,6 +51,7 @@ import {
   DEFAULT_INVESTIGATE_ADVISORY_PROMPT,
   DEFAULT_INVESTIGATE_LINEAR_ISSUE_PROMPT,
   DEFAULT_RELEASE_NOTES_PROMPT,
+  DEFAULT_RELEASE_POST_PROMPT,
   DEFAULT_REVIEW_COMMENTS_PROMPT,
   DEFAULT_SESSION_NAMING_PROMPT,
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
@@ -62,13 +65,16 @@ import {
   CLAUDE_DEFAULT_MAGIC_PROMPT_BACKENDS,
   CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS,
   OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
   CODEX_DEFAULT_MAGIC_PROMPT_MODELS,
   CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS,
   OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+  GROK_DEFAULT_MAGIC_PROMPT_MODELS,
   codexModelOptions,
   isCommandCodeModel,
   isCodexModel,
   isCursorModel,
+  isGrokModel,
   type MagicPrompts,
   type MagicPromptModels,
   type MagicPromptProviders,
@@ -405,6 +411,23 @@ const PROMPT_SECTIONS: PromptSection[] = [
         defaultValue: DEFAULT_RELEASE_NOTES_PROMPT,
         defaultModel: 'sonnet',
       },
+      {
+        key: 'release_post',
+        modelKey: 'release_post_model',
+        providerKey: 'release_post_provider',
+        backendKey: 'release_post_backend',
+        label: 'Release Post',
+        description:
+          'Prompt for generating short social release posts with a GitHub release link.',
+        variables: [
+          { name: '{tag}', description: 'Tag of the selected release' },
+          { name: '{release_name}', description: 'Name of the selected release' },
+          { name: '{release_url}', description: 'GitHub release URL' },
+          { name: '{release_body}', description: 'Release notes body from GitHub' },
+        ],
+        defaultValue: DEFAULT_RELEASE_POST_PROMPT,
+        defaultModel: 'sonnet',
+      },
     ],
   },
   {
@@ -553,6 +576,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
   const { data: availableOpencodeModels } = useAvailableOpencodeModels()
   const { data: availableCursorModels } = useAvailableCursorModels()
   const { data: availableCommandCodeModels } = useAvailableCommandCodeModels()
+  const { data: availableGrokModels } = useAvailableGrokModels()
   const { installedBackends } = useInstalledBackends()
 
   const formatOpenCodeLabel = (value: string) => {
@@ -599,6 +623,19 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     }))
   }, [availableCommandCodeModels])
 
+  const grokModelOptions = useMemo(() => {
+    const models = availableGrokModels?.length
+      ? availableGrokModels.map(model => ({
+          value: `grok/${model.id}`,
+          label: model.label || model.id,
+        }))
+      : GROK_FALLBACK_OPTIONS
+    return models.map(option => ({
+      value: option.value as MagicPromptModel,
+      label: option.label,
+    }))
+  }, [availableGrokModels])
+
   const currentPrompts = preferences?.magic_prompts ?? DEFAULT_MAGIC_PROMPTS
   const currentModels =
     preferences?.magic_prompt_models ?? DEFAULT_MAGIC_PROMPT_MODELS
@@ -642,13 +679,15 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
   const currentModelIsCommandCode = currentModel
     ? isCommandCodeModel(currentModel)
     : false
+  const currentModelIsGrok = currentModel ? isGrokModel(currentModel) : false
   const filteredClaudeOptions = useMemo(() => {
     if (
       !currentProvider ||
       currentModelIsCodex ||
       currentModelIsOpenCode ||
       currentModelIsCursor ||
-      currentModelIsCommandCode
+      currentModelIsCommandCode ||
+      currentModelIsGrok
     ) {
       return CLAUDE_MODEL_OPTIONS
     }
@@ -682,6 +721,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     currentModelIsCursor,
     currentModelIsCommandCode,
     currentModelIsOpenCode,
+    currentModelIsGrok,
     profiles,
   ])
 
@@ -847,6 +887,8 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
           defaultModel = cursorModelOptions[0]?.value
         } else if (backend === 'commandcode') {
           defaultModel = commandCodeModelOptions[0]?.value
+        } else if (backend === 'grok') {
+          defaultModel = grokModelOptions[0]?.value
         }
       }
       patchPreferences.mutate({
@@ -874,6 +916,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
       selectedConfig.defaultModel,
       cursorModelOptions,
       commandCodeModelOptions,
+      grokModelOptions,
       opencodeModelOptions,
     ]
   )
@@ -921,6 +964,14 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     patchPreferences.mutate({
       magic_prompt_models: OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS,
       magic_prompt_backends: OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    })
+  }, [preferences, patchPreferences])
+
+  const handleApplyGrokDefaults = useCallback(() => {
+    if (!preferences) return
+    patchPreferences.mutate({
+      magic_prompt_models: GROK_DEFAULT_MAGIC_PROMPT_MODELS,
+      magic_prompt_backends: GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
     })
   }, [preferences, patchPreferences])
 
@@ -992,6 +1043,15 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
           className="h-7 text-xs"
         >
           OpenCode Defaults
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleApplyGrokDefaults}
+          disabled={!installedBackends.includes('grok')}
+          className="h-7 text-xs"
+        >
+          Grok Defaults
         </Button>
       </div>
 
@@ -1105,6 +1165,9 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                     {installedBackends.includes('codex') && (
                       <SelectItem value="codex">Codex</SelectItem>
                     )}
+                    {installedBackends.includes('grok') && (
+                      <SelectItem value="grok">Grok (Beta)</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </>
@@ -1115,10 +1178,12 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
               !currentModelIsCursor &&
               !currentModelIsCommandCode &&
               !currentModelIsOpenCode &&
+              !currentModelIsGrok &&
               effectiveBackend !== 'opencode' &&
               effectiveBackend !== 'cursor' &&
               effectiveBackend !== 'commandcode' &&
-              effectiveBackend !== 'codex' && (
+              effectiveBackend !== 'codex' &&
+              effectiveBackend !== 'grok' && (
                 <>
                   <span className="text-xs text-muted-foreground">
                     Provider
@@ -1168,6 +1233,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                             ...opencodeModelOptions,
                             ...cursorModelOptions,
                             ...commandCodeModelOptions,
+                            ...grokModelOptions,
                           ]
                           return (
                             allOptions.find(o => o.value === currentModel)
@@ -1178,7 +1244,9 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                                 ? formatCursorModelLabel(currentModel)
                                 : currentModel === 'commandcode/default'
                                   ? 'CLI default (no --model)'
-                                  : currentModel)
+                                  : isGrokModel(currentModel)
+                                    ? currentModel.replace(/^grok\//, '')
+                                    : currentModel)
                           )
                         })()}
                       </span>
@@ -1190,7 +1258,9 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                             ? cursorModelOptions
                             : effectiveBackend === 'commandcode'
                               ? commandCodeModelOptions
-                              : opencodeModelOptions
+                              : effectiveBackend === 'grok'
+                                ? grokModelOptions
+                                : opencodeModelOptions
                       ).length > 1 && (
                         <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
                       )}

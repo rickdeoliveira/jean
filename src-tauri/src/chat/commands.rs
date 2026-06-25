@@ -195,6 +195,7 @@ pub(crate) fn resolve_default_backend(app: &AppHandle, worktree_id: Option<&str>
         "cursor" => Backend::Cursor,
         "pi" => Backend::Pi,
         "commandcode" => Backend::Commandcode,
+        "grok" => Backend::Grok,
         _ => Backend::Claude,
     };
 
@@ -215,6 +216,7 @@ pub(crate) fn resolve_default_backend(app: &AppHandle, worktree_id: Option<&str>
                         "cursor" => Backend::Cursor,
                         "pi" => Backend::Pi,
                         "commandcode" => Backend::Commandcode,
+                        "grok" => Backend::Grok,
                         "claude" => Backend::Claude,
                         _ => resolved,
                     };
@@ -239,6 +241,7 @@ pub(crate) fn resolve_magic_prompt_backend(
             "cursor" => return Backend::Cursor,
             "pi" => return Backend::Pi,
             "commandcode" => return Backend::Commandcode,
+            "grok" => return Backend::Grok,
             "codex" => return Backend::Codex,
             "claude" => return Backend::Claude,
             _ => {}
@@ -256,6 +259,8 @@ fn infer_backend_from_model(model: &str, fallback: Backend) -> Backend {
         Backend::Opencode
     } else if model.starts_with("commandcode/") {
         Backend::Commandcode
+    } else if crate::is_grok_model(model) {
+        Backend::Grok
     } else if crate::is_codex_model(model) {
         Backend::Codex
     } else {
@@ -296,6 +301,7 @@ fn default_model_for_backend(
         Backend::Cursor => &preferences.selected_cursor_model,
         Backend::Pi => &preferences.selected_pi_model,
         Backend::Commandcode => &preferences.selected_commandcode_model,
+        Backend::Grok => &preferences.selected_grok_model,
         Backend::Claude => &preferences.selected_model,
     };
 
@@ -675,6 +681,7 @@ pub async fn create_session(
         Some("cursor") => Backend::Cursor,
         Some("pi") => Backend::Pi,
         Some("commandcode") => Backend::Commandcode,
+        Some("grok") => Backend::Grok,
         Some("claude") => Backend::Claude,
         _ => {
             // No explicit backend — check project default, then global preference
@@ -690,6 +697,8 @@ pub async fn create_session(
                     resolved = Backend::Pi;
                 } else if prefs.default_backend == "commandcode" {
                     resolved = Backend::Commandcode;
+                } else if prefs.default_backend == "grok" {
+                    resolved = Backend::Grok;
                 }
             }
             // Check project-level override
@@ -710,6 +719,7 @@ pub async fn create_session(
                             "cursor" => Backend::Cursor,
                             "pi" => Backend::Pi,
                             "commandcode" => Backend::Commandcode,
+                            "grok" => Backend::Grok,
                             "claude" => Backend::Claude,
                             _ => resolved,
                         };
@@ -1515,7 +1525,7 @@ fn plan_mode_content_waits_for_approval(
     has_content: bool,
     has_plan_tool: bool,
 ) -> bool {
-    matches!(backend, Backend::Codex | Backend::Opencode)
+    matches!(backend, Backend::Codex | Backend::Opencode | Backend::Grok)
         && execution_mode == Some("plan")
         && has_content
         && !has_plan_tool
@@ -2195,6 +2205,21 @@ pub async fn set_sessions_last_opened_bulk(
 // Chat Commands (now session-based)
 // ============================================================================
 
+// Persist a salvaged resume/session ID onto the correct backend field.
+// Used by the thread-error/thread-panic recovery paths so the next send can
+// resume the conversation instead of starting fresh.
+fn persist_salvaged_resume_id(session: &mut Session, backend: &Backend, sid: &str) {
+    match backend {
+        Backend::Claude => session.claude_session_id = Some(sid.to_string()),
+        Backend::Codex => session.codex_thread_id = Some(sid.to_string()),
+        Backend::Opencode => session.opencode_session_id = Some(sid.to_string()),
+        Backend::Cursor => session.cursor_chat_id = Some(sid.to_string()),
+        Backend::Pi => session.pi_session_id = Some(sid.to_string()),
+        Backend::Commandcode => {}
+        Backend::Grok => session.grok_session_id = Some(sid.to_string()),
+    }
+}
+
 /// Send a message to Claude and get a response
 ///
 /// This command:
@@ -2205,20 +2230,6 @@ pub async fn set_sessions_last_opened_bulk(
 /// 5. Adds the assistant response
 /// 6. Saves the updated session
 /// 7. Returns the assistant message
-///
-/// Persist a salvaged resume/session ID onto the correct backend field.
-/// Used by the thread-error/thread-panic recovery paths so the next send can
-/// resume the conversation instead of starting fresh.
-fn persist_salvaged_resume_id(session: &mut Session, backend: &Backend, sid: &str) {
-    match backend {
-        Backend::Claude => session.claude_session_id = Some(sid.to_string()),
-        Backend::Codex => session.codex_thread_id = Some(sid.to_string()),
-        Backend::Opencode => session.opencode_session_id = Some(sid.to_string()),
-        Backend::Cursor => session.cursor_chat_id = Some(sid.to_string()),
-        Backend::Pi => session.pi_session_id = Some(sid.to_string()),
-        Backend::Commandcode => {}
-    }
-}
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -2460,6 +2471,7 @@ pub async fn send_chat_message(
         Some("cursor") => Backend::Cursor,
         Some("pi") => Backend::Pi,
         Some("commandcode") => Backend::Commandcode,
+        Some("grok") => Backend::Grok,
         Some("claude") => Backend::Claude,
         _ => session_backend.clone(),
     };
@@ -2512,6 +2524,9 @@ pub async fn send_chat_message(
     let raw_pi_session_id = sessions
         .find_session(&session_id)
         .and_then(|s| s.pi_session_id.clone());
+    let grok_session_id = sessions
+        .find_session(&session_id)
+        .and_then(|s| s.grok_session_id.clone());
     let pi_session_id = raw_pi_session_id
         .as_deref()
         .filter(|sid| *sid != session_id)
@@ -2571,8 +2586,8 @@ pub async fn send_chat_message(
                 )
             };
             log::info!(
-                    "[SendChat] injecting hidden provider-switch handoff session={session_id} previous={previous_backend:?} current={effective_backend:?}"
-                );
+                "[SendChat] injecting hidden provider-switch handoff session={session_id} previous={previous_backend:?} current={effective_backend:?}"
+            );
             super::handoff::prepend_hidden_handoff(&message, &handoff_prompt)
         } else {
             message.clone()
@@ -2664,6 +2679,7 @@ pub async fn send_chat_message(
                     Backend::Cursor => {}
                     Backend::Pi => {}
                     Backend::Commandcode => {}
+                    Backend::Grok => {}
                 }
             }
         }
@@ -2714,6 +2730,7 @@ pub async fn send_chat_message(
     let thread_opencode_session_id = opencode_session_id.clone();
     let thread_cursor_chat_id = cursor_chat_id.clone();
     let thread_pi_session_id = pi_session_id.clone();
+    let thread_grok_session_id = grok_session_id.clone();
     let thread_model = model.clone();
     let thread_execution_mode = execution_mode.clone();
     let thread_thinking_level = thinking_level.clone();
@@ -3977,8 +3994,6 @@ pub async fn send_chat_message(
                         }
                     }
 
-                    // Embedded binary path hints — prefer the bundled binaries in
-                    // packaged installs instead of relying on PATH.
                     let gh_binary = crate::gh_cli::config::resolve_gh_binary(&thread_app);
                     if gh_binary != std::path::PathBuf::from("gh") {
                         parts.push(format!(
@@ -4049,7 +4064,160 @@ pub async fn send_chat_message(
                     }
                 }
             }
+            Backend::Grok => {
+                let grok_system_prompt: Option<String> = {
+                    use crate::projects::storage::load_projects_data;
+
+                    let mut parts: Vec<String> = Vec::new();
+
+                    if let Some(lang) = &thread_ai_language {
+                        let lang = lang.trim();
+                        if !lang.is_empty() {
+                            parts.push(format!("Respond to the user in {lang}."));
+                        }
+                    }
+
+                    if let Ok(prefs_path) = crate::get_preferences_path(&thread_app) {
+                        if let Ok(contents) = std::fs::read_to_string(&prefs_path) {
+                            if let Ok(prefs) =
+                                serde_json::from_str::<crate::AppPreferences>(&contents)
+                            {
+                                if let Some(prompt) = prefs
+                                    .magic_prompts
+                                    .global_system_prompt
+                                    .as_deref()
+                                    .map(|s| s.trim())
+                                    .filter(|s| !s.is_empty())
+                                {
+                                    parts.push(prompt.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(prompt) = &thread_parallel_prompt {
+                        let prompt = prompt.trim();
+                        if !prompt.is_empty() {
+                            parts.push(prompt.to_string());
+                        }
+                    }
+
+                    if let Ok(data) = load_projects_data(&thread_app) {
+                        if let Some(worktree) = data.find_worktree(&thread_worktree_id) {
+                            if let Some(project) = data.find_project(&worktree.project_id) {
+                                if let Some(prompt) = &project.custom_system_prompt {
+                                    let prompt = prompt.trim();
+                                    if !prompt.is_empty() {
+                                        parts.push(prompt.to_string());
+                                    }
+                                }
+
+                                let linked_paths = project
+                                    .linked_project_ids
+                                    .iter()
+                                    .filter_map(|id| data.find_project(id))
+                                    .filter(|p| !p.path.trim().is_empty())
+                                    .map(|p| p.path.clone())
+                                    .collect::<Vec<_>>();
+                                if !linked_paths.is_empty() {
+                                    let dirs_list = linked_paths
+                                        .iter()
+                                        .map(|p| format!("- {p}"))
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    parts.push(format!(
+                                        "This project is linked to other projects for cross-project context. \
+                                         Check the following directories for additional instructions and documentation \
+                                         (e.g., CLAUDE.md, AGENTS.md, docs/):\n{dirs_list}"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    let gh_binary = crate::gh_cli::config::resolve_gh_binary(&thread_app);
+                    if gh_binary != std::path::PathBuf::from("gh") {
+                        parts.push(format!(
+                            "When running GitHub CLI commands, use the full path to the embedded binary: {}\n\
+                             Do NOT use bare `gh` — always use the full path above.",
+                            gh_binary.display()
+                        ));
+                    }
+                    if let Ok(claude_binary) = crate::claude_cli::get_cli_binary_path(&thread_app) {
+                        if claude_binary.exists() {
+                            parts.push(format!(
+                                "When running Claude CLI commands, use the full path to the embedded binary: {}\n\
+                                 Do NOT use bare `claude` — always use the full path above.",
+                                claude_binary.display()
+                            ));
+                        }
+                    }
+                    if let Ok(codex_binary) = crate::codex_cli::get_cli_binary_path(&thread_app) {
+                        if codex_binary.exists() {
+                            parts.push(format!(
+                                "When running Codex CLI commands, use the full path to the embedded binary: {}\n\
+                                 Do NOT use bare `codex` — always use the full path above.",
+                                codex_binary.display()
+                            ));
+                        }
+                    }
+
+                    parts.push(super::RECAP_INSTRUCTION.to_string());
+
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join("\n\n"))
+                    }
+                };
+
+                let grok_effort: Option<String> =
+                    thread_effort_level.as_ref().and_then(|e| match e {
+                        super::types::EffortLevel::Minimal => Some("low".to_string()),
+                        super::types::EffortLevel::Low => Some("low".to_string()),
+                        super::types::EffortLevel::Medium => Some("medium".to_string()),
+                        super::types::EffortLevel::High => Some("high".to_string()),
+                        super::types::EffortLevel::Xhigh => Some("xhigh".to_string()),
+                        super::types::EffortLevel::Max => Some("max".to_string()),
+                        super::types::EffortLevel::Ultracode => Some("max".to_string()),
+                        super::types::EffortLevel::Off => None,
+                    });
+
+                match super::grok::execute_grok(super::grok::GrokExecutionOptions {
+                    app: &thread_app,
+                    jean_session_id: &thread_session_id,
+                    worktree_id: &thread_worktree_id,
+                    working_dir: std::path::Path::new(&thread_working_dir),
+                    existing_grok_session_id: thread_grok_session_id.as_deref(),
+                    model: thread_model.as_deref(),
+                    execution_mode: thread_execution_mode.as_deref(),
+                    effort_level: grok_effort.as_deref(),
+                    message: &thread_message,
+                    system_prompt: grok_system_prompt.as_deref(),
+                    pid_callback: Some(make_pid_callback()),
+                }) {
+                    Ok(response) => Ok((
+                        0,
+                        UnifiedResponse {
+                            content: response.content,
+                            resume_id: response.session_id,
+                            tool_calls: response.tool_calls,
+                            content_blocks: response.content_blocks,
+                            cancelled: response.cancelled,
+                            waiting_for_plan: false,
+                            error_emitted: false,
+                            usage: response.usage,
+                            backend: Backend::Grok,
+                        },
+                    )),
+                    Err(e) => {
+                        log::error!("execute_grok FAILED: {e}");
+                        Err(e)
+                    }
+                }
+            }
         };
+
         let _ = tx.send(result);
     });
 
@@ -4188,7 +4356,7 @@ pub async fn send_chat_message(
     // but are intentionally excluded from visible chat history on reload.
     if matches!(
         unified_response.backend,
-        Backend::Opencode | Backend::Cursor | Backend::Pi | Backend::Commandcode
+        Backend::Opencode | Backend::Cursor | Backend::Pi | Backend::Commandcode | Backend::Grok
     ) && !unified_response.cancelled
     {
         if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&output_file) {
@@ -4379,6 +4547,9 @@ pub async fn send_chat_message(
                             session.pi_session_id = Some(resume_id_for_log.clone());
                         }
                         Backend::Commandcode => {}
+                        Backend::Grok => {
+                            session.grok_session_id = Some(resume_id_for_log.clone());
+                        }
                     }
                 }
                 // Remove user message (undo send) - allows frontend to restore to input field
@@ -4522,6 +4693,9 @@ pub async fn send_chat_message(
                         session.pi_session_id = Some(resume_id_for_log.clone());
                     }
                     Backend::Commandcode => {}
+                    Backend::Grok => {
+                        session.grok_session_id = Some(resume_id_for_log.clone());
+                    }
                 }
             }
 
@@ -4624,6 +4798,7 @@ pub async fn clear_session_history(
             session.cursor_chat_id = None;
             session.pi_session_id = None;
             session.commandcode_session_id = None;
+            session.grok_session_id = None;
             session.selected_model = selected_model;
             session.selected_thinking_level = selected_thinking_level;
             session.selected_effort_level = selected_effort_level;
@@ -4746,6 +4921,7 @@ pub async fn set_session_backend(
                 "cursor" => super::types::Backend::Cursor,
                 "pi" => super::types::Backend::Pi,
                 "commandcode" => super::types::Backend::Commandcode,
+                "grok" => super::types::Backend::Grok,
                 _ => super::types::Backend::Claude,
             };
             log::trace!("Backend selection saved");
@@ -6496,6 +6672,21 @@ fn execute_summarization_claude(
         });
     }
 
+    if backend == super::types::Backend::Grok {
+        log::trace!("Executing one-shot Grok summarization");
+        let json_str = super::grok::execute_one_shot_grok(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok summarization JSON: {e}, content: {json_str}");
+            format!("Failed to parse summarization response: {e}")
+        });
+    }
+
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
         return Err("Claude CLI not installed".to_string());
@@ -6785,6 +6976,7 @@ pub async fn get_session_debug_info(
     let claude_session_id = session.and_then(|s| s.claude_session_id.clone());
     let cursor_chat_id = session.and_then(|s| s.cursor_chat_id.clone());
     let pi_session_id = session.and_then(|s| s.pi_session_id.clone());
+    let grok_session_id = session.and_then(|s| s.grok_session_id.clone());
 
     // Try to find Claude CLI's JSONL file
     let claude_jsonl_file = claude_session_id.as_ref().and_then(|sid| {
@@ -6869,6 +7061,7 @@ pub async fn get_session_debug_info(
         cursor_chat_id,
         pi_session_id,
         commandcode_session_id: None,
+        grok_session_id,
         claude_jsonl_file,
         run_log_files,
         total_usage,
@@ -7378,6 +7571,7 @@ pub async fn get_mcp_servers(
         Some("codex") => crate::codex_cli::mcp::get_mcp_servers(wt),
         Some("opencode") => crate::opencode_cli::mcp::get_mcp_servers(wt),
         Some("cursor") => crate::cursor_cli::mcp::get_mcp_servers(wt),
+        Some("grok") => Vec::new(),
         _ => crate::claude_cli::mcp::get_mcp_servers(wt),
     };
     Ok(servers)
@@ -7443,6 +7637,9 @@ pub async fn check_mcp_health(
         Some("codex") => check_mcp_health_codex(&app),
         Some("opencode") => check_mcp_health_opencode(&app),
         Some("cursor") => check_mcp_health_cursor(&app, worktree_path.as_deref()),
+        Some("grok") => Ok(McpHealthResult {
+            statuses: std::collections::HashMap::new(),
+        }),
         _ => check_mcp_health_claude(&app),
     }
 }

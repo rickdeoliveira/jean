@@ -1702,7 +1702,7 @@ export function useSendMessage() {
         model,
         execution_mode: executionMode,
         thinking_level:
-          backend === 'cursor'
+          backend === 'cursor' || backend === 'grok'
             ? undefined
             : effortLevel
               ? undefined
