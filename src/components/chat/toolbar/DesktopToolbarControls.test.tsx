@@ -159,10 +159,46 @@ describe('DesktopToolbarControls', () => {
     expect(onAttach).toHaveBeenCalledTimes(1)
   })
 
-  it('disables the desktop Magic button while questions are pending', () => {
+  it('keeps desktop Magic and settings controls usable while questions are pending', () => {
     renderDesktopToolbarControls({ hasPendingQuestions: true })
 
-    expect(screen.getByRole('button', { name: /magic/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /magic/i })).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: /choose backend and model/i })
+    ).toBeEnabled()
+    expect(screen.getByRole('button', { name: /medium/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^plan$/i })).toBeEnabled()
+  })
+
+  it('keeps Claude provider switcher available after messages exist', () => {
+    renderDesktopToolbarControls({
+      selectedBackend: 'claude',
+      selectedModel: 'sonnet',
+      selectedProvider: null,
+      customCliProfiles: [{ name: 'OpenRouter', settings_json: '{}' }],
+      providerLocked: true,
+      sessionHasMessages: true,
+      isCodex: false,
+    })
+
+    expect(
+      screen.getByRole('button', { name: /anthropic/i })
+    ).toBeInTheDocument()
+  })
+
+  it('hides reasoning control for Command Code on desktop', () => {
+    renderDesktopToolbarControls({
+      selectedBackend: 'commandcode',
+      selectedModel: 'commandcode/default',
+      isCodex: false,
+      useAdaptiveThinking: false,
+      hideThinkingLevel: false,
+    })
+
+    expect(
+      screen.queryByRole('button', { name: /think/i })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Effort')).not.toBeInTheDocument()
   })
 
   it('hides Claude-only Max and Ultracode effort for Codex', () => {
@@ -175,6 +211,28 @@ describe('DesktopToolbarControls', () => {
     })
 
     expect(screen.getByText('xHigh')).toBeInTheDocument()
+    expect(screen.queryByText('Max')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ultracode')).not.toBeInTheDocument()
+  })
+
+  it('shows PI effort options instead of Claude thinking on desktop', () => {
+    renderDesktopToolbarControls({
+      isCodex: false,
+      selectedBackend: 'pi',
+      selectedModel: 'pi/openai-codex/gpt-5.5',
+      selectedEffortLevel: 'xhigh',
+      useAdaptiveThinking: false,
+      selectedThinkingLevel: 'megathink',
+      thinkingDropdownOpen: true,
+    })
+
+    expect(
+      screen.getByRole('menuitemradio', { name: /xhigh/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitemradio', { name: /minimal/i })
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Megathink')).not.toBeInTheDocument()
     expect(screen.queryByText('Max')).not.toBeInTheDocument()
     expect(screen.queryByText('Ultracode')).not.toBeInTheDocument()
   })

@@ -174,7 +174,6 @@ function executeKeybindingAction(
   // Canvas-only actions: blocked when the session chat modal is open
   const CANVAS_ONLY_ACTIONS = new Set<KeybindingAction>([
     'open_plan',
-    'open_recap',
     'restore_last_archived',
     'focus_canvas_search',
   ])
@@ -429,10 +428,6 @@ function executeKeybindingAction(
     case 'open_plan':
       logger.debug('Keybinding: open_plan')
       window.dispatchEvent(new CustomEvent('open-plan'))
-      break
-    case 'open_recap':
-      logger.debug('Keybinding: open_recap')
-      window.dispatchEvent(new CustomEvent('open-recap'))
       break
     case 'restore_last_archived':
       logger.debug('Keybinding: restore_last_archived')
@@ -966,32 +961,9 @@ export function useMainWindowEventListeners() {
             for (const key of pendingKeys) {
               switch (key) {
                 case 'sessions':
-                  // Skip individual session queries for sessions currently
-                  // being cancelled — the cancel handler holds an optimistic
-                  // assistant message in cache that disk hasn't reconciled yet
-                  // (especially in web access mode where save_cancelled_message
-                  // RTT can exceed this 250ms debounce). The cancel handler
-                  // explicitly refetches the single session once disk is in sync.
-                  {
-                    const cancelling =
-                      useChatStore.getState().cancellingSessionIds
-                    queryClient.invalidateQueries({
-                      queryKey: chatQueryKeys.all,
-                      predicate: query => {
-                        const k = query.queryKey
-                        if (
-                          Array.isArray(k) &&
-                          k[0] === 'chat' &&
-                          k[1] === 'session' &&
-                          typeof k[2] === 'string' &&
-                          cancelling[k[2]]
-                        ) {
-                          return false
-                        }
-                        return true
-                      },
-                    })
-                  }
+                  queryClient.invalidateQueries({
+                    queryKey: chatQueryKeys.all,
+                  })
                   break
                 case 'projects':
                   queryClient.invalidateQueries({

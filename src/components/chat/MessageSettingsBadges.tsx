@@ -1,9 +1,10 @@
 import { memo } from 'react'
 import {
   EFFORT_LEVEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
-import { getMessageModelLabel } from '@/components/chat/message-settings-labels'
+import { getMessagePromptModelLabel } from '@/components/chat/message-settings-labels'
 import { isCodexModel } from '@/types/preferences'
 import type { EffortLevel, ExecutionMode, ThinkingLevel } from '@/types/chat'
 
@@ -24,12 +25,19 @@ export const MessageSettingsBadges = memo(function MessageSettingsBadges({
 }: MessageSettingsBadgesProps) {
   if (!model) return null
 
-  const modelLabel = getMessageModelLabel(model)
-  const isCodex = isCodexModel(model) || model.includes('codex')
+  const modelLabel = getMessagePromptModelLabel(model)
+  const isCodex =
+    !model.startsWith('pi/') && (isCodexModel(model) || model.includes('codex'))
+  const executionModeLabel = executionMode
+    ? executionMode.charAt(0).toUpperCase() + executionMode.slice(1)
+    : null
+
+  const effortOptions = model.startsWith('pi/')
+    ? PI_EFFORT_LEVEL_OPTIONS
+    : EFFORT_LEVEL_OPTIONS
 
   const effortLabel = effortLevel
-    ? (EFFORT_LEVEL_OPTIONS.find(o => o.value === effortLevel)?.label ??
-      effortLevel)
+    ? (effortOptions.find(o => o.value === effortLevel)?.label ?? effortLevel)
     : null
 
   const thinkingLabel =
@@ -41,7 +49,7 @@ export const MessageSettingsBadges = memo(function MessageSettingsBadges({
   return (
     <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/50">
       <span>{modelLabel}</span>
-      {executionMode && <span className="capitalize">· {executionMode}</span>}
+      {executionModeLabel && <span>· {executionModeLabel}</span>}
       {!isCursor && effortLabel && <span>· {effortLabel}</span>}
       {!isCursor && !effortLabel && thinkingLabel && (
         <span>· {thinkingLabel}</span>

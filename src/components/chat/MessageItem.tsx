@@ -27,13 +27,13 @@ import { SkillBadge } from './SkillBadge'
 import { ToolCallsDisplay } from './ToolCallsDisplay'
 import { ExitPlanModeButton } from './ExitPlanModeButton'
 import { EditedFilesDisplay } from './EditedFilesDisplay'
-import type { FileEdit } from './FileEditsDiffModal'
 import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from '@/components/ui/tooltip'
 import { ThinkingBlock } from './ThinkingBlock'
+import { SteeredPromptGroup } from './SteeredPromptGroup'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 import { logger } from '@/lib/logger'
 import { formatDuration } from './time-utils'
@@ -51,12 +51,23 @@ import {
   extractSkillPaths,
   stripAllMarkers,
 } from './message-content-utils'
-import { hasQuestionAnswerOutput } from '@/types/chat'
+import {
+  getAskUserQuestions,
+  hasQuestionAnswerOutput,
+  normalizeQuestionMultipleField,
+} from '@/types/chat'
 import { MessageSettingsBadges } from '@/components/chat/MessageSettingsBadges'
+import type { ApprovalModelOverride } from './ApprovalModelSubmenu'
 
 interface MessageItemProps {
   /** The message to render */
   message: ChatMessage
+  /**
+   * Stable accessor for the full session message list, used to compute
+   * "subsequent edits" lazily when a diff is opened. Passing a stable
+   * function (not the array) preserves this row's memoization.
+   */
+  getMessages?: () => ChatMessage[]
   /** Index of this message in the message list */
   messageIndex: number
   /** Total number of messages (to determine if this is the last message) */
@@ -86,13 +97,25 @@ interface MessageItemProps {
   /** Callback when user approves a plan with yolo mode */
   onPlanApprovalYolo?: (messageId: string) => void
   /** Callback for clear context approval (new session with plan in yolo mode) */
-  onClearContextApproval?: (messageId: string) => void
+  onClearContextApproval?: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Callback for clear context approval (new session with plan in build mode) */
-  onClearContextApprovalBuild?: (messageId: string) => void
+  onClearContextApprovalBuild?: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Callback for worktree approval (new worktree with plan in build mode) */
-  onWorktreeBuildApproval?: (messageId: string) => void
+  onWorktreeBuildApproval?: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Callback for worktree approval (new worktree with plan in yolo mode) */
-  onWorktreeYoloApproval?: (messageId: string) => void
+  onWorktreeYoloApproval?: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Callback when user answers a question */
   onQuestionAnswer: (
     toolCallId: string,
@@ -103,8 +126,6 @@ interface MessageItemProps {
   onQuestionSkip: (toolCallId: string) => void
   /** Callback when user clicks a file path */
   onFileClick: (path: string) => void
-  /** Callback when user clicks an edited file badge (opens diff modal) */
-  onEditedFileClick: (path: string, edits: FileEdit[]) => void
   /** Callback when user fixes a finding */
   onFixFinding: (finding: ReviewFinding, suggestion?: string) => Promise<void>
   /** Callback when user fixes all findings */
@@ -126,6 +147,8 @@ interface MessageItemProps {
   onCopyToInput?: (message: ChatMessage) => void
   /** Hide approve buttons (e.g. for Codex which has no native approval flow) */
   hideApproveButtons?: boolean
+  /** Hide the built-in cancelled marker when a parent compact row renders it externally */
+  hideCancelledIndicator?: boolean
   /** Duration of this assistant message in ms (computed from user→assistant timestamp delta) */
   durationMs?: number | null
 }
@@ -136,6 +159,7 @@ interface MessageItemProps {
  */
 export const MessageItem = memo(function MessageItem({
   message,
+  getMessages,
   messageIndex,
   totalMessages,
   lastPlanMessageIndex,
@@ -157,7 +181,6 @@ export const MessageItem = memo(function MessageItem({
   onQuestionAnswer,
   onQuestionSkip,
   onFileClick,
-  onEditedFileClick,
   onFixFinding,
   onFixAllFindings,
   isQuestionAnswered,
@@ -166,6 +189,7 @@ export const MessageItem = memo(function MessageItem({
   isFindingFixed,
   onCopyToInput,
   hideApproveButtons,
+  hideCancelledIndicator,
   durationMs,
 }: MessageItemProps) {
   // Only show Approve button for the last message with ExitPlanMode
@@ -204,24 +228,36 @@ export const MessageItem = memo(function MessageItem({
   }, [onPlanApprovalYolo, message.id])
 
   // Stable callback for clear context approval
-  const handleClearContextApproval = useCallback(() => {
-    onClearContextApproval?.(message.id)
-  }, [onClearContextApproval, message.id])
+  const handleClearContextApproval = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onClearContextApproval?.(message.id, override)
+    },
+    [onClearContextApproval, message.id]
+  )
 
   // Stable callback for clear context build approval
-  const handleClearContextApprovalBuild = useCallback(() => {
-    onClearContextApprovalBuild?.(message.id)
-  }, [onClearContextApprovalBuild, message.id])
+  const handleClearContextApprovalBuild = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onClearContextApprovalBuild?.(message.id, override)
+    },
+    [onClearContextApprovalBuild, message.id]
+  )
 
   // Stable callback for worktree build approval
-  const handleWorktreeBuildApproval = useCallback(() => {
-    onWorktreeBuildApproval?.(message.id)
-  }, [onWorktreeBuildApproval, message.id])
+  const handleWorktreeBuildApproval = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onWorktreeBuildApproval?.(message.id, override)
+    },
+    [onWorktreeBuildApproval, message.id]
+  )
 
   // Stable callback for worktree yolo approval
-  const handleWorktreeYoloApproval = useCallback(() => {
-    onWorktreeYoloApproval?.(message.id)
-  }, [onWorktreeYoloApproval, message.id])
+  const handleWorktreeYoloApproval = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onWorktreeYoloApproval?.(message.id, override)
+    },
+    [onWorktreeYoloApproval, message.id]
+  )
 
   // Stable callback for checking if finding is fixed
   const handleIsFindingFixed = useCallback(
@@ -233,6 +269,21 @@ export const MessageItem = memo(function MessageItem({
   const handleCopyToInput = useCallback(() => {
     onCopyToInput?.(message)
   }, [onCopyToInput, message])
+
+  const handleCopySteeredText = useCallback(
+    (text: string) => {
+      onCopyToInput?.({
+        id: `${message.id}-steered-copy`,
+        session_id: message.session_id,
+        role: 'user',
+        content: text,
+        timestamp: message.timestamp,
+        content_blocks: [],
+        tool_calls: [],
+      })
+    },
+    [message.id, message.session_id, message.timestamp, onCopyToInput]
+  )
 
   // Content for the message box (shared between user and assistant)
   const resolvedPlan = resolvePlanContent({
@@ -495,6 +546,18 @@ export const MessageItem = memo(function MessageItem({
                               </>
                             )
                           }
+                          case 'userInput':
+                            return (
+                              <SteeredPromptGroup
+                                texts={item.texts}
+                                worktreePath={worktreePath}
+                                onCopyText={
+                                  onCopyToInput
+                                    ? handleCopySteeredText
+                                    : undefined
+                                }
+                              />
+                            )
                           case 'task':
                             return (
                               <TaskCallInline
@@ -532,16 +595,11 @@ export const MessageItem = memo(function MessageItem({
                                 item.tool.id
                               ) ||
                               hasQuestionAnswerOutput(item.tool.output)
-                            const rawInput = item.tool.input as {
-                              questions: (Question & { multiple?: boolean })[]
-                            }
-                            const normalizedQuestions = rawInput.questions.map(
-                              q => ({
-                                ...q,
-                                multiSelect:
-                                  q.multiSelect ?? q.multiple === true,
-                              })
-                            )
+                            const normalizedQuestions =
+                              normalizeQuestionMultipleField(
+                                (getAskUserQuestions(item.tool.input) ??
+                                  []) as (Question & { multiple?: boolean })[]
+                              )
                             return (
                               <AskUserQuestion
                                 toolCallId={item.tool.id}
@@ -770,11 +828,13 @@ export const MessageItem = memo(function MessageItem({
         !skipToolCalls && (
           <EditedFilesDisplay
             toolCalls={message.tool_calls}
-            onFileClick={onEditedFileClick}
+            worktreePath={worktreePath}
+            getMessages={getMessages}
+            messageIndex={messageIndex}
           />
         )}
 
-      {message.cancelled && (
+      {message.cancelled && !hideCancelledIndicator && (
         <span className="text-xs text-muted-foreground/50 italic">
           (cancelled)
         </span>
@@ -797,6 +857,7 @@ export const MessageItem = memo(function MessageItem({
               <TooltipTrigger asChild>
                 <button
                   type="button"
+                  aria-label="Copy message to input"
                   onClick={handleCopyToInput}
                   className="shrink-0 mt-2 p-1 rounded cursor-pointer text-muted-foreground/0 [@media(pointer:coarse)]:text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50 group-hover:text-muted-foreground/50 transition-colors"
                 >

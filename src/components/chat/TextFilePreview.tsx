@@ -164,7 +164,7 @@ export function TextFilePreview({
                     type="button"
                     aria-label={`Remove ${textFile.filename}`}
                     onClick={e => handleRemove(e, textFile)}
-                    className="absolute -top-1.5 -right-1.5 p-0.5 bg-destructive text-destructive-foreground rounded-full opacity-100 transition-opacity shadow-sm hover:bg-destructive/90 z-10"
+                    className="absolute -top-1.5 -right-1.5 p-0.5 bg-destructive text-white rounded-full opacity-100 transition-opacity shadow-sm hover:bg-destructive/90 z-10"
                   >
                     <X className="h-3 w-3" />
                   </button>

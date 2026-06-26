@@ -5,7 +5,12 @@
  * the embedded Codex CLI binary.
  */
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query'
 import { invoke, useWsConnectionStatus } from '@/lib/transport'
 import { listen } from '@/lib/transport'
 import { toast } from 'sonner'
@@ -167,6 +172,44 @@ export function useCodexUsage(options?: { enabled?: boolean }) {
     gcTime: 1000 * 60 * 10,
     refetchInterval: query => getUsageRefetchInterval(query.state.data),
   })
+}
+
+/**
+ * Subscribe to live Codex app-server rate-limit updates and seed the existing
+ * usage query cache with the normalized snapshot emitted by the backend.
+ */
+export async function installCodexUsageUpdateListener(
+  queryClient: QueryClient
+): Promise<() => void> {
+  return listen<CodexUsageSnapshot>('codex-cli:usage-updated', event => {
+    queryClient.setQueryData(codexCliQueryKeys.usage(), event.payload)
+  })
+}
+
+export function useCodexUsageUpdateListener() {
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    let cleanup: (() => void) | null = null
+    let cancelled = false
+
+    installCodexUsageUpdateListener(queryClient)
+      .then(unlisten => {
+        if (cancelled) {
+          unlisten()
+          return
+        }
+        cleanup = unlisten
+      })
+      .catch(error => {
+        logger.warn('Failed to subscribe to Codex usage updates', { error })
+      })
+
+    return () => {
+      cancelled = true
+      cleanup?.()
+    }
+  }, [queryClient])
 }
 
 /**

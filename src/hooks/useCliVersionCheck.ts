@@ -36,6 +36,12 @@ import {
   opencodeCliQueryKeys,
 } from '@/services/opencode-cli'
 import {
+  usePiCliStatus,
+  useAvailablePiVersions,
+  usePiPathDetection,
+  piCliQueryKeys,
+} from '@/services/pi-cli'
+import {
   useCodeRabbitCliStatus,
   useAvailableCodeRabbitVersions,
   useCodeRabbitPathDetection,
@@ -66,6 +72,7 @@ const JEAN_INSTALL_COMMANDS: Record<CliType, string> = {
   claude: 'install_claude_cli',
   codex: 'install_codex_cli',
   opencode: 'install_opencode_cli',
+  pi: 'install_pi_cli',
   gh: 'install_gh_cli',
   coderabbit: 'install_coderabbit_cli',
 }
@@ -74,6 +81,7 @@ const CLI_QUERY_KEY_GETTERS: Record<CliType, () => readonly unknown[]> = {
   claude: () => claudeCliQueryKeys.all,
   codex: () => codexCliQueryKeys.all,
   opencode: () => opencodeCliQueryKeys.all,
+  pi: () => piCliQueryKeys.all,
   gh: () => ghCliQueryKeys.all,
   coderabbit: () => coderabbitCliQueryKeys.all,
 }
@@ -140,6 +148,7 @@ export function useCliVersionCheck() {
   const { data: opencodePathInfo } = useOpencodePathDetection({
     enabled: shouldCheck,
   })
+  const { data: piPathInfo } = usePiPathDetection({ enabled: shouldCheck })
   const { data: coderabbitPathInfo } = useCodeRabbitPathDetection({
     enabled: shouldCheck,
   })
@@ -164,6 +173,9 @@ export function useCliVersionCheck() {
   })
   const { data: opencodeStatus, isLoading: opencodeLoading } =
     useOpencodeCliStatus({ enabled: shouldCheck && versionCheckReady })
+  const { data: piStatus, isLoading: piLoading } = usePiCliStatus({
+    enabled: shouldCheck && versionCheckReady,
+  })
   const { data: coderabbitStatus, isLoading: coderabbitLoading } =
     useCodeRabbitCliStatus({ enabled: shouldCheck && versionCheckReady })
   const { data: claudeVersions, isLoading: claudeVersionsLoading } =
@@ -174,6 +186,8 @@ export function useCliVersionCheck() {
     useAvailableCodexVersions({ enabled: shouldCheck && versionCheckReady })
   const { data: opencodeVersions, isLoading: opencodeVersionsLoading } =
     useAvailableOpencodeVersions({ enabled: shouldCheck && versionCheckReady })
+  const { data: piVersions, isLoading: piVersionsLoading } =
+    useAvailablePiVersions({ enabled: shouldCheck && versionCheckReady })
   const { data: coderabbitVersions, isLoading: coderabbitVersionsLoading } =
     useAvailableCodeRabbitVersions({
       enabled: shouldCheck && versionCheckReady,
@@ -191,11 +205,13 @@ export function useCliVersionCheck() {
       ghLoading ||
       codexLoading ||
       opencodeLoading ||
+      piLoading ||
       coderabbitLoading ||
       claudeVersionsLoading ||
       ghVersionsLoading ||
       codexVersionsLoading ||
       opencodeVersionsLoading ||
+      piVersionsLoading ||
       coderabbitVersionsLoading ||
       preferencesLoading
     if (isLoading) return
@@ -219,6 +235,7 @@ export function useCliVersionCheck() {
       opencodePathInfo,
       preferences?.opencode_cli_source
     )
+    const pi = resolveCliInfo(piStatus, piPathInfo, preferences?.pi_cli_source)
     const coderabbit = resolveCliInfo(
       coderabbitStatus,
       coderabbitPathInfo,
@@ -234,6 +251,7 @@ export function useCliVersionCheck() {
       { type: 'gh', info: gh, versions: ghVersions },
       { type: 'codex', info: codex, versions: codexVersions },
       { type: 'opencode', info: opencode, versions: opencodeVersions },
+      { type: 'pi', info: pi, versions: piVersions },
       { type: 'coderabbit', info: coderabbit, versions: coderabbitVersions },
     ]
 
@@ -287,32 +305,38 @@ export function useCliVersionCheck() {
     ghStatus,
     codexStatus,
     opencodeStatus,
+    piStatus,
     coderabbitStatus,
     claudePathInfo,
     ghPathInfo,
     codexPathInfo,
     opencodePathInfo,
+    piPathInfo,
     coderabbitPathInfo,
     claudeVersions,
     ghVersions,
     codexVersions,
     opencodeVersions,
+    piVersions,
     coderabbitVersions,
     claudeLoading,
     ghLoading,
     codexLoading,
     opencodeLoading,
+    piLoading,
     coderabbitLoading,
     claudeVersionsLoading,
     ghVersionsLoading,
     codexVersionsLoading,
     opencodeVersionsLoading,
+    piVersionsLoading,
     coderabbitVersionsLoading,
     preferencesLoading,
     preferences?.auto_update_ai_backends,
     preferences?.claude_cli_source,
     preferences?.codex_cli_source,
     preferences?.opencode_cli_source,
+    preferences?.pi_cli_source,
     preferences?.gh_cli_source,
     preferences?.coderabbit_cli_source,
     queryClient,
@@ -328,6 +352,7 @@ export function useCliVersionCheck() {
         queryClient.invalidateQueries({ queryKey: ghCliQueryKeys.all })
         queryClient.invalidateQueries({ queryKey: codexCliQueryKeys.all })
         queryClient.invalidateQueries({ queryKey: opencodeCliQueryKeys.all })
+        queryClient.invalidateQueries({ queryKey: piCliQueryKeys.all })
         queryClient.invalidateQueries({
           queryKey: coderabbitCliQueryKeys.all,
         })

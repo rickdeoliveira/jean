@@ -190,13 +190,13 @@ export function WorktreeDropdownMenu({
             New Session
           </DropdownMenuItem>
 
-          {isNativeApp() && runScripts.length === 1 && (
+          {runScripts.length === 1 && (
             <DropdownMenuItem onClick={handleRun}>
               <Play className="mr-2 h-4 w-4" />
               Run
             </DropdownMenuItem>
           )}
-          {isNativeApp() && runScripts.length > 1 && (
+          {runScripts.length > 1 && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <Play className="mr-4 h-4 w-4" />
@@ -357,7 +357,7 @@ export function WorktreeDropdownMenu({
             <AlertDialogAction
               autoFocus
               onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-destructive/90"
             >
               Delete
               <kbd className="ml-1.5 text-xs opacity-70">↵</kbd>

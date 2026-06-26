@@ -1,9 +1,11 @@
-import type { ToolCall, ContentBlock, Todo, PlanToolInput } from '@/types/chat'
+import type { ToolCall, ContentBlock, Todo, PlanToolInput, Question } from '@/types/chat'
 import {
   isTodoWrite,
   isCollabToolCall,
   isPlanToolCall,
   isAskUserQuestion,
+  getAskUserQuestions,
+  normalizeQuestionMultipleField,
   normalizeCodexQuestions,
 } from '@/types/chat'
 
@@ -125,6 +127,7 @@ export type TimelineItem =
   | { type: 'askUserQuestion'; tool: ToolCall; introText?: string; key: string }
   | { type: 'enterPlanMode'; tool: ToolCall; key: string }
   | { type: 'exitPlanMode'; tool: ToolCall; key: string }
+  | { type: 'userInput'; texts: string[]; key: string }
   | { type: 'unknown'; rawType: string; rawData: unknown; key: string }
 
 export interface ResolvedPlanContent {
@@ -264,8 +267,11 @@ export function buildTimeline(
   // This respects the actual output sequence - text blocks indicate Task completion
   let currentTaskId: string | null = null
   for (const block of normalizedBlocks) {
-    if (block.type === 'text' && block.text.trim()) {
-      // Text breaks the Task context - the agent has returned
+    if (
+      (block.type === 'text' && block.text.trim()) ||
+      block.type === 'user_input'
+    ) {
+      // Text (or an injected user message) breaks the Task context
       currentTaskId = null
     } else if (block.type === 'tool_use') {
       const tool = toolCallMap.get(block.tool_call_id)
@@ -315,6 +321,21 @@ export function buildTimeline(
         result.push({ type: 'text', text: block.text, key: `text-${i}` })
         lastTextIndex = result.length - 1
       }
+    } else if (block.type === 'user_input') {
+      // User text injected mid-turn (Codex turn/steer) — always rendered.
+      // Consecutive steered prompts merge into one connected group.
+      if (block.text.trim()) {
+        const last = result[result.length - 1]
+        if (last && last.type === 'userInput') {
+          last.texts.push(block.text)
+        } else {
+          result.push({
+            type: 'userInput',
+            texts: [block.text],
+            key: `input-${i}`,
+          })
+        }
+      }
     } else if (block.type === 'tool_use') {
       // tool_use block
       const toolCall = toolCallMap.get(block.tool_call_id)
@@ -338,17 +359,18 @@ export function buildTimeline(
           }
         }
 
-        const questionToolCall =
-          toolCall.name === 'request_user_input'
-            ? {
-                ...toolCall,
-                input: {
-                  questions: normalizeCodexQuestions(
-                    (toolCall.input as { questions: unknown[] }).questions
+        const rawQuestions = getAskUserQuestions(toolCall.input) ?? []
+        const questionToolCall = {
+          ...toolCall,
+          input: {
+            questions:
+              toolCall.name === 'request_user_input'
+                ? normalizeCodexQuestions(rawQuestions)
+                : normalizeQuestionMultipleField(
+                    rawQuestions as (Question & { multiple?: boolean })[]
                   ),
-                },
-              }
-            : toolCall
+          },
+        }
 
         // Render inline in natural position (not at end)
         result.push({

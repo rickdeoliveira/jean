@@ -1,3 +1,29 @@
+#![allow(
+    dead_code,
+    clippy::cmp_owned,
+    clippy::derivable_impls,
+    clippy::explicit_counter_loop,
+    clippy::if_same_then_else,
+    clippy::into_iter_on_ref,
+    clippy::lines_filter_map_ok,
+    clippy::manual_flatten,
+    clippy::manual_is_multiple_of,
+    clippy::manual_map,
+    clippy::manual_range_patterns,
+    clippy::needless_question_mark,
+    clippy::nonminimal_bool,
+    clippy::redundant_closure,
+    clippy::redundant_closure_call,
+    clippy::result_large_err,
+    clippy::single_char_add_str,
+    clippy::single_match,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::unnecessary_cast,
+    clippy::unnecessary_map_or,
+    clippy::while_let_on_iterator
+)]
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,6 +34,7 @@ use tauri::{AppHandle, Emitter, Manager};
 #[cfg(target_os = "macos")]
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 
+mod auto_fix;
 mod background_tasks;
 mod browser;
 mod chat;
@@ -15,8 +42,10 @@ mod claude_cli;
 mod cli_update;
 mod coderabbit_cli;
 mod codex_cli;
+mod commandcode_cli;
 mod cursor_cli;
 mod gh_cli;
+mod grok_cli;
 pub mod http_server;
 pub mod jean_mcp_config;
 pub mod jean_mcp_core;
@@ -25,6 +54,7 @@ pub mod jean_mcp_stdio;
 mod opencode_cli;
 mod opencode_server;
 mod opinionated;
+mod pi_cli;
 mod platform;
 mod projects;
 mod terminal;
@@ -80,13 +110,35 @@ fn greet(name: &str) -> String {
     format!("Hello, {name}! You've been greeted from Rust!")
 }
 
+// ── WSL commands ────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_wsl_distros() -> Vec<String> {
+    platform::list_wsl_distros()
+}
+
+#[tauri::command]
+fn check_wsl_tool(distro: String, tool: String) -> bool {
+    platform::check_wsl_tool(&distro, &tool)
+}
+
+#[tauri::command]
+fn get_wsl_home_dir(distro: String) -> Result<String, String> {
+    platform::get_wsl_home_dir(&distro)
+}
+
+#[tauri::command]
+fn is_wsl_available() -> bool {
+    platform::is_wsl_available()
+}
+
 // Preferences data structure
 // Only contains settings that should be persisted to disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppPreferences {
     pub theme: String,
     #[serde(default = "default_model")]
-    pub selected_model: String, // Claude model: claude-opus-4-8[1m], claude-opus-4-7[1m], haiku
+    pub selected_model: String, // Claude model: claude-fable-5, claude-opus-4-8[1m], claude-opus-4-8, haiku
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String, // Thinking level: off, think, megathink, ultrathink
     #[serde(default = "default_effort_level")]
@@ -106,11 +158,11 @@ pub struct AppPreferences {
     #[serde(default = "default_auto_branch_naming")]
     pub auto_branch_naming: bool, // Automatically generate branch names from first message
     #[serde(default = "default_branch_naming_model")]
-    pub branch_naming_model: String, // Model for generating branch names: haiku, sonnet, claude-opus-4-8, claude-opus-4-7
+    pub branch_naming_model: String, // Model for generating branch names: haiku, sonnet, claude-fable-5, claude-opus-4-8, claude-opus-4-7
     #[serde(default = "default_auto_session_naming")]
     pub auto_session_naming: bool, // Automatically generate session names from first message
     #[serde(default = "default_session_naming_model")]
-    pub session_naming_model: String, // Model for generating session names: haiku, sonnet, claude-opus-4-8, claude-opus-4-7
+    pub session_naming_model: String, // Model for generating session names: haiku, sonnet, claude-fable-5, claude-opus-4-8, claude-opus-4-7
     #[serde(default = "default_font_size")]
     pub ui_font_size: u32, // Font size for UI text in pixels (10-24)
     #[serde(default = "default_font_size")]
@@ -135,6 +187,8 @@ pub struct AppPreferences {
     pub parallel_execution_prompt_enabled: bool, // Add system prompt to encourage parallel sub-agent execution
     #[serde(default = "default_compact_chat_view_enabled")]
     pub compact_chat_view_enabled: bool, // Collapse intermediate tool calls into single ticker line
+    #[serde(default = "default_auto_recaps_enabled")]
+    pub auto_recaps_enabled: bool, // Ask agents to end multi-step turns with a recap block
     #[serde(default)]
     pub magic_prompts: MagicPrompts, // Customizable prompts for AI-powered features
     #[serde(default)]
@@ -145,6 +199,8 @@ pub struct AppPreferences {
     pub magic_prompt_backends: MagicPromptBackends, // Per-prompt backend overrides (None = use project/global default_backend)
     #[serde(default)]
     pub magic_prompt_efforts: MagicPromptReasoningEfforts, // Per-prompt reasoning effort overrides
+    #[serde(default)]
+    pub magic_prompt_modes: MagicPromptModes, // Per-prompt execution modes for chat-style magic prompts
     #[serde(default)]
     pub magic_models_auto_initialized: bool, // Whether magic prompt models were auto-set based on installed backends
     #[serde(default = "default_file_edit_mode")]
@@ -212,7 +268,7 @@ pub struct AppPreferences {
     #[serde(default = "default_execution_mode")]
     pub default_execution_mode: String, // Default execution mode: "plan", "build", or "yolo"
     #[serde(default = "default_backend")]
-    pub default_backend: String, // Default CLI backend: "claude", "codex", "opencode", or "cursor"
+    pub default_backend: String, // Default CLI backend: "claude", "codex", "opencode", "cursor", "pi", or "commandcode"
     #[serde(default = "default_new_session_kind")]
     pub default_new_session_kind: String, // Default new session action: "chat", "terminal", or a CLI backend
     #[serde(default = "default_codex_model")]
@@ -221,12 +277,24 @@ pub struct AppPreferences {
     pub selected_opencode_model: String, // Default OpenCode model (provider/model)
     #[serde(default = "default_cursor_model")]
     pub selected_cursor_model: String, // Default Cursor model
+    #[serde(default = "default_pi_model")]
+    pub selected_pi_model: String, // Default PI model
+    #[serde(default = "default_commandcode_model")]
+    pub selected_commandcode_model: String, // Default Command Code model
+    #[serde(default = "default_grok_model")]
+    pub selected_grok_model: String, // Default Grok model
     #[serde(default = "default_codex_reasoning_effort")]
     pub default_codex_reasoning_effort: String, // Codex reasoning effort: low, medium, high, xhigh
     #[serde(default = "default_codex_goal_execution_mode")]
     pub codex_goal_execution_mode: String, // Codex /goal execution mode: build or yolo
     #[serde(default)]
     pub codex_multi_agent_enabled: bool, // Enable multi-agent collaboration (experimental)
+    #[serde(default = "default_codex_auto_steer")]
+    pub codex_auto_steer_enabled: bool, // Steer prompts into a running Codex turn instead of queueing (default: true)
+    #[serde(default = "default_opencode_auto_steer")]
+    pub opencode_auto_steer_enabled: bool, // Steer prompts into a running OpenCode session instead of queueing (default: true)
+    #[serde(default = "default_pi_auto_steer")]
+    pub pi_auto_steer_enabled: bool, // Steer prompts into a running PI turn instead of queueing (default: true)
     #[serde(default = "default_codex_max_agent_threads")]
     pub codex_max_agent_threads: u32, // Max concurrent agent threads (1-8)
     #[serde(default = "default_restore_last_session")]
@@ -257,8 +325,20 @@ pub struct AppPreferences {
     pub codex_cli_source: String, // Codex CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub opencode_cli_source: String, // OpenCode CLI source: "jean" (managed) or "path" (system PATH)
+    #[serde(default = "default_grok_cli_source")]
+    pub grok_cli_source: String, // Grok CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub gh_cli_source: String, // GitHub CLI source: "jean" (managed) or "path" (system PATH)
+    #[serde(default)]
+    pub wsl_mode_chosen: bool, // Whether WSL mode selection has been made (prevents re-asking)
+    #[serde(default)]
+    pub wsl_enabled: bool, // Route commands through WSL
+    #[serde(default)]
+    pub wsl_distro: String, // WSL distro name, e.g. "Ubuntu"
+    #[serde(default = "default_cli_source")]
+    pub pi_cli_source: String, // PI CLI source: "jean" (managed) or "path" (system PATH)
+    #[serde(default = "default_cli_source")]
+    pub commandcode_cli_source: String, // Command Code CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub coderabbit_cli_source: String, // CodeRabbit CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default)]
@@ -296,6 +376,18 @@ fn default_true() -> Option<bool> {
 }
 
 fn default_restore_last_session() -> bool {
+    true
+}
+
+fn default_codex_auto_steer() -> bool {
+    true
+}
+
+fn default_opencode_auto_steer() -> bool {
+    true
+}
+
+fn default_pi_auto_steer() -> bool {
     true
 }
 
@@ -368,11 +460,8 @@ fn default_model() -> String {
 
 fn migrate_default_claude_model(model: &str) -> Option<&'static str> {
     match model {
-        "claude-opus-4-8" => Some("claude-opus-4-8[1m]"),
-        "claude-opus-4-7" => Some("claude-opus-4-7[1m]"),
         "claude-opus-4-7[1m]" => Some("claude-opus-4-8[1m]"),
         "claude-opus-4-7[1m]-fast" => Some("claude-opus-4-8[1m]-fast"),
-        "claude-opus-4-6" => Some("claude-opus-4-6[1m]"),
         "claude-opus-4-6-fast" => Some("claude-opus-4-6[1m]-fast"),
         "sonnet" => Some("claude-sonnet-4-6[1m]"),
         _ => None,
@@ -462,6 +551,10 @@ fn default_compact_chat_view_enabled() -> bool {
     false // Disabled by default (experimental)
 }
 
+fn default_auto_recaps_enabled() -> bool {
+    true // Enabled by default
+}
+
 fn default_chrome_enabled() -> bool {
     true // Enabled by default
 }
@@ -522,6 +615,22 @@ fn default_opencode_model() -> String {
 
 fn default_cursor_model() -> String {
     "cursor/auto".to_string()
+}
+
+fn default_pi_model() -> String {
+    "pi/sonnet".to_string()
+}
+
+fn default_commandcode_model() -> String {
+    "commandcode/default".to_string()
+}
+
+fn default_grok_model() -> String {
+    "grok/grok-composer-2.5-fast".to_string()
+}
+
+fn default_grok_cli_source() -> String {
+    default_cli_source()
 }
 
 fn default_codex_reasoning_effort() -> String {
@@ -592,8 +701,8 @@ mod tests {
 
         assert!(prompt.contains("backend-native interactive question UI"));
         assert!(prompt.contains("Codex request_user_input"));
-        assert!(prompt.contains("after the user answers native `request_user_input`"));
-        assert!(prompt.contains("Every Codex plan-mode response"));
+        assert!(prompt.contains("when the current execution mode is plan: after the user answers native `request_user_input`"));
+        assert!(prompt.contains("Every Codex response that contains or revises a plan while the current execution mode is plan"));
         assert!(prompt.contains("Claude AskUserQuestion"));
         assert!(prompt.contains("OpenCode question"));
         assert!(prompt.contains("Use a plain-text Unresolved Questions section only"));
@@ -608,22 +717,33 @@ mod tests {
 
     #[test]
     fn resolve_http_server_bind_host_prefers_explicit_host() {
-        let mut prefs = AppPreferences::default();
-        prefs.http_server_bind_host = Some(" 100.110.76.47 ".to_string());
-        prefs.http_server_localhost_only = true;
+        let prefs = AppPreferences {
+            http_server_bind_host: Some(" 100.110.76.47 ".to_string()),
+            http_server_localhost_only: true,
+            ..Default::default()
+        };
 
         assert_eq!(resolve_http_server_bind_host(&prefs), "100.110.76.47");
     }
 
     #[test]
     fn resolve_http_server_bind_host_falls_back_to_legacy_boolean() {
-        let mut prefs = AppPreferences::default();
-        prefs.http_server_bind_host = None;
-        prefs.http_server_localhost_only = true;
+        let mut prefs = AppPreferences {
+            http_server_bind_host: None,
+            http_server_localhost_only: true,
+            ..Default::default()
+        };
         assert_eq!(resolve_http_server_bind_host(&prefs), "127.0.0.1");
 
         prefs.http_server_localhost_only = false;
         assert_eq!(resolve_http_server_bind_host(&prefs), "0.0.0.0");
+    }
+
+    #[test]
+    fn migrate_default_claude_model_keeps_standard_non_1m_models() {
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-8"), None);
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-7"), None);
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-6"), None);
     }
 
     #[test]
@@ -720,6 +840,13 @@ mod tests {
                 "review_comments_effort": "medium",
             }),
         );
+        object.insert(
+            "magic_prompt_modes".to_string(),
+            json!({
+                "investigate_issue_mode": "yolo",
+                "review_comments_mode": "plan"
+            }),
+        );
 
         let prefs: AppPreferences = serde_json::from_value(prefs_json).unwrap();
 
@@ -742,6 +869,8 @@ mod tests {
             prefs.magic_prompt_efforts.review_comments_effort.as_deref(),
             Some("medium")
         );
+        assert_eq!(prefs.magic_prompt_modes.investigate_issue_mode, "yolo");
+        assert_eq!(prefs.magic_prompt_modes.review_comments_mode, "plan");
     }
 }
 
@@ -794,6 +923,8 @@ pub struct MagicPrompts {
     pub parallel_execution: Option<String>,
     #[serde(default)]
     pub global_system_prompt: Option<String>,
+    #[serde(default)]
+    pub provider_switch_handoff: Option<String>,
     #[serde(default)]
     pub investigate_security_alert: Option<String>,
     #[serde(default)]
@@ -912,8 +1043,22 @@ fn default_pr_content_prompt() -> String {
         .to_string()
 }
 
-fn default_commit_message_prompt() -> String {
-    r#"<task>Generate a commit message for the following changes</task>
+fn legacy_commit_message_prompts() -> [&'static str; 2] {
+    [
+        "Generate a conventional commit message for these staged changes.
+
+Files changed:
+{diff_stat}
+
+Git status:
+{status}
+
+Diff:
+{diff}
+
+Recent commits (style reference):
+{recent_commits}",
+        r#"<task>Generate a commit message for the following changes</task>
 
 <git_status>
 {status}
@@ -929,7 +1074,34 @@ fn default_commit_message_prompt() -> String {
 
 <remote_info>
 {remote_info}
-</remote_info>"#
+</remote_info>"#,
+    ]
+}
+
+fn default_commit_message_prompt() -> String {
+    r#"Generate a conventional commit message for these staged changes.
+
+Rules:
+- Output only the commit message text.
+- Describe the actual staged code changes only.
+- Base the subject on the staged diff and file summary, not on recent commits, repository instructions, agent skills, or this prompt.
+- Do not describe prompt text, commit-message guidance, instructions, inspection, skills, or the act of generating a commit message.
+- Avoid vague/meta subjects like "update files", "inspect changes", "inspect staged changes", "inspect commit-message skill", "generate commit message", "adjust code", or "misc changes".
+- Use a specific Conventional Commits subject: type(optional-scope): concrete behavior changed.
+- First line must be 72 characters or fewer.
+- If prompt/config files changed, name the user-facing behavior affected, not "guidance" or "prompt".
+
+Files changed:
+{diff_stat}
+
+Git status:
+{status}
+
+Staged diff:
+{diff}
+
+Recent commits (style reference only — do not summarize these commits):
+{recent_commits}"#
         .to_string()
 }
 
@@ -1125,7 +1297,7 @@ Investigate the loaded security {advisoryWord} ({advisoryRefs})
         .to_string()
 }
 
-fn default_investigate_linear_issue_prompt() -> String {
+pub(crate) fn default_investigate_linear_issue_prompt() -> String {
     r#"<task>
 
 Investigate the loaded Linear {linearWord} ({linearRefs})
@@ -1254,6 +1426,11 @@ Address the following review comments from PR #{prNumber}
 3. Make the requested changes to address each comment
 4. If a comment is unclear or you disagree with it, explain your reasoning
 5. After making changes, briefly summarize what you changed for each comment
+6. After the requested changes are implemented and verified, resolve each matching GitHub PR review conversation
+   - Look for unresolved review threads from coderabbitai when the comment came from CodeRabbit
+   - Match threads by PR #{prNumber}, file path, line number, reviewer, and comment body
+   - Use GitHub GraphQL mutation resolveReviewThread on the matching PullRequestReviewThread
+   - Do not resolve a thread if you cannot complete or verify the fix
 
 </instructions>
 
@@ -1280,16 +1457,16 @@ When specifying subagent_type for Task tool calls, always use the fully qualifie
 }
 
 fn default_global_system_prompt() -> String {
-    r#"### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
+    r#"### 1. Planning Guidance
+- For non-trivial tasks (3+ steps or architectural decisions), prefer planning before implementation when the current execution mode has not already authorized execution.
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps, not just building
+- Use plan mode for verification steps when the current execution mode is plan; in build/yolo, verify directly after implementing.
 - Write detailed specs upfront to reduce ambiguity
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
-- In planning mode, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
-- For unresolved questions in plan mode, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
-- For Codex specifically: after the user answers native `request_user_input`/open questions in plan mode, immediately call `update_plan`/emit `CodexPlan` again with the revised plan before any implementation.
-- Every Codex plan-mode response that contains or revises a plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.
+- When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
+- For Codex specifically, when the current execution mode is plan: after the user answers native `request_user_input`/open questions, immediately call `update_plan`/emit `CodexPlan` again with the revised plan before any implementation.
+- Every Codex response that contains or revises a plan while the current execution mode is plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.
 - Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
 
 ### 2. Documentation First
@@ -1351,6 +1528,22 @@ fn default_global_system_prompt() -> String {
 ## Important!
 
 - After each finished task, please write a few bullet points on how to test the changes."#
+        .to_string()
+}
+
+pub(crate) fn default_provider_switch_handoff_prompt() -> String {
+    r#"You are continuing a Jean chat session after the user switched AI backends.
+
+Jean-local history is the source of truth because provider-owned server history may be incomplete after backend switches.
+
+Previous backend: {previous_backend}
+Current backend: {current_backend}
+
+Use the Jean-local history below to reconstruct context before answering the user's latest message. Do not mention this hidden handoff unless it is directly relevant.
+
+<jean_local_history>
+{history}
+</jean_local_history>"#
         .to_string()
 }
 
@@ -1453,11 +1646,25 @@ pub fn is_cursor_model(model: &str) -> bool {
     model.starts_with("cursor/")
 }
 
+/// Returns true if the given model string identifies a PI model.
+/// PI model IDs are prefixed with "pi/" (e.g. "pi/sonnet").
+pub fn is_pi_model(model: &str) -> bool {
+    model.starts_with("pi/")
+}
+
+/// Returns true if the given model string identifies a Grok model.
+/// Grok model IDs are prefixed with "grok/" (e.g. "grok/grok-composer-2.5-fast").
+pub fn is_grok_model(model: &str) -> bool {
+    model.starts_with("grok/")
+}
+
 /// Returns true if the given model string identifies a Codex model.
 /// Codex model IDs contain "codex" or start with "gpt-", but NOT OpenCode models.
 pub fn is_codex_model(model: &str) -> bool {
     !is_opencode_model(model)
         && !is_cursor_model(model)
+        && !is_pi_model(model)
+        && !is_grok_model(model)
         && (model.contains("codex") || model.starts_with("gpt-"))
 }
 
@@ -1560,12 +1767,56 @@ pub struct MagicPromptReasoningEfforts {
     pub review_comments_effort: Option<String>,
 }
 
+fn default_magic_prompt_plan_mode() -> String {
+    "plan".to_string()
+}
+
+fn default_magic_prompt_yolo_mode() -> String {
+    "yolo".to_string()
+}
+
+/// Per-prompt execution mode overrides for magic prompts that send chat turns
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MagicPromptModes {
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_issue_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_pr_mode: String,
+    #[serde(default = "default_magic_prompt_yolo_mode")]
+    pub investigate_workflow_run_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_security_alert_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_advisory_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_linear_issue_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub review_comments_mode: String,
+    #[serde(default = "default_magic_prompt_yolo_mode")]
+    pub resolve_conflicts_mode: String,
+}
+
+impl Default for MagicPromptModes {
+    fn default() -> Self {
+        Self {
+            investigate_issue_mode: default_magic_prompt_plan_mode(),
+            investigate_pr_mode: default_magic_prompt_plan_mode(),
+            investigate_workflow_run_mode: default_magic_prompt_yolo_mode(),
+            investigate_security_alert_mode: default_magic_prompt_plan_mode(),
+            investigate_advisory_mode: default_magic_prompt_plan_mode(),
+            investigate_linear_issue_mode: default_magic_prompt_plan_mode(),
+            review_comments_mode: default_magic_prompt_plan_mode(),
+            resolve_conflicts_mode: default_magic_prompt_yolo_mode(),
+        }
+    }
+}
+
 impl MagicPrompts {
     /// Migrate prompts that match the current default to None.
     /// This ensures users who never customized a prompt get auto-updated defaults.
     fn migrate_defaults(&mut self) {
         type DefaultEntry<'a> = (fn() -> String, &'a mut Option<String>);
-        let defaults: [DefaultEntry; 16] = [
+        let defaults: [DefaultEntry; 17] = [
             (
                 default_investigate_issue_prompt,
                 &mut self.investigate_issue,
@@ -1591,6 +1842,10 @@ impl MagicPrompts {
             ),
             (default_global_system_prompt, &mut self.global_system_prompt),
             (
+                default_provider_switch_handoff_prompt,
+                &mut self.provider_switch_handoff,
+            ),
+            (
                 default_investigate_security_alert_prompt,
                 &mut self.investigate_security_alert,
             ),
@@ -1610,6 +1865,15 @@ impl MagicPrompts {
                 if value == &default_fn() {
                     *field = None;
                 }
+            }
+        }
+
+        if let Some(ref value) = self.commit_message {
+            if legacy_commit_message_prompts()
+                .iter()
+                .any(|legacy| value == legacy)
+            {
+                self.commit_message = None;
             }
         }
     }
@@ -1643,11 +1907,13 @@ impl Default for AppPreferences {
             syntax_theme_light: default_syntax_theme_light(),
             parallel_execution_prompt_enabled: default_parallel_execution_prompt_enabled(),
             compact_chat_view_enabled: default_compact_chat_view_enabled(),
+            auto_recaps_enabled: default_auto_recaps_enabled(),
             magic_prompts: MagicPrompts::default(),
             magic_prompt_models: MagicPromptModels::default(),
             magic_prompt_providers: MagicPromptProviders::default(),
             magic_prompt_backends: MagicPromptBackends::default(),
             magic_prompt_efforts: MagicPromptReasoningEfforts::default(),
+            magic_prompt_modes: MagicPromptModes::default(),
             magic_models_auto_initialized: false,
             file_edit_mode: default_file_edit_mode(),
             ai_language: String::new(),
@@ -1687,9 +1953,15 @@ impl Default for AppPreferences {
             selected_codex_model: default_codex_model(),
             selected_opencode_model: default_opencode_model(),
             selected_cursor_model: default_cursor_model(),
+            selected_pi_model: default_pi_model(),
+            selected_commandcode_model: default_commandcode_model(),
+            selected_grok_model: default_grok_model(),
             default_codex_reasoning_effort: default_codex_reasoning_effort(),
             codex_goal_execution_mode: default_codex_goal_execution_mode(),
             codex_multi_agent_enabled: false,
+            codex_auto_steer_enabled: default_codex_auto_steer(),
+            opencode_auto_steer_enabled: default_opencode_auto_steer(),
+            pi_auto_steer_enabled: default_pi_auto_steer(),
             codex_max_agent_threads: default_codex_max_agent_threads(),
             restore_last_session: true,
             close_original_on_clear_context: true,
@@ -1705,7 +1977,13 @@ impl Default for AppPreferences {
             claude_cli_source: default_cli_source(),
             codex_cli_source: default_cli_source(),
             opencode_cli_source: default_cli_source(),
+            grok_cli_source: default_grok_cli_source(),
             gh_cli_source: default_cli_source(),
+            wsl_mode_chosen: false,
+            wsl_enabled: false,
+            wsl_distro: String::new(),
+            pi_cli_source: default_cli_source(),
+            commandcode_cli_source: default_cli_source(),
             coderabbit_cli_source: default_cli_source(),
             expand_tool_calls_by_default: false,
             window_vibrancy: false,
@@ -1787,6 +2065,34 @@ pub struct UIState {
     #[serde(default)]
     pub modal_terminal_height: Option<f64>,
 
+    /// Terminal instances persisted per worktree for web refresh reconnect
+    #[serde(default)]
+    pub terminal_instances: std::collections::HashMap<String, Vec<TerminalInstancePersisted>>,
+
+    /// Active terminal id per worktree
+    #[serde(default)]
+    pub terminal_active_ids: std::collections::HashMap<String, String>,
+
+    /// Terminal panel open state per worktree
+    #[serde(default)]
+    pub terminal_panel_open: std::collections::HashMap<String, bool>,
+
+    /// Global terminal panel expanded/collapsed state
+    #[serde(default)]
+    pub terminal_visible: Option<bool>,
+
+    /// Terminal panel height percentage
+    #[serde(default)]
+    pub terminal_height: Option<f64>,
+
+    /// Session terminal id per session for full-screen terminal surfaces
+    #[serde(default)]
+    pub session_terminal_ids: std::collections::HashMap<String, String>,
+
+    /// Session primary surface per session
+    #[serde(default)]
+    pub session_primary_surface: std::collections::HashMap<String, String>,
+
     /// Browser tabs persisted per worktree (worktreeId → list of {id, url, title})
     #[serde(default)]
     pub browser_tabs: std::collections::HashMap<String, Vec<BrowserTabPersisted>>,
@@ -1859,6 +2165,18 @@ pub struct LastOpenedEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalInstancePersisted {
+    pub id: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub command_args: Option<Vec<String>>,
+    pub label: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserTabPersisted {
     pub id: String,
     pub url: String,
@@ -1870,6 +2188,8 @@ pub struct BrowserTabPersisted {
 pub struct ProjectCanvasSettings {
     #[serde(default)]
     pub worktree_sort_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_labels: Vec<crate::chat::types::LabelData>,
 }
 
 impl Default for UIState {
@@ -1890,6 +2210,13 @@ impl Default for UIState {
             modal_terminal_pinned: None,
             modal_terminal_width: None,
             modal_terminal_height: None,
+            terminal_instances: std::collections::HashMap::new(),
+            terminal_active_ids: std::collections::HashMap::new(),
+            terminal_panel_open: std::collections::HashMap::new(),
+            terminal_visible: None,
+            terminal_height: None,
+            session_terminal_ids: std::collections::HashMap::new(),
+            session_primary_surface: std::collections::HashMap::new(),
             browser_tabs: std::collections::HashMap::new(),
             browser_active_tab_ids: std::collections::HashMap::new(),
             browser_side_pane_open: std::collections::HashMap::new(),
@@ -2112,6 +2439,12 @@ async fn save_preferences(app: AppHandle, preferences: AppPreferences) -> Result
     })?;
 
     log::trace!("Successfully saved preferences to {prefs_path:?}");
+
+    // Keep WSL config cache in sync with saved preferences
+    platform::update_wsl_config(
+        prefs_for_disk.wsl_enabled,
+        prefs_for_disk.wsl_distro.clone(),
+    );
 
     schedule_jean_mcp_socket_sync(app.clone());
 
@@ -3153,6 +3486,69 @@ fn parse_cli_args() -> CliArgs {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(test)]
+mod magic_prompt_tests {
+    use super::*;
+
+    #[test]
+    fn migrate_defaults_clears_legacy_commit_message_prompt() {
+        let mut prompts = MagicPrompts {
+            commit_message: Some(
+                "Generate a conventional commit message for these staged changes.
+
+Files changed:
+{diff_stat}
+
+Git status:
+{status}
+
+Diff:
+{diff}
+
+Recent commits (style reference):
+{recent_commits}"
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+
+        prompts.migrate_defaults();
+
+        assert_eq!(prompts.commit_message, None);
+    }
+
+    #[test]
+    fn migrate_defaults_clears_legacy_xml_commit_message_prompt() {
+        let mut prompts = MagicPrompts {
+            commit_message: Some(
+                r#"<task>Generate a commit message for the following changes</task>
+
+<git_status>
+{status}
+</git_status>
+
+<staged_diff>
+{diff}
+</staged_diff>
+
+<recent_commits>
+{recent_commits}
+</recent_commits>
+
+<remote_info>
+{remote_info}
+</remote_info>"#
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+
+        prompts.migrate_defaults();
+
+        assert_eq!(prompts.commit_message, None);
+    }
+}
+
 pub fn run() {
     if std::env::args().any(|arg| arg == jean_mcp_core::JEAN_MCP_STDIO_ARG) {
         if let Err(e) = jean_mcp_stdio::run_stdio_server() {
@@ -3161,6 +3557,19 @@ pub fn run() {
         }
         return;
     }
+    if std::env::args().any(|arg| arg == chat::pi::PI_RPC_HOST_ARG) {
+        if let Err(e) = chat::pi::run_pi_rpc_host_from_args() {
+            eprintln!("Jean PI RPC host failed: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // Raise the open-file-descriptor soft limit to the hard limit. macOS GUI apps
+    // start with a low default (often 256); bulk git-status refresh across many
+    // worktrees plus child CLI spawns can exhaust it (EMFILE), silently breaking
+    // claude CLI runs. Must run before any subprocess work. No-op on Windows.
+    crate::platform::raise_fd_limit();
 
     let cli_args = parse_cli_args();
     let headless = cli_args.headless;
@@ -3308,6 +3717,128 @@ pub fn run() {
                 }
             }
 
+            // FIX: Handle OS file drops ourselves on Linux/WebKitGTK.
+            //
+            // The app runs with `dragDropEnabled: false` (so internal DOM drag &
+            // drop works for list/tree reordering). The trade-off on WebKitGTK is
+            // that dropping an OS file makes the webview handle it natively: on an
+            // editable field it inserts the path text, on a non-editable area it
+            // navigates the whole webview to that `file://` (blanking/locking the
+            // UI). DOM `preventDefault` does NOT cancel this (tauri-apps/tauri#12052),
+            // and Tauri's own native drag-drop is broken on Linux too (#9725).
+            //
+            // So we intercept at the GTK widget level: on `drag-drop` (mouse
+            // release) we CLAIM the drop (return true → WebKitGTK's editor/navigation
+            // does not run) and request the URI list ourselves; in
+            // `drag-data-received` we read the file paths + pointer position, stop the
+            // default handler, and forward them to the frontend, which routes each
+            // drop to a terminal (write the path into its pty) or the chat (attach
+            // the image). `drag-data-received` also fires during hover, so a flag set
+            // in `drag-drop` gates it to genuine drops only.
+            #[cfg(target_os = "linux")]
+            if !headless {
+                if let Some(window) = app.get_webview_window("main") {
+                    let drop_app = app.handle().clone();
+                    let installed = window.with_webview(move |webview| {
+                        use gtk::prelude::WidgetExt;
+                        use std::cell::Cell;
+                        use std::rc::Rc;
+                        use tauri::Emitter;
+                        use webkit2gtk::glib;
+                        use webkit2gtk::glib::object::ObjectExt;
+
+                        let wv: webkit2gtk::WebView = webview.inner();
+
+                        // WebKitGTK requests the drag data during hover (to validate
+                        // the target), so `drag-data-received` fires before release.
+                        // Only act on the ACTUAL drop: `drag-drop` (mouse release)
+                        // sets this flag and explicitly requests the data.
+                        let is_dropping = Rc::new(Cell::new(false));
+
+                        let drop_flag = is_dropping.clone();
+                        wv.connect_drag_drop(move |wv, ctx, _x, _y, time| {
+                            // Only claim OS file drops. WebKitGTK routes internal
+                            // DOM drag & drop (e.g. terminal-tab reordering, which
+                            // carries `text/plain`) through this same GTK signal;
+                            // returning true there short-circuits WebKit's default
+                            // handler, so the page never receives the `drop` event
+                            // and the reorder silently breaks. A real file drop is
+                            // the only drag that offers `text/uri-list`, so gate on
+                            // it and let everything else fall through to WebKit.
+                            let target = gtk::gdk::Atom::intern("text/uri-list");
+                            if !ctx.list_targets().contains(&target) {
+                                return false;
+                            }
+                            // Claim the drop (return true) so WebKitGTK's editor does
+                            // NOT insert the file path into editable fields, and
+                            // request the URI list ourselves → drag-data-received.
+                            drop_flag.set(true);
+                            wv.drag_get_data(ctx, &target, time);
+                            true
+                        });
+
+                        let recv_flag = is_dropping.clone();
+                        wv.connect_drag_data_received(
+                            move |wv, _ctx, _x, _y, data, _info, _time| {
+                                use gtk::gdk::prelude::SeatExt;
+                                use gtk::prelude::WidgetExt;
+
+                                // Ignore data requested during hover (not a real drop).
+                                if !recv_flag.replace(false) {
+                                    return;
+                                }
+                                // Stop WebKitGTK's default handler from loading the
+                                // dropped file (which blanks/locks the window).
+                                wv.stop_signal_emission_by_name("drag-data-received");
+
+                                // Convert file:// URIs to real paths (percent-decoded).
+                                let paths: Vec<String> = data
+                                    .uris()
+                                    .iter()
+                                    .filter_map(|uri| glib::filename_from_uri(uri).ok())
+                                    .map(|(path, _host)| {
+                                        path.to_string_lossy().into_owned()
+                                    })
+                                    .collect();
+                                if paths.is_empty() {
+                                    return;
+                                }
+
+                                // Drop position: query the pointer relative to the
+                                // webview's window at release time.
+                                let (x, y) = wv
+                                    .window()
+                                    .and_then(|win| {
+                                        wv.display().default_seat().and_then(|seat| {
+                                            seat.pointer().map(|pointer| {
+                                                let (_w, px, py, _mask) =
+                                                    win.device_position(&pointer);
+                                                (px, py)
+                                            })
+                                        })
+                                    })
+                                    .unwrap_or((0, 0));
+                                log::debug!("[file-drop] paths={paths:?} x={x} y={y}");
+                                if let Err(e) = drop_app.emit(
+                                    "linux-file-drop",
+                                    serde_json::json!({ "paths": paths, "x": x, "y": y }),
+                                ) {
+                                    log::warn!("[file-drop] emit failed: {e}");
+                                }
+                            },
+                        );
+                    });
+                    match installed {
+                        Ok(()) => log::debug!(
+                            "[file-drop] Installed Linux drag-data-received interceptor"
+                        ),
+                        Err(e) => {
+                            log::warn!("[file-drop] Failed to install interceptor: {e}")
+                        }
+                    }
+                }
+            }
+
             // Kill orphaned OpenCode server from a previous crash (if any).
             // Spawned async — cleanup involves blocking I/O (HTTP health check with
             // 1.2s timeout, process kill, 300ms sleep) that can delay startup by ~1.5s.
@@ -3385,6 +3916,34 @@ pub fn run() {
             }
 
             log::info!("Startup: projects loaded + asset scopes registered at {:?}", setup_start.elapsed());
+
+            // Initialize WSL config from preferences (Windows only — no-op on other platforms)
+            {
+                let prefs_handle = app.handle().clone();
+                match load_preferences_sync(&prefs_handle) {
+                    Ok(prefs) => {
+                        let distro = prefs.wsl_distro.trim().to_string();
+                        let wsl_enabled = prefs.wsl_enabled && !distro.is_empty();
+
+                        if prefs.wsl_enabled && distro.is_empty() {
+                            log::warn!(
+                                "WSL was enabled in preferences without a distro; disabling WSL routing until configured"
+                            );
+                        }
+
+                        platform::init_wsl_config(wsl_enabled, distro.clone());
+                        if wsl_enabled {
+                            log::info!("WSL mode enabled with distro: {distro}");
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to load preferences for WSL config init: {e}");
+                        platform::init_wsl_config(false, String::new());
+                    }
+                }
+            }
+
+            log::info!("Startup: WSL config initialized at {:?}", setup_start.elapsed());
 
             // Apply window vibrancy / opacity from saved preferences (macOS only).
             // The bundled tauri.conf.json sets `transparent: true` so vibrancy is
@@ -3550,6 +4109,7 @@ pub fn run() {
             let task_manager = background_tasks::BackgroundTaskManager::new(app.handle().clone());
             task_manager.start();
             app.manage(task_manager);
+            auto_fix::scheduler::start_auto_fix_scheduler(app.handle().clone());
             log::trace!("Background task manager initialized");
 
             // Initialize HTTP server infrastructure
@@ -3769,6 +4329,7 @@ pub fn run() {
             projects::list_cursor_skills,
             projects::list_plugin_skills,
             // GitHub issues commands
+            projects::list_github_labels,
             projects::list_github_issues,
             projects::search_github_issues,
             projects::get_github_issue,
@@ -3908,6 +4469,10 @@ pub fn run() {
             chat::dequeue_message,
             chat::remove_queued_message,
             chat::clear_message_queue,
+            chat::move_queued_message_front,
+            chat::steer_codex_turn,
+            chat::steer_opencode_turn,
+            chat::steer_pi_turn,
             chat::answer_opencode_question,
             // Chat commands - ScheduleWakeup support
             chat::cancel_session_wakeup,
@@ -3967,12 +4532,41 @@ pub fn run() {
             coderabbit_cli::install_coderabbit_cli,
             coderabbit_cli::uninstall_coderabbit_cli,
             coderabbit_cli::update_coderabbit_cli,
+            // Command Code CLI management commands
+            commandcode_cli::check_commandcode_cli_installed,
+            commandcode_cli::detect_commandcode_in_path,
+            commandcode_cli::check_commandcode_cli_auth,
+            commandcode_cli::list_commandcode_models,
+            commandcode_cli::get_available_commandcode_versions,
+            commandcode_cli::get_commandcode_install_command,
+            commandcode_cli::install_commandcode_cli,
+            commandcode_cli::uninstall_commandcode_cli,
+            commandcode_cli::update_commandcode_cli,
+            // PI CLI management commands
+            pi_cli::check_pi_cli_installed,
+            pi_cli::detect_pi_in_path,
+            pi_cli::check_pi_cli_auth,
+            pi_cli::list_pi_models,
+            pi_cli::get_available_pi_versions,
+            pi_cli::install_pi_cli,
+            pi_cli::uninstall_pi_cli,
             // Cursor CLI management commands
             cursor_cli::check_cursor_cli_installed,
             cursor_cli::detect_cursor_in_path,
             cursor_cli::check_cursor_cli_auth,
             cursor_cli::list_cursor_models,
             cursor_cli::get_cursor_install_command,
+            // Grok CLI management commands
+            grok_cli::check_grok_cli_installed,
+            grok_cli::detect_grok_in_path,
+            grok_cli::check_grok_cli_auth,
+            grok_cli::list_grok_models,
+            grok_cli::get_available_grok_versions,
+            grok_cli::get_grok_install_command,
+            grok_cli::install_grok_cli,
+            grok_cli::uninstall_grok_cli,
+            grok_cli::update_grok_cli,
+            grok_cli::login_grok_cli_device,
             // OpenCode CLI management commands
             opencode_cli::check_opencode_cli_installed,
             opencode_cli::detect_opencode_in_path,
@@ -4001,6 +4595,11 @@ pub fn run() {
             background_tasks::commands::set_remote_poll_interval,
             background_tasks::commands::get_remote_poll_interval,
             background_tasks::commands::trigger_immediate_remote_poll,
+            // WSL commands
+            list_wsl_distros,
+            check_wsl_tool,
+            get_wsl_home_dir,
+            is_wsl_available,
             // HTTP server commands
             start_http_server,
             stop_http_server,
@@ -4029,7 +4628,7 @@ pub fn run() {
                 eprintln!("[TERMINAL CLEANUP] Killed {killed} terminal(s)");
                 if has_running_sessions {
                     log::warn!(
-                        "RunEvent::Exit while sessions are running; skipping managed AI server shutdown"
+                        "RunEvent::Exit while sessions are running; skipping OpenCode shutdown"
                     );
                 } else {
                     match opencode_server::shutdown_managed_server() {
@@ -4037,8 +4636,10 @@ pub fn run() {
                         Ok(false) => {}
                         Err(e) => eprintln!("[OPENCODE CLEANUP] Failed during Exit: {e}"),
                     }
-                    chat::codex_server::shutdown_server();
                 }
+                // Safe with runs in flight: the detached codex app-server is
+                // preserved when incomplete Codex runs exist (Unix).
+                chat::codex_server::shutdown_server();
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 // In headless mode, prevent exit when window closes
@@ -4046,13 +4647,16 @@ pub fn run() {
                     api.prevent_exit();
                     return;
                 }
-                if chat::has_running_sessions() {
+                // Only block exit for sessions that would die with Jean
+                // (OpenCode, piped CLIs). Detached Claude processes and Codex
+                // app-server turns keep running and are recovered on relaunch.
+                if chat::has_nonsurvivable_running_sessions() {
                     api.prevent_exit();
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.hide();
                     }
                     log::info!(
-                        "Prevented app exit while sessions are running; hid main window instead"
+                        "Prevented app exit while non-survivable sessions are running; hid main window instead"
                     );
                     return;
                 }
@@ -4083,13 +4687,13 @@ pub fn run() {
                     if headless {
                         return;
                     }
-                    if chat::has_running_sessions() {
+                    if chat::has_nonsurvivable_running_sessions() {
                         api.prevent_close();
                         if let Some(window) = app_handle.get_webview_window(label) {
                             let _ = window.hide();
                         }
                         log::info!(
-                            "Prevented window close while sessions are running; hid {label} instead"
+                            "Prevented window close while non-survivable sessions are running; hid {label} instead"
                         );
                         return;
                     }

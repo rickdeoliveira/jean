@@ -2489,14 +2489,16 @@ dependencies = [
 
 [[package]]
 name = "jean"
-version = "0.1.53"
+version = "0.1.58"
 dependencies = [
  "arboard",
  "axum",
  "base64 0.22.1",
+ "chrono",
  "dirs 5.0.1",
  "flate2",
  "futures-util",
+ "gtk",
  "if-addrs",
  "ignore",
  "image",
@@ -2527,10 +2529,12 @@ dependencies = [
  "tauri-plugin-window-state",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "toml 0.8.2",
  "toml_edit 0.23.10+spec-1.0.0",
  "tower-http",
  "uuid",
+ "webkit2gtk",
  "which",
  "windows-sys 0.59.0",
  "zip 2.4.2",

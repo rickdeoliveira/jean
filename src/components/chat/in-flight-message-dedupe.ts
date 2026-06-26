@@ -123,11 +123,13 @@ export function dedupeInFlightAssistantMessage(
     options.streamingContentBlocks.length > 0 ||
     options.streamingToolCalls.length > 0
 
-  // Always hide trailing assistant during send — either streaming hasn't
-  // started yet (backend persisted early) or it matches the live stream.
+  // No live streaming state for this session (e.g. resumed after an app
+  // restart, or streaming buffers were cleared by a session switch). Keep a
+  // meaningful persisted snapshot visible — hiding it would blank the chat
+  // since there is no StreamingMessage content to take its place. Only hide
+  // empty placeholders (backend persisted the assistant early).
   if (!hasLiveStreaming) {
-    return lastMessage.id.startsWith('running-') ||
-      !hasMeaningfulPersistedPayload(lastMessage)
+    return !hasMeaningfulPersistedPayload(lastMessage)
       ? messages.slice(0, -1)
       : messages
   }

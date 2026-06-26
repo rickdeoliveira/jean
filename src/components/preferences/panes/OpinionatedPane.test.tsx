@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { render, screen, waitFor } from '@/test/test-utils'
+import { render, screen, waitFor, within } from '@/test/test-utils'
 import { invoke } from '@/lib/transport'
 import { OpinionatedPane } from './OpinionatedPane'
 
@@ -41,10 +41,13 @@ describe('OpinionatedPane', () => {
 
     await screen.findByRole('button', { name: /Superpowers/i })
 
-    const uninstallButtons = screen.getAllByRole('button', { name: /Uninstall/i })
-    const superpowersUninstall = uninstallButtons[1]
-    expect(superpowersUninstall).toBeDefined()
-    await user.click(superpowersUninstall!)
+    const superpowersLabel = screen.getByText('Superpowers')
+    const superpowersRow = superpowersLabel.closest('.rounded-lg')
+    if (!superpowersRow) throw new Error('Expected Superpowers row')
+    const superpowersUninstall = within(
+      superpowersRow as HTMLElement
+    ).getByRole('button', { name: /Uninstall/i })
+    await user.click(superpowersUninstall)
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('uninstall_opinionated_plugin', {

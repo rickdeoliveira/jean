@@ -1,26 +1,101 @@
 import { useMemo } from 'react'
-import {
-  getModelFastInfo,
-  type ClaudeModel,
-  type CustomCliProfile,
+import type {
+  ClaudeModel,
+  CliBackend,
+  CustomCliProfile,
 } from '@/types/preferences'
 import {
-  CODEX_MODEL_OPTIONS,
   CURSOR_MODEL_OPTIONS,
-  MODEL_OPTIONS,
+  COMMANDCODE_MODEL_OPTIONS,
+  GROK_MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
+  PI_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
+import { sortModelOptionsByRawModel } from '@/components/chat/toolbar/toolbar-utils'
+import {
+  getCatalogModelFastInfo,
+  getCatalogModelOptions,
+  useModelCatalog,
+} from '@/services/model-catalog'
+import { resolvePiDefaultModel } from '@/lib/session-defaults'
 
 interface UseToolbarDerivedStateArgs {
-  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor'
+  selectedBackend: CliBackend
   selectedProvider: string | null
   selectedModel: string
   opencodeModelOptions?: { value: string; label: string }[]
   cursorModelOptions?: { value: string; label: string }[]
+  piModelOptions?: { value: string; label: string }[]
+  commandcodeModelOptions?: { value: string; label: string }[]
+  grokModelOptions?: { value: string; label: string }[]
   customCliProfiles: CustomCliProfile[]
-  installedBackends?: ('claude' | 'codex' | 'opencode' | 'cursor')[]
-  availableMcpServers?: { name: string; disabled?: boolean }[]
+  installedBackends?: CliBackend[]
+  availableMcpServers?: { name: string; backend?: string; disabled?: boolean }[]
   enabledMcpServers?: string[]
+}
+
+export interface BackendModelSection {
+  backend: CliBackend
+  label: string
+  options: { value: string; label: string }[]
+}
+
+export function buildBackendModelSections({
+  installedBackends,
+  claudeModelOptions,
+  codexModelOptions,
+  opencodeModelOptions,
+  cursorModelOptions,
+  piModelOptions,
+  commandcodeModelOptions,
+  grokModelOptions,
+}: {
+  installedBackends: CliBackend[]
+  claudeModelOptions: { value: string; label: string }[]
+  codexModelOptions: { value: string; label: string }[]
+  opencodeModelOptions: { value: string; label: string }[]
+  cursorModelOptions: { value: string; label: string }[]
+  piModelOptions?: { value: string; label: string }[]
+  commandcodeModelOptions?: { value: string; label: string }[]
+  grokModelOptions?: { value: string; label: string }[]
+}): BackendModelSection[] {
+  const sections: BackendModelSection[] = []
+
+  for (const backend of installedBackends) {
+    if (backend === 'claude') {
+      sections.push({ backend, label: 'Claude', options: claudeModelOptions })
+    } else if (backend === 'codex') {
+      sections.push({ backend, label: 'Codex', options: codexModelOptions })
+    } else if (backend === 'opencode') {
+      sections.push({
+        backend,
+        label: 'OpenCode',
+        options: opencodeModelOptions,
+      })
+    } else if (backend === 'cursor') {
+      sections.push({ backend, label: 'Cursor', options: cursorModelOptions })
+    } else if (backend === 'pi') {
+      sections.push({
+        backend,
+        label: 'PI',
+        options: piModelOptions ?? PI_MODEL_OPTIONS,
+      })
+    } else if (backend === 'commandcode') {
+      sections.push({
+        backend,
+        label: 'Command Code',
+        options: commandcodeModelOptions ?? COMMANDCODE_MODEL_OPTIONS,
+      })
+    } else if (backend === 'grok') {
+      sections.push({
+        backend,
+        label: 'Grok (Beta)',
+        options: grokModelOptions ?? GROK_MODEL_OPTIONS,
+      })
+    }
+  }
+
+  return sections
 }
 
 export function useToolbarDerivedState({
@@ -29,25 +104,47 @@ export function useToolbarDerivedState({
   selectedModel,
   opencodeModelOptions,
   cursorModelOptions,
+  piModelOptions,
+  commandcodeModelOptions,
   customCliProfiles,
-  installedBackends = ['claude', 'codex', 'opencode', 'cursor'],
+  grokModelOptions,
+  installedBackends = [
+    'claude',
+    'codex',
+    'opencode',
+    'cursor',
+    'pi',
+    'commandcode',
+    'grok',
+  ],
   availableMcpServers = [],
   enabledMcpServers = [],
 }: UseToolbarDerivedStateArgs) {
   const isCodex = selectedBackend === 'codex'
   const isOpencode = selectedBackend === 'opencode'
   const isCursor = selectedBackend === 'cursor'
+  const isPi = selectedBackend === 'pi'
+  const isCommandCode = selectedBackend === 'commandcode'
+  const isGrok = selectedBackend === 'grok'
+
+  const { data: modelCatalog } = useModelCatalog()
 
   const activeMcpCount = useMemo(() => {
-    const availableNames = new Set(
-      availableMcpServers.filter(s => !s.disabled).map(s => s.name)
-    )
+    const availableNames = new Set<string>()
+    for (const server of availableMcpServers) {
+      if (server.disabled) continue
+      availableNames.add(server.name)
+      availableNames.add(`${server.backend || 'claude'}:${server.name}`)
+    }
     return enabledMcpServers.filter(name => availableNames.has(name)).length
   }, [availableMcpServers, enabledMcpServers])
 
   const claudeModelOptions = useMemo(() => {
     if (!selectedProvider || selectedProvider === '__anthropic__') {
-      return MODEL_OPTIONS
+      return getCatalogModelOptions(modelCatalog, 'claude').map(option => ({
+        ...option,
+        label: option.label.replace(/^Claude\s+/, ''),
+      }))
     }
 
     const profile = customCliProfiles.find(p => p.name === selectedProvider)
@@ -75,79 +172,87 @@ export function useToolbarDerivedState({
       { value: 'sonnet' as ClaudeModel, label: `Sonnet${suffix(sonnetModel)}` },
       { value: 'haiku' as ClaudeModel, label: `Haiku${suffix(haikuModel)}` },
     ]
-  }, [selectedProvider, customCliProfiles])
+  }, [selectedProvider, customCliProfiles, modelCatalog])
 
-  const codexModelOptions = CODEX_MODEL_OPTIONS as {
-    value: string
-    label: string
-  }[]
-  const resolvedOpencodeModelOptions =
+  const codexModelOptions = sortModelOptionsByRawModel(
+    getCatalogModelOptions(modelCatalog, 'codex')
+  )
+  const resolvedOpencodeModelOptions = sortModelOptionsByRawModel(
     opencodeModelOptions ?? OPENCODE_MODEL_OPTIONS
-  const resolvedCursorModelOptions = cursorModelOptions ?? CURSOR_MODEL_OPTIONS
+  )
+  const resolvedCursorModelOptions = sortModelOptionsByRawModel(
+    cursorModelOptions ?? CURSOR_MODEL_OPTIONS
+  )
+  const resolvedPiModelOptions = sortModelOptionsByRawModel(
+    piModelOptions ?? PI_MODEL_OPTIONS
+  )
+  const resolvedCommandCodeModelOptions =
+    commandcodeModelOptions ?? COMMANDCODE_MODEL_OPTIONS
+  const resolvedGrokModelOptions = grokModelOptions ?? GROK_MODEL_OPTIONS
 
-  const backendModelSections = useMemo(() => {
-    const sections: {
-      backend: 'claude' | 'codex' | 'opencode' | 'cursor'
-      label: string
-      options: { value: string; label: string }[]
-    }[] = []
+  const backendModelSections = useMemo(
+    () =>
+      buildBackendModelSections({
+        installedBackends,
+        claudeModelOptions,
+        codexModelOptions,
+        opencodeModelOptions: resolvedOpencodeModelOptions,
+        cursorModelOptions: resolvedCursorModelOptions,
+        piModelOptions: resolvedPiModelOptions,
+        commandcodeModelOptions: resolvedCommandCodeModelOptions,
+        grokModelOptions: resolvedGrokModelOptions,
+      }),
+    [
+      claudeModelOptions,
+      codexModelOptions,
+      installedBackends,
+      resolvedCursorModelOptions,
+      resolvedCommandCodeModelOptions,
+      resolvedGrokModelOptions,
+      resolvedOpencodeModelOptions,
+      resolvedPiModelOptions,
+    ]
+  )
 
-    for (const backend of installedBackends) {
-      if (backend === 'claude') {
-        sections.push({
-          backend,
-          label: 'Claude',
-          options: claudeModelOptions,
-        })
-      } else if (backend === 'codex') {
-        sections.push({
-          backend,
-          label: 'Codex',
-          options: codexModelOptions,
-        })
-      } else if (backend === 'opencode') {
-        sections.push({
-          backend,
-          label: 'OpenCode',
-          options: resolvedOpencodeModelOptions,
-        })
-      } else if (backend === 'cursor') {
-        sections.push({
-          backend,
-          label: 'Cursor',
-          options: resolvedCursorModelOptions,
-        })
-      }
-    }
-
-    return sections
-  }, [
-    claudeModelOptions,
-    codexModelOptions,
-    installedBackends,
-    resolvedCursorModelOptions,
-    resolvedOpencodeModelOptions,
-  ])
 
   const filteredModelOptions = useMemo(() => {
     if (isCodex) return codexModelOptions
     if (isOpencode) return resolvedOpencodeModelOptions
     if (isCursor) return resolvedCursorModelOptions
+    if (isPi) return resolvedPiModelOptions
+    if (isCommandCode) return resolvedCommandCodeModelOptions
+    if (isGrok) return resolvedGrokModelOptions
     return claudeModelOptions
   }, [
     claudeModelOptions,
     codexModelOptions,
     isCodex,
     isCursor,
+    isPi,
+    isCommandCode,
+    isGrok,
     isOpencode,
+    resolvedCommandCodeModelOptions,
     resolvedCursorModelOptions,
+    resolvedGrokModelOptions,
     resolvedOpencodeModelOptions,
+    resolvedPiModelOptions,
   ])
 
   // Fast variants share a label with their base model (the Zap indicator
   // distinguishes them visually). Applies to both Codex and Claude.
-  const fastInfo = getModelFastInfo(selectedBackend, selectedModel)
-  const labelLookupKey = fastInfo.isFast ? fastInfo.baseModel : selectedModel
+  const effectiveSelectedModel = isPi
+    ? resolvePiDefaultModel(selectedModel, resolvedPiModelOptions)
+    : selectedModel
+
+  const fastInfo = getCatalogModelFastInfo(
+    modelCatalog,
+    selectedBackend,
+    effectiveSelectedModel
+  )
+  const labelLookupKey = fastInfo.isFast
+    ? fastInfo.baseModel
+    : effectiveSelectedModel
 
   const selectedModelLabel =
     filteredModelOptions.find(o => o.value === labelLookupKey)?.label ??
@@ -156,13 +261,19 @@ export function useToolbarDerivedState({
   return {
     isCodex,
     isCursor,
+    isPi,
+    isCommandCode,
     isOpencode,
     activeMcpCount,
     backendModelSections,
     claudeModelOptions,
     cursorModelOptions: resolvedCursorModelOptions,
+    commandcodeModelOptions: resolvedCommandCodeModelOptions,
     filteredModelOptions,
     opencodeModelOptions: resolvedOpencodeModelOptions,
+    piModelOptions: resolvedPiModelOptions,
+    grokModelOptions: resolvedGrokModelOptions,
+    isGrok,
     selectedModelLabel,
   }
 }

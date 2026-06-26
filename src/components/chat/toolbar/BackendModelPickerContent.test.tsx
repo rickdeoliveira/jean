@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import userEvent from '@testing-library/user-event'
+import { within } from '@testing-library/react'
 import { render, screen } from '@/test/test-utils'
 import { BackendModelPickerContent } from './BackendModelPickerContent'
 
@@ -22,6 +23,18 @@ Element.prototype.scrollIntoView = vi.fn()
 vi.mock('@/services/opencode-cli', () => ({
   useAvailableOpencodeModels: () => ({
     data: ['openai/gpt-5.4', 'groq/compound-mini'],
+  }),
+}))
+
+vi.mock('@/services/cursor-cli', () => ({
+  useAvailableCursorModels: () => ({
+    data: [{ id: 'auto', label: 'Auto' }],
+  }),
+}))
+
+vi.mock('@/services/commandcode-cli', () => ({
+  useAvailableCommandCodeModels: () => ({
+    data: [{ id: 'auto', label: 'Auto' }],
   }),
 }))
 
@@ -64,7 +77,26 @@ beforeEach(() => {
 })
 
 describe('BackendModelPickerContent', () => {
-  it('keeps Claude 1M variants plus models without 1M support', () => {
+  it('shows a manual refresh button for CDN-backed Claude and Codex model lists', () => {
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="codex"
+        selectedModel="gpt-5.5"
+        selectedProvider={null}
+        installedBackends={['claude', 'codex']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByRole('button', { name: /refresh model list/i })
+    ).toBeInTheDocument()
+  })
+  it('keeps Claude 1M variants plus standard models', () => {
     render(
       <BackendModelPickerContent
         open
@@ -79,13 +111,14 @@ describe('BackendModelPickerContent', () => {
       />
     )
 
+    expect(screen.getByText('Fable 5')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.8 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.7 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.6 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Sonnet 4.6 (1M)')).toBeInTheDocument()
+    expect(screen.getByText('Sonnet 4.6')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.5')).toBeInTheDocument()
     expect(screen.getByText('Haiku')).toBeInTheDocument()
-    expect(screen.queryByText('Sonnet 4.6')).toBeNull()
   })
 
   it('renders backend sidebar and switches backend+model on selection', async () => {
@@ -118,6 +151,57 @@ describe('BackendModelPickerContent', () => {
     expect(onBackendModelChange).toHaveBeenCalledWith('codex', 'gpt-5.4')
     expect(onModelChange).not.toHaveBeenCalled()
     expect(onRequestClose).toHaveBeenCalled()
+  })
+
+  it('shows the beta sidebar dot on Command Code and Grok, not Cursor', () => {
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="cursor"
+        selectedModel="cursor/auto"
+        selectedProvider={null}
+        installedBackends={['cursor', 'commandcode', 'grok']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    const cursorTab = screen.getByRole('tab', { name: 'Cursor' })
+    const commandCodeTab = screen.getByRole('tab', {
+      name: 'Command Code (Beta)',
+    })
+    const grokTab = screen.getByRole('tab', { name: 'Grok (Beta)' })
+
+    expect(cursorTab.querySelector('.bg-yellow-500')).toBeNull()
+    expect(commandCodeTab.querySelector('.bg-yellow-500')).not.toBeNull()
+    expect(grokTab.querySelector('.bg-yellow-500')).not.toBeNull()
+  })
+
+  it('does not add an empty custom Command Code model option', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="commandcode"
+        selectedModel="commandcode/default"
+        selectedProvider={null}
+        installedBackends={['commandcode']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    const searchInput = screen.getByPlaceholderText(/search command code/i)
+    await user.type(searchInput, 'commandcode/')
+
+    expect(
+      screen.queryByText('Use Command Code model "commandcode/"')
+    ).toBeNull()
   })
 
   it('scopes search to active backend and supports same-backend model swap', async () => {
@@ -292,6 +376,57 @@ describe('BackendModelPickerContent', () => {
     expect(opus46Index).toBeGreaterThanOrEqual(0)
     expect(opus48Index).toBeGreaterThanOrEqual(0)
     expect(opus46Index).toBeLessThan(opus48Index)
+  })
+
+  it('does not show fast mode for Claude Fable 5', () => {
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="claude"
+        selectedModel="claude-fable-5"
+        selectedProvider={null}
+        installedBackends={['claude']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    const fableActions = screen.getByTestId(
+      'model-actions-claude-claude-fable-5'
+    )
+    expect(
+      within(fableActions).queryByRole('switch', { name: /fast mode/i })
+    ).not.toBeInTheDocument()
+  })
+
+  it('toggles favourite status for Claude Fable 5 via the star button', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="claude"
+        selectedModel="claude-fable-5"
+        selectedProvider={null}
+        installedBackends={['claude']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    const starBtn = screen.getByRole('switch', {
+      name: /^favorite fable 5$/i,
+    })
+    expect(starBtn).toHaveAttribute('aria-checked', 'false')
+
+    await user.click(starBtn)
+    expect(patchPreferencesMutate).toHaveBeenCalledWith({
+      favorite_models: ['claude:claude-fable-5'],
+    })
   })
 
   it('toggles favourite status via the star button', async () => {
@@ -497,7 +632,7 @@ describe('BackendModelPickerContent', () => {
     )
   })
 
-  it('Cmd+digit ignored on locked session for non-selected backend', async () => {
+  it('Cmd+digit switches backend even after the session has messages', async () => {
     const user = userEvent.setup()
 
     render(
@@ -522,13 +657,13 @@ describe('BackendModelPickerContent', () => {
 
     await user.keyboard('{Meta>}1{/Meta}')
 
-    expect(screen.getByRole('tab', { name: 'Codex' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Claude' })).toHaveAttribute(
       'aria-selected',
       'true'
     )
   })
 
-  it('disables non-selected backend tabs once the session has messages', () => {
+  it('keeps backend tabs enabled once the session has messages', () => {
     render(
       <BackendModelPickerContent
         open
@@ -544,8 +679,8 @@ describe('BackendModelPickerContent', () => {
       />
     )
 
-    expect(screen.getByRole('tab', { name: 'Claude' })).toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'Claude' })).not.toBeDisabled()
     expect(screen.getByRole('tab', { name: 'Codex' })).not.toBeDisabled()
-    expect(screen.getByRole('tab', { name: 'OpenCode' })).toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'OpenCode' })).not.toBeDisabled()
   })
 })

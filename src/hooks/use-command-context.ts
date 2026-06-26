@@ -423,12 +423,6 @@ export function useCommandContext(
   const addProject = useCallback(() => {
     useProjectsStore.getState().setAddProjectDialogOpen(true)
   }, [])
-
-  // Projects - Init project
-  const initProject = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('command:init-project'))
-  }, [])
-
   // Projects - Remove project
   const removeProject = useCallback(async () => {
     const { selectedProjectId } = useProjectsStore.getState()
@@ -897,7 +891,6 @@ export function useCommandContext(
 
       // Projects
       addProject,
-      initProject,
       removeProject,
       openProjectSettings,
 
@@ -971,7 +964,6 @@ export function useCommandContext(
       setTheme,
       focusChatInput,
       addProject,
-      initProject,
       removeProject,
       openProjectSettings,
       runAIReview,

@@ -10,7 +10,7 @@ import {
   performGitPull,
 } from '@/services/git-status'
 import { useChatStore } from '@/store/chat-store'
-import { useRemotePicker } from '@/hooks/useRemotePicker'
+import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { useAllBackendsMcpHealth } from '@/services/mcp'
 import { getModelFastInfo, type ClaudeModel } from '@/types/preferences'
 import {
@@ -28,17 +28,33 @@ import { ExecutionModeDropdown } from '@/components/chat/toolbar/ExecutionModeDr
 import { SendCancelButton } from '@/components/chat/toolbar/SendCancelButton'
 import { ContextViewerDialog } from '@/components/chat/toolbar/ContextViewerDialog'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
   CODEX_MODEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
   MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
+  PI_MODEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { useToolbarDropdownShortcuts } from '@/components/chat/toolbar/useToolbarDropdownShortcuts'
 import { useToolbarDerivedState } from '@/components/chat/toolbar/useToolbarDerivedState'
 import { useContextViewer } from '@/components/chat/toolbar/useContextViewer'
-import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
+import {
+  formatOpencodeModelLabel,
+  formatPiModelLabel,
+} from '@/components/chat/toolbar/toolbar-utils'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
+import { useAvailablePiModels } from '@/services/pi-cli'
 import { useIsMobile } from '@/hooks/use-mobile'
 import {
   BackendLabel,
@@ -53,6 +69,7 @@ export {
   OPENCODE_MODEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
 }
 export type { ChatToolbarProps }
 
@@ -127,6 +144,7 @@ export const ChatToolbar = memo(function ChatToolbar({
   const [mobileBackendModelPickerOpen, setMobileBackendModelPickerOpen] =
     useState(false)
   const isMobile = useIsMobile()
+  const [revertConfirmOpen, setRevertConfirmOpen] = useState(false)
 
   const pickRemoteOrRun = useRemotePicker(activeWorktreePath)
 
@@ -160,6 +178,15 @@ export const ChatToolbar = memo(function ChatToolbar({
       value: model,
       label: formatOpencodeModelLabel(model),
     })) ?? OPENCODE_MODEL_OPTIONS
+  const { data: availablePiModels } = useAvailablePiModels({
+    enabled: selectedBackend === 'pi',
+  })
+  const piModelOptions =
+    availablePiModels?.map(model => ({
+      value: `pi/${model.id}`,
+      label: model.label || formatPiModelLabel(model.id),
+      is_default: model.is_default,
+    })) ?? PI_MODEL_OPTIONS
 
   const { isCodex, activeMcpCount, backendModelSections, selectedModelLabel } =
     useToolbarDerivedState({
@@ -167,6 +194,7 @@ export const ChatToolbar = memo(function ChatToolbar({
       selectedProvider,
       selectedModel,
       opencodeModelOptions,
+      piModelOptions,
       customCliProfiles,
       installedBackends,
       availableMcpServers,
@@ -281,7 +309,8 @@ export const ChatToolbar = memo(function ChatToolbar({
 
   const handlePushClick = useCallback(() => {
     if (!activeWorktreePath || !worktreeId) return
-    pickRemoteOrRun(async remote => {
+
+    const runPush = async (remote?: string) => {
       const { setWorktreeLoading, clearWorktreeLoading } =
         useChatStore.getState()
       setWorktreeLoading(worktreeId, 'push')
@@ -302,10 +331,16 @@ export const ChatToolbar = memo(function ChatToolbar({
       } finally {
         clearWorktreeLoading(worktreeId)
       }
-    })
+    }
+
+    if (pushNeedsRemotePicker(prNumber)) {
+      pickRemoteOrRun(runPush)
+    } else {
+      runPush()
+    }
   }, [activeWorktreePath, worktreeId, projectId, prNumber, pickRemoteOrRun])
 
-  const handleRevertLastCommit = useCallback(async () => {
+  const executeRevertLastCommit = useCallback(async () => {
     if (!activeWorktreePath) return
     const revertToast = dismissibleToast.loading('Reverting last commit...')
     try {
@@ -321,178 +356,205 @@ export const ChatToolbar = memo(function ChatToolbar({
     }
   }, [activeWorktreePath, projectId])
 
+  const handleRevertLastCommit = useCallback(() => {
+    if (!activeWorktreePath) return
+    setRevertConfirmOpen(true)
+  }, [activeWorktreePath])
+
   const canSend = hasInputValue || hasPendingAttachments
 
   return (
-    <div className="@container flex justify-start px-4 py-2 md:px-6">
-      <div className="inline-flex max-w-full flex-nowrap items-center overflow-x-auto whitespace-nowrap bg-transparent scrollbar-hide">
-        <DockBurgerButton
-          activeMcpCount={activeMcpCount}
-          className="flex @xl:hidden"
-        />
+    <>
+      <AlertDialog open={revertConfirmOpen} onOpenChange={setRevertConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revert last commit?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will undo the latest local commit on this worktree. Your
+              working tree changes from that commit will be restored, but this
+              action can be disruptive.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={executeRevertLastCommit}>
+              Revert last commit
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-        <MobileToolbarMenu
-          isDisabled={hasPendingQuestions}
-          hasOpenPr={hasOpenPr}
-          hasIssueContexts={loadedIssueContexts.length > 0}
-          hasPrContexts={loadedPRContexts.length > 0}
-          onSaveContext={onSaveContext}
-          onLoadContext={onLoadContext}
-          onCommit={onCommit}
-          onCommitAndPush={onCommitAndPush}
-          onRevertLastCommit={handleRevertLastCommit}
-          onOpenPr={onOpenPr}
-          onReview={onReview}
-          onMerge={onMerge}
-          onMergePr={onMergePr}
-          onOpenMagicModal={onOpenMagicModal}
-          handlePullClick={handlePullClick}
-          handlePushClick={handlePushClick}
-        />
+      <div className="@container flex justify-start px-4 py-2 md:px-6">
+        <div className="inline-flex max-w-full flex-nowrap items-center overflow-x-auto whitespace-nowrap bg-transparent scrollbar-hide">
+          <DockBurgerButton
+            activeMcpCount={activeMcpCount}
+            className="flex @xl:hidden"
+          />
 
-        <MobileSettingsMenu
-          isDisabled={hasPendingQuestions}
-          providerLocked={providerLocked}
-          selectedBackend={selectedBackend}
-          selectedProvider={selectedProvider}
-          backendModelLabel={backendModelLabel}
-          backendModelLabelText={backendModelLabelText}
-          hasMultipleBackendModelChoices={hasMultipleBackendModelChoices}
-          selectedEffortLevel={selectedEffortLevel}
-          selectedThinkingLevel={selectedThinkingLevel}
-          hideThinkingLevel={hideThinkingLevel}
-          useAdaptiveThinking={useAdaptiveThinking}
-          isCodex={isCodex}
-          customCliProfiles={customCliProfiles}
-          onOpenBackendModelPicker={() => setMobileBackendModelPickerOpen(true)}
-          handleProviderChange={handleProviderChange}
-          handleEffortLevelChange={handleEffortLevelChange}
-          handleThinkingLevelChange={handleThinkingLevelChange}
-          loadedIssueContexts={loadedIssueContexts}
-          loadedPRContexts={loadedPRContexts}
-          loadedSecurityContexts={loadedSecurityContexts}
-          loadedAdvisoryContexts={loadedAdvisoryContexts}
-          loadedLinearContexts={loadedLinearContexts}
-          attachedSavedContexts={attachedSavedContexts}
-          handleViewIssue={handleViewIssue}
-          handleViewPR={handleViewPR}
-          handleViewSecurityAlert={handleViewSecurityAlert}
-          handleViewAdvisory={handleViewAdvisory}
-          handleViewLinear={handleViewLinear}
-          handleViewSavedContext={handleViewSavedContext}
-          availableMcpServers={availableMcpServers}
-          enabledMcpServers={enabledMcpServers}
-          activeMcpCount={activeMcpCount}
-          onToggleMcpServer={onToggleMcpServer}
-          prUrl={prUrl}
-          prNumber={prNumber}
-          prDisplayStatus={displayStatus}
-          worktreeId={worktreeId}
-          onAttach={onAttach}
-        />
+          <MobileToolbarMenu
+            isDisabled={false}
+            hasOpenPr={hasOpenPr}
+            hasIssueContexts={loadedIssueContexts.length > 0}
+            hasPrContexts={loadedPRContexts.length > 0}
+            onSaveContext={onSaveContext}
+            onLoadContext={onLoadContext}
+            onCommit={onCommit}
+            onCommitAndPush={onCommitAndPush}
+            onRevertLastCommit={handleRevertLastCommit}
+            onOpenPr={onOpenPr}
+            onReview={onReview}
+            onMerge={onMerge}
+            onMergePr={onMergePr}
+            handlePullClick={handlePullClick}
+            handlePushClick={handlePushClick}
+          />
 
-        {isMobile && (
-          <MobileBackendModelPickerSheet
-            open={mobileBackendModelPickerOpen}
-            onOpenChange={setMobileBackendModelPickerOpen}
-            sessionHasMessages={sessionHasMessages}
+          <MobileSettingsMenu
+            isDisabled={false}
             providerLocked={providerLocked}
             selectedBackend={selectedBackend}
             selectedProvider={selectedProvider}
-            selectedModel={selectedModel}
-            installedBackends={installedBackends}
+            backendModelLabel={backendModelLabel}
+            backendModelLabelText={backendModelLabelText}
+            hasMultipleBackendModelChoices={hasMultipleBackendModelChoices}
+            selectedEffortLevel={selectedEffortLevel}
+            selectedThinkingLevel={selectedThinkingLevel}
+            hideThinkingLevel={hideThinkingLevel}
+            useAdaptiveThinking={useAdaptiveThinking}
+            isCodex={isCodex}
             customCliProfiles={customCliProfiles}
-            onModelChange={handleModelChange}
-            onBackendModelChange={onBackendModelChange}
+            onOpenBackendModelPicker={() =>
+              setMobileBackendModelPickerOpen(true)
+            }
+            handleProviderChange={handleProviderChange}
+            handleEffortLevelChange={handleEffortLevelChange}
+            handleThinkingLevelChange={handleThinkingLevelChange}
+            loadedIssueContexts={loadedIssueContexts}
+            loadedPRContexts={loadedPRContexts}
+            loadedSecurityContexts={loadedSecurityContexts}
+            loadedAdvisoryContexts={loadedAdvisoryContexts}
+            loadedLinearContexts={loadedLinearContexts}
+            attachedSavedContexts={attachedSavedContexts}
+            handleViewIssue={handleViewIssue}
+            handleViewPR={handleViewPR}
+            handleViewSecurityAlert={handleViewSecurityAlert}
+            handleViewAdvisory={handleViewAdvisory}
+            handleViewLinear={handleViewLinear}
+            handleViewSavedContext={handleViewSavedContext}
+            availableMcpServers={availableMcpServers}
+            enabledMcpServers={enabledMcpServers}
+            activeMcpCount={activeMcpCount}
+            onToggleMcpServer={onToggleMcpServer}
+            prUrl={prUrl}
+            prNumber={prNumber}
+            prDisplayStatus={displayStatus}
+            worktreeId={worktreeId}
+            onAttach={onAttach}
           />
-        )}
 
-        <div className="block @xl:hidden h-4 w-px shrink-0 bg-border/50" />
+          {isMobile && (
+            <MobileBackendModelPickerSheet
+              open={mobileBackendModelPickerOpen}
+              onOpenChange={setMobileBackendModelPickerOpen}
+              sessionHasMessages={sessionHasMessages}
+              providerLocked={providerLocked}
+              selectedBackend={selectedBackend}
+              selectedProvider={selectedProvider}
+              selectedModel={selectedModel}
+              installedBackends={installedBackends}
+              customCliProfiles={customCliProfiles}
+              onModelChange={handleModelChange}
+              onBackendModelChange={onBackendModelChange}
+            />
+          )}
 
-        <ExecutionModeDropdown
-          executionMode={executionMode}
-          availableModes={availableExecutionModes}
-          disabled={hasPendingQuestions}
-          onSetExecutionMode={onSetExecutionMode}
-          className="flex @xl:hidden shrink-0"
-          align="end"
-        />
+          <div className="block @xl:hidden h-4 w-px shrink-0 bg-border/50" />
 
-        <DesktopToolbarControls
-          hasPendingQuestions={hasPendingQuestions}
-          selectedBackend={selectedBackend}
-          selectedModel={selectedModel}
-          selectedProvider={selectedProvider}
-          selectedThinkingLevel={selectedThinkingLevel}
-          selectedEffortLevel={selectedEffortLevel}
-          executionMode={executionMode}
-          useAdaptiveThinking={useAdaptiveThinking}
-          hideThinkingLevel={hideThinkingLevel}
-          sessionHasMessages={sessionHasMessages}
-          providerLocked={providerLocked}
-          customCliProfiles={customCliProfiles}
-          isCodex={isCodex}
-          prUrl={prUrl}
-          prNumber={prNumber}
-          displayStatus={displayStatus}
-          checkStatus={checkStatus}
-          mergeableStatus={mergeableStatus}
-          activeWorktreePath={activeWorktreePath}
-          availableMcpServers={availableMcpServers}
-          enabledMcpServers={enabledMcpServers}
-          activeMcpCount={activeMcpCount}
-          isHealthChecking={isHealthChecking}
-          mcpStatuses={mcpStatuses}
-          loadedIssueContexts={loadedIssueContexts}
-          loadedPRContexts={loadedPRContexts}
-          loadedSecurityContexts={loadedSecurityContexts}
-          loadedAdvisoryContexts={loadedAdvisoryContexts}
-          loadedLinearContexts={loadedLinearContexts}
-          attachedSavedContexts={attachedSavedContexts}
-          providerDropdownOpen={providerDropdownOpen}
-          thinkingDropdownOpen={thinkingDropdownOpen}
-          mcpDropdownOpen={mcpDropdownOpen}
-          setProviderDropdownOpen={setProviderDropdownOpen}
-          setThinkingDropdownOpen={setThinkingDropdownOpen}
-          onMcpDropdownOpenChange={handleMcpDropdownOpenChange}
-          onOpenMagicModal={onOpenMagicModal}
-          onOpenProjectSettings={onOpenProjectSettings}
-          onResolvePrConflicts={onResolvePrConflicts}
-          onLoadContext={onLoadContext}
-          onAttach={onAttach}
-          installedBackends={installedBackends}
-          onSetExecutionMode={onSetExecutionMode}
-          availableExecutionModes={availableExecutionModes}
-          onToggleMcpServer={onToggleMcpServer}
-          handleModelChange={handleModelChange}
-          handleBackendModelChange={onBackendModelChange}
-          handleProviderChange={handleProviderChange}
-          handleThinkingLevelChange={handleThinkingLevelChange}
-          handleEffortLevelChange={handleEffortLevelChange}
-          handleViewIssue={handleViewIssue}
-          handleViewPR={handleViewPR}
-          handleViewSecurityAlert={handleViewSecurityAlert}
-          handleViewAdvisory={handleViewAdvisory}
-          handleViewLinear={handleViewLinear}
-          handleViewSavedContext={handleViewSavedContext}
-        />
-
-        <div className="h-4 w-px shrink-0 bg-border/50" />
-
-        <div className="shrink-0">
-          <SendCancelButton
-            isSending={isSending}
-            canSend={canSend}
-            queuedMessageCount={queuedMessageCount}
-            onCancel={onCancel}
+          <ExecutionModeDropdown
+            executionMode={executionMode}
+            availableModes={availableExecutionModes}
+            disabled={hasPendingQuestions}
+            onSetExecutionMode={onSetExecutionMode}
+            className="flex @xl:hidden shrink-0"
+            align="end"
           />
+
+          <DesktopToolbarControls
+            hasPendingQuestions={hasPendingQuestions}
+            selectedBackend={selectedBackend}
+            selectedModel={selectedModel}
+            selectedProvider={selectedProvider}
+            selectedThinkingLevel={selectedThinkingLevel}
+            selectedEffortLevel={selectedEffortLevel}
+            executionMode={executionMode}
+            useAdaptiveThinking={useAdaptiveThinking}
+            hideThinkingLevel={hideThinkingLevel}
+            sessionHasMessages={sessionHasMessages}
+            providerLocked={providerLocked}
+            customCliProfiles={customCliProfiles}
+            isCodex={isCodex}
+            prUrl={prUrl}
+            prNumber={prNumber}
+            displayStatus={displayStatus}
+            checkStatus={checkStatus}
+            mergeableStatus={mergeableStatus}
+            activeWorktreePath={activeWorktreePath}
+            availableMcpServers={availableMcpServers}
+            enabledMcpServers={enabledMcpServers}
+            activeMcpCount={activeMcpCount}
+            isHealthChecking={isHealthChecking}
+            mcpStatuses={mcpStatuses}
+            loadedIssueContexts={loadedIssueContexts}
+            loadedPRContexts={loadedPRContexts}
+            loadedSecurityContexts={loadedSecurityContexts}
+            loadedAdvisoryContexts={loadedAdvisoryContexts}
+            loadedLinearContexts={loadedLinearContexts}
+            attachedSavedContexts={attachedSavedContexts}
+            providerDropdownOpen={providerDropdownOpen}
+            thinkingDropdownOpen={thinkingDropdownOpen}
+            mcpDropdownOpen={mcpDropdownOpen}
+            setProviderDropdownOpen={setProviderDropdownOpen}
+            setThinkingDropdownOpen={setThinkingDropdownOpen}
+            onMcpDropdownOpenChange={handleMcpDropdownOpenChange}
+            onOpenMagicModal={onOpenMagicModal}
+            onOpenProjectSettings={onOpenProjectSettings}
+            onResolvePrConflicts={onResolvePrConflicts}
+            onLoadContext={onLoadContext}
+            onAttach={onAttach}
+            installedBackends={installedBackends}
+            onSetExecutionMode={onSetExecutionMode}
+            availableExecutionModes={availableExecutionModes}
+            onToggleMcpServer={onToggleMcpServer}
+            handleModelChange={handleModelChange}
+            handleBackendModelChange={onBackendModelChange}
+            handleProviderChange={handleProviderChange}
+            handleThinkingLevelChange={handleThinkingLevelChange}
+            handleEffortLevelChange={handleEffortLevelChange}
+            handleViewIssue={handleViewIssue}
+            handleViewPR={handleViewPR}
+            handleViewSecurityAlert={handleViewSecurityAlert}
+            handleViewAdvisory={handleViewAdvisory}
+            handleViewLinear={handleViewLinear}
+            handleViewSavedContext={handleViewSavedContext}
+          />
+
+          <div className="h-4 w-px shrink-0 bg-border/50" />
+
+          <div className="shrink-0">
+            <SendCancelButton
+              isSending={isSending}
+              canSend={canSend}
+              queuedMessageCount={queuedMessageCount}
+              onCancel={onCancel}
+            />
+          </div>
         </div>
-      </div>
 
-      <ContextViewerDialog
-        viewingContext={viewingContext}
-        onClose={() => setViewingContext(null)}
-      />
-    </div>
+        <ContextViewerDialog
+          viewingContext={viewingContext}
+          onClose={() => setViewingContext(null)}
+        />
+      </div>
+    </>
   )
 })

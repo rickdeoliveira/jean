@@ -13,8 +13,28 @@ vi.mock('@/hooks/use-theme', () => ({
 }))
 
 vi.mock('./MemoizedFileDiff', () => ({
-  MemoizedFileDiff: ({ fileName }: { fileName: string }) => (
-    <div data-testid="file-diff">{fileName}</div>
+  MemoizedFileDiff: ({
+    fileName,
+    onLineSelected,
+  }: {
+    fileName: string
+    onLineSelected?: (selection: {
+      start: number
+      end: number
+      side: 'additions'
+    }) => void
+  }) => (
+    <div data-testid="file-diff">
+      {fileName}
+      <button
+        type="button"
+        onClick={() =>
+          onLineSelected?.({ start: 1, end: 1, side: 'additions' })
+        }
+      >
+        Select line
+      </button>
+    </div>
   ),
   getStatusColor: () => 'text-blue-500',
 }))
@@ -58,6 +78,20 @@ function renderGitDiffModal() {
         baseBranch: 'main',
       }}
       onClose={vi.fn()}
+    />
+  )
+}
+
+function renderGitDiffModalWithPromptActions() {
+  return render(
+    <GitDiffModal
+      diffRequest={{
+        type: 'uncommitted',
+        worktreePath: '/tmp/worktree',
+        baseBranch: 'main',
+      }}
+      onClose={vi.fn()}
+      onAddToPrompt={vi.fn()}
     />
   )
 }
@@ -179,5 +213,33 @@ describe('GitDiffModal keyboard shortcuts', () => {
 
     expect(wasNotPrevented).toBe(true)
     expect(scrollTo).not.toHaveBeenCalled()
+  })
+})
+
+describe('GitDiffModal diff comment actions', () => {
+  beforeEach(() => {
+    globalThis.ResizeObserver = class ResizeObserver {
+      observe = vi.fn()
+      unobserve = vi.fn()
+      disconnect = vi.fn()
+    }
+  })
+
+  it('shows only the yellow Add to prompt action for selected diff comments', async () => {
+    const user = userEvent.setup()
+    renderGitDiffModalWithPromptActions()
+
+    await user.click(await screen.findByText('Select line'))
+    await user.type(
+      await screen.findByPlaceholderText('What should I do with this code?'),
+      'fix this'
+    )
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(screen.queryByRole('button', { name: /execute/i })).toBeNull()
+
+    const addToPrompt = screen.getByRole('button', { name: /add to prompt/i })
+    expect(addToPrompt.className).toContain('bg-primary')
+    expect(addToPrompt.className).toContain('text-primary-foreground')
   })
 })

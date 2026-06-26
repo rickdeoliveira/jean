@@ -3,14 +3,23 @@ import {
   CURSOR_MODEL_OPTIONS,
   MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
+  PI_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import {
+  formatCommandCodeModelLabel,
   formatCursorModelLabel,
+  formatOpenCodePromptModelLabel,
   formatOpencodeModelLabel,
+  formatPiModelLabel,
 } from '@/components/chat/toolbar/toolbar-utils'
 import {
   codexDefaultModelOptions,
   getClaudeFastInfo,
+  isCodexModel,
+  isCommandCodeModel,
+  isCursorModel,
+  isOpenCodeModel,
+  isPiModel,
 } from '@/types/preferences'
 
 const ALL_MODEL_OPTIONS = [
@@ -19,6 +28,7 @@ const ALL_MODEL_OPTIONS = [
   ...codexDefaultModelOptions,
   ...OPENCODE_MODEL_OPTIONS,
   ...CURSOR_MODEL_OPTIONS,
+  ...PI_MODEL_OPTIONS,
 ]
 
 export function getMessageModelLabel(model: string): string {
@@ -36,5 +46,31 @@ export function getMessageModelLabel(model: string): string {
   }
 
   if (model.startsWith('cursor/')) return formatCursorModelLabel(model)
+  if (model.startsWith('pi/')) return formatPiModelLabel(model)
+  if (model.startsWith('commandcode/'))
+    return formatCommandCodeModelLabel(model)
   return model.includes('/') ? formatOpencodeModelLabel(model) : model
+}
+
+function isClaudeMessageModel(model: string): boolean {
+  if (MODEL_OPTIONS.some(option => option.value === model)) return true
+
+  const claudeFastInfo = getClaudeFastInfo(model)
+  return (
+    claudeFastInfo.isFast &&
+    MODEL_OPTIONS.some(option => option.value === claudeFastInfo.baseModel)
+  )
+}
+
+export function getMessagePromptModelLabel(model: string): string {
+  if (isCodexModel(model)) return `Codex · ${getMessageModelLabel(model)}`
+  if (isCommandCodeModel(model)) return getMessageModelLabel(model)
+  if (isOpenCodeModel(model)) {
+    return `OpenCode · ${formatOpenCodePromptModelLabel(model)}`
+  }
+  if (isCursorModel(model)) return `Cursor · ${getMessageModelLabel(model)}`
+  if (isPiModel(model)) return `PI · ${getMessageModelLabel(model)}`
+  if (isClaudeMessageModel(model))
+    return `Claude · ${getMessageModelLabel(model)}`
+  return getMessageModelLabel(model)
 }

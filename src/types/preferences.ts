@@ -62,6 +62,8 @@ export interface MagicPrompts {
   parallel_execution: string | null
   /** Global system prompt appended to every chat session (like ~/.claude/CLAUDE.md) */
   global_system_prompt: string | null
+  /** Hidden prompt prepended when switching providers within a Jean session */
+  provider_switch_handoff: string | null
   /** Prompt for investigating Dependabot vulnerability alerts */
   investigate_security_alert: string | null
   /** Prompt for investigating repository security advisories */
@@ -207,16 +209,26 @@ export const DEFAULT_PR_CONTENT_PROMPT = `<task>Generate a pull request title an
 /** Default prompt for commit message generation */
 export const DEFAULT_COMMIT_MESSAGE_PROMPT = `Generate a conventional commit message for these staged changes.
 
+Rules:
+- Output only the commit message text.
+- Describe the actual staged code changes only.
+- Base the subject on the staged diff and file summary, not on recent commits, repository instructions, agent skills, or this prompt.
+- Do not describe prompt text, commit-message guidance, instructions, inspection, skills, or the act of generating a commit message.
+- Avoid vague/meta subjects like "update files", "inspect changes", "inspect staged changes", "inspect commit-message skill", "generate commit message", "adjust code", or "misc changes".
+- Use a specific Conventional Commits subject: type(optional-scope): concrete behavior changed.
+- First line must be 72 characters or fewer.
+- If prompt/config files changed, name the user-facing behavior affected, not "guidance" or "prompt".
+
 Files changed:
 {diff_stat}
 
 Git status:
 {status}
 
-Diff:
+Staged diff:
 {diff}
 
-Recent commits (style reference):
+Recent commits (style reference only — do not summarize these commits):
 {recent_commits}`
 
 /** Default prompt for code review */
@@ -531,16 +543,16 @@ When launching multiple Task subagents, prefer sending them in a single message 
 Instruct each sub-agent to briefly outline its approach before implementing, so it can course-correct early without formal plan mode overhead.`
 
 /** Default global system prompt (must match DEFAULT_GLOBAL_SYSTEM_PROMPT in src-tauri) */
-export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
+export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Planning Guidance
+- For non-trivial tasks (3+ steps or architectural decisions), prefer planning before implementation when the current execution mode has not already authorized execution.
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps, not just building
+- Use plan mode for verification steps when the current execution mode is plan; in build/yolo, verify directly after implementing.
 - Write detailed specs upfront to reduce ambiguity
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
-- In planning mode, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
-- For unresolved questions in plan mode, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
-- For Codex specifically: after the user answers native \`request_user_input\`/open questions in plan mode, immediately call \`update_plan\`/emit \`CodexPlan\` again with the revised plan before any implementation.
-- Every Codex plan-mode response that contains or revises a plan must use \`update_plan\`/\`CodexPlan\`; do not provide plain-text-only plans.
+- When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question. If no such interactive question tool is present in your current tool set (headless/\`--print\` runs may omit Claude AskUserQuestion), do NOT skip the question and do NOT dead-end on a tool search — instead ask inline as a short numbered list of options (1, 2, 3...) and tell the user to reply with a number.
+- For Codex specifically, when the current execution mode is plan: after the user answers native \`request_user_input\`/open questions, immediately call \`update_plan\`/emit \`CodexPlan\` again with the revised plan before any implementation.
+- Every Codex response that contains or revises a plan while the current execution mode is plan must use \`update_plan\`/\`CodexPlan\`; do not provide plain-text-only plans.
 - Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
 
 ### 2. Documentation First
@@ -603,6 +615,19 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Plan Mode Default
 
 - After each finished task, please write a few bullet points on how to test the changes.`
 
+export const DEFAULT_PROVIDER_SWITCH_HANDOFF_PROMPT = `You are continuing a Jean chat session after the user switched AI backends.
+
+Jean-local history is the source of truth because provider-owned server history may be incomplete after backend switches.
+
+Previous backend: {previous_backend}
+Current backend: {current_backend}
+
+Use the Jean-local history below to reconstruct context before answering the user's latest message. Do not mention this hidden handoff unless it is directly relevant.
+
+<jean_local_history>
+{history}
+</jean_local_history>`
+
 /** Default prompt for addressing inline PR review comments */
 export const DEFAULT_REVIEW_COMMENTS_PROMPT = `<task>
 
@@ -623,6 +648,11 @@ Address the following review comments from PR #{prNumber}
 3. Make the requested changes to address each comment
 4. If a comment is unclear or you disagree with it, explain your reasoning
 5. After making changes, briefly summarize what you changed for each comment
+6. After the requested changes are implemented and verified, resolve each matching GitHub PR review conversation
+   - Look for unresolved review threads from coderabbitai when the comment came from CodeRabbit
+   - Match threads by PR #{prNumber}, file path, line number, reviewer, and comment body
+   - Use GitHub GraphQL mutation resolveReviewThread on the matching PullRequestReviewThread
+   - Do not resolve a thread if you cannot complete or verify the fix
 
 </instructions>
 
@@ -649,6 +679,7 @@ export const DEFAULT_MAGIC_PROMPTS: MagicPrompts = {
   session_naming: null,
   parallel_execution: null,
   global_system_prompt: null,
+  provider_switch_handoff: null,
   investigate_security_alert: null,
   investigate_advisory: null,
   investigate_linear_issue: null,
@@ -761,6 +792,10 @@ export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   review_comments_model: 'opencode/gpt-5.3-codex',
 }
 
+/** Grok preset for all magic prompts */
+export const GROK_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('grok/grok-composer-2.5-fast')
+
 /** Default reasoning efforts for Claude backend (null = use model default) */
 export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   investigate_issue_effort: null,
@@ -777,6 +812,35 @@ export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   investigate_advisory_effort: null,
   investigate_linear_issue_effort: null,
   review_comments_effort: null,
+}
+
+export type MagicPromptExecutionMode = Extract<ExecutionMode, 'plan' | 'yolo'>
+
+/**
+ * Per-prompt execution mode overrides for magic prompts that send chat turns.
+ * Field names use snake_case to match Rust struct exactly.
+ */
+export interface MagicPromptModes {
+  investigate_issue_mode: MagicPromptExecutionMode
+  investigate_pr_mode: MagicPromptExecutionMode
+  investigate_workflow_run_mode: MagicPromptExecutionMode
+  investigate_security_alert_mode: MagicPromptExecutionMode
+  investigate_advisory_mode: MagicPromptExecutionMode
+  investigate_linear_issue_mode: MagicPromptExecutionMode
+  review_comments_mode: MagicPromptExecutionMode
+  resolve_conflicts_mode: MagicPromptExecutionMode
+}
+
+/** Default execution modes for chat-style magic prompts */
+export const DEFAULT_MAGIC_PROMPT_MODES: MagicPromptModes = {
+  investigate_issue_mode: 'plan',
+  investigate_pr_mode: 'plan',
+  investigate_workflow_run_mode: 'yolo',
+  investigate_security_alert_mode: 'plan',
+  investigate_advisory_mode: 'plan',
+  investigate_linear_issue_mode: 'plan',
+  review_comments_mode: 'plan',
+  resolve_conflicts_mode: 'yolo',
 }
 
 /** Codex preset: heavier reasoning for investigations, lighter for simple generation */
@@ -905,6 +969,7 @@ export const CLAUDE_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('claude')
 export const CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('codex')
 export const OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS =
   makeBackendsPreset('opencode')
+export const GROK_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('grok')
 
 /**
  * Resolve a magic prompt provider for a given key.
@@ -975,11 +1040,13 @@ export interface AppPreferences {
   syntax_theme_light: SyntaxTheme // Syntax highlighting theme for light mode
   parallel_execution_prompt_enabled: boolean // Add system prompt to encourage parallel sub-agent execution
   compact_chat_view_enabled: boolean // Collapse intermediate tool calls/replies into a single ticker line, only showing the latest activity
+  auto_recaps_enabled?: boolean // Ask agents to end multi-step/tool turns with a recap
   magic_prompts: MagicPrompts // Customizable prompts for AI-powered features
   magic_prompt_models: MagicPromptModels // Per-prompt model overrides
   magic_prompt_providers: MagicPromptProviders // Per-prompt provider overrides (null = use default_provider)
   magic_prompt_backends: MagicPromptBackends // Per-prompt backend overrides (null = use project/global default_backend)
   magic_prompt_efforts: MagicPromptReasoningEfforts // Per-prompt reasoning effort overrides (null = model default)
+  magic_prompt_modes: MagicPromptModes // Per-prompt execution modes for magic prompts that send chat turns
   file_edit_mode: FileEditMode // How to edit files: inline (CodeMirror) or external (VS Code, etc.)
   ai_language: string // Preferred language for AI responses (empty = default)
   allow_web_tools_in_plan_mode: boolean // Allow WebFetch/WebSearch in plan mode without prompts
@@ -1012,15 +1079,21 @@ export interface AppPreferences {
 
   confirm_session_close: boolean // Show confirmation dialog before closing sessions/worktrees
   default_execution_mode: ExecutionMode // Default execution mode for new sessions: 'plan', 'build', or 'yolo'
-  default_backend: CliBackend // Default CLI backend for new sessions: 'claude', 'codex', 'opencode', or 'cursor'
+  default_backend: CliBackend // Default CLI backend for new sessions: 'claude', 'codex', 'opencode', 'cursor', 'pi', or 'commandcode'
   default_new_session_kind: NewSessionKind // Default action for CMD+T: 'chat', 'terminal', or a CLI backend
   selected_codex_model: CodexModel // Default Codex model
   selected_opencode_model: string // Default OpenCode model (provider/model)
   selected_cursor_model: CursorModel // Default Cursor model
+  selected_pi_model: PiModel // Default PI model
+  selected_commandcode_model?: string // Default Command Code model (CLI default)
+  selected_grok_model: GrokModel // Default Grok model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
   codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
   codex_max_agent_threads: number // Max concurrent agent threads (1-8) when multi-agent is enabled
+  codex_auto_steer_enabled: boolean // Steer prompts into a running Codex turn instead of queueing (default: true)
+  opencode_auto_steer_enabled: boolean // Steer prompts into a running OpenCode turn instead of queueing (default: true)
+  pi_auto_steer_enabled: boolean // Steer prompts into a running PI turn instead of queueing (default: true)
   restore_last_session: boolean // Restore last session when switching projects (default: true)
   close_original_on_clear_context: boolean // Close original session when using Clear Context and yolo (default: true)
   build_model: string | null // Model override for plan approval (build mode), null = use session model
@@ -1036,7 +1109,13 @@ export interface AppPreferences {
   claude_cli_source: 'jean' | 'path' // Claude CLI source: 'jean' (managed) or 'path' (system PATH)
   codex_cli_source: 'jean' | 'path' // Codex CLI source: 'jean' (managed) or 'path' (system PATH)
   opencode_cli_source: 'jean' | 'path' // OpenCode CLI source: 'jean' (managed) or 'path' (system PATH)
+  grok_cli_source: 'jean' | 'path' // Grok CLI source: 'jean' (managed) or 'path' (system PATH)
   gh_cli_source: 'jean' | 'path' // GitHub CLI source: 'jean' (managed) or 'path' (system PATH)
+  pi_cli_source: 'jean' | 'path' // PI CLI source: 'jean' (managed) or 'path' (system PATH)
+  commandcode_cli_source?: 'jean' | 'path' // Command Code CLI source: 'jean' (managed) or 'path' (system PATH)
+  wsl_mode_chosen: boolean // Whether WSL mode selection has been made (prevents re-asking on Windows)
+  wsl_enabled: boolean // Route commands through WSL
+  wsl_distro: string // WSL distro name, e.g. "Ubuntu"
   coderabbit_cli_source?: 'jean' | 'path' // CodeRabbit CLI source: 'jean' (managed) or 'path' (system PATH)
   expand_tool_calls_by_default: boolean // Expand all tool call collapsibles by default
   window_vibrancy: boolean // macOS window vibrancy effect (high GPU cost, default false)
@@ -1149,35 +1228,39 @@ export const fileEditModeOptions: { value: FileEditMode; label: string }[] = [
 ]
 
 export type ClaudeModel =
+  | 'claude-fable-5'
   | 'claude-opus-4-8'
   | 'claude-opus-4-8[1m]'
   | 'claude-opus-4-7'
   | 'claude-opus-4-7[1m]'
   | 'claude-opus-4-6'
-  | 'claude-opus-4-5-20251101'
   | 'claude-opus-4-6[1m]'
+  | 'claude-opus-4-5-20251101'
   | 'claude-opus-4-8[1m]-fast'
   | 'claude-opus-4-7[1m]-fast'
   | 'claude-opus-4-6-fast'
   | 'claude-opus-4-6[1m]-fast'
   | 'opus' // Legacy/provider-alias: resolved by CLI via ANTHROPIC_DEFAULT_OPUS_MODEL env
   | 'sonnet'
+  | 'claude-sonnet-4-6'
   | 'claude-sonnet-4-6[1m]'
   | 'haiku'
 
 export const modelOptions: { value: ClaudeModel; label: string }[] = [
+  { value: 'claude-fable-5', label: 'Claude Fable 5' },
   { value: 'claude-opus-4-8[1m]', label: 'Claude Opus 4.8 (1M)' },
+  { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { value: 'claude-opus-4-7[1m]', label: 'Claude Opus 4.7 (1M)' },
+  { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   { value: 'claude-opus-4-6[1m]', label: 'Claude Opus 4.6 (1M)' },
+  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
   { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
   { value: 'claude-sonnet-4-6[1m]', label: 'Claude Sonnet 4.6 (1M)' },
+  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
   { value: 'haiku', label: 'Claude Haiku' },
 ]
 
 const legacyClaudeDefaultModelMap = {
-  'claude-opus-4-8': 'claude-opus-4-8[1m]',
-  'claude-opus-4-7': 'claude-opus-4-7[1m]',
-  'claude-opus-4-6': 'claude-opus-4-6[1m]',
   'claude-opus-4-6-fast': 'claude-opus-4-6[1m]-fast',
   sonnet: 'claude-sonnet-4-6[1m]',
 } as const satisfies Partial<Record<ClaudeModel, ClaudeModel>>
@@ -1401,11 +1484,17 @@ export type MagicPromptReasoningEffort =
 // =============================================================================
 export type OpenCodeModel = `opencode/${string}`
 export type CursorModel = `cursor/${string}`
+export type PiModel = `pi/${string}`
+export type CommandCodeModel = `commandcode/${string}`
+export type GrokModel = `grok/${string}`
 export type MagicPromptModel =
   | ClaudeModel
   | CodexModel
   | OpenCodeModel
   | CursorModel
+  | PiModel
+  | CommandCodeModel
+  | GrokModel
 
 /** Check if a model string identifies an OpenCode model */
 export function isOpenCodeModel(model: string): model is OpenCodeModel {
@@ -1415,6 +1504,20 @@ export function isOpenCodeModel(model: string): model is OpenCodeModel {
 /** Check if a model string identifies a Cursor model */
 export function isCursorModel(model: string): model is CursorModel {
   return model.startsWith('cursor/')
+}
+
+/** Check if a model string identifies a PI model */
+export function isPiModel(model: string): model is PiModel {
+  return model.startsWith('pi/')
+}
+
+/** Check if a model string identifies a Command Code model */
+export function isCommandCodeModel(model: string): model is CommandCodeModel {
+  return model.startsWith('commandcode/')
+}
+/** Check if a model string identifies a Grok model */
+export function isGrokModel(model: string): model is GrokModel {
+  return model.startsWith('grok/')
 }
 
 /** Check if a model string identifies a Codex model */
@@ -1437,13 +1540,23 @@ export const codexReasoningOptions: {
 // =============================================================================
 // CLI Backend
 // =============================================================================
-export type CliBackend = 'claude' | 'codex' | 'opencode' | 'cursor'
+export type CliBackend =
+  | 'claude'
+  | 'codex'
+  | 'opencode'
+  | 'cursor'
+  | 'pi'
+  | 'commandcode'
+  | 'grok'
 
 export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'cursor', label: 'Cursor' },
+  { value: 'pi', label: 'Pi (Beta)' },
+  { value: 'commandcode', label: 'Command Code (Beta)' },
+  { value: 'grok', label: 'Grok (Beta)' },
 ]
 
 export type TerminalApp =
@@ -1532,6 +1645,7 @@ export const newSessionKindOptions: {
   { value: 'claude', label: 'Claude' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'cursor', label: 'Cursor' },
+  { value: 'grok', label: 'Grok (Beta)' },
 ]
 
 export function getNewSessionKindLabel(
@@ -1775,11 +1889,13 @@ export const defaultPreferences: AppPreferences = {
   syntax_theme_light: 'github-light',
   parallel_execution_prompt_enabled: true, // Default: enabled
   compact_chat_view_enabled: false, // Default: disabled (experimental)
+  auto_recaps_enabled: true, // Default: enabled
   magic_prompts: DEFAULT_MAGIC_PROMPTS,
   magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
   magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
   magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
   magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+  magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
   file_edit_mode: 'external',
   ai_language: '', // Default: empty (Claude's default behavior)
   allow_web_tools_in_plan_mode: true, // Default: enabled
@@ -1816,10 +1932,16 @@ export const defaultPreferences: AppPreferences = {
   selected_codex_model: 'gpt-5.5', // Default: latest Codex model
   selected_opencode_model: 'opencode/gpt-5.3-codex', // Default OpenCode model
   selected_cursor_model: 'cursor/auto', // Default Cursor model
+  selected_pi_model: 'pi/sonnet', // Default PI model
+  selected_commandcode_model: 'commandcode/default', // Default Command Code model
+  selected_grok_model: 'grok/grok-composer-2.5-fast', // Default Grok model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: false, // Default: disabled
   codex_max_agent_threads: 3, // Default: 3 threads
+  codex_auto_steer_enabled: true, // Default: steer Codex running turn instead of queueing
+  opencode_auto_steer_enabled: true, // Default: steer OpenCode running turn instead of queueing
+  pi_auto_steer_enabled: true, // Default: steer PI running turn instead of queueing
   restore_last_session: true, // Default: enabled
   close_original_on_clear_context: true, // Default: enabled
   build_model: null, // Default: use session model
@@ -1835,7 +1957,13 @@ export const defaultPreferences: AppPreferences = {
   claude_cli_source: 'jean', // Default: Jean-managed
   codex_cli_source: 'jean', // Default: Jean-managed
   opencode_cli_source: 'jean', // Default: Jean-managed
+  grok_cli_source: 'jean', // Default: Jean-managed
   gh_cli_source: 'jean', // Default: Jean-managed
+  pi_cli_source: 'jean', // Default: Jean-managed
+  commandcode_cli_source: 'jean', // Default: Jean-managed
+  wsl_mode_chosen: false, // Default: not yet chosen
+  wsl_enabled: false, // Default: native Windows
+  wsl_distro: '', // Default: empty
   coderabbit_cli_source: 'jean', // Default: Jean-managed
   expand_tool_calls_by_default: false, // Default: collapsed
   window_vibrancy: false, // Default: disabled (high GPU cost)

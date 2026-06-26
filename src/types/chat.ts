@@ -27,6 +27,8 @@ export type ThinkingLevel = 'off' | 'think' | 'megathink' | 'ultrathink'
  * - ultracode: Claude Code ultracode mode (xhigh + Dynamic Workflows)
  */
 export type EffortLevel =
+  | 'off'
+  | 'minimal'
   | 'low'
   | 'medium'
   | 'high'
@@ -35,9 +37,16 @@ export type EffortLevel =
   | 'ultracode'
 
 /**
- * Backend for a chat session (Claude CLI, Codex CLI, OpenCode, or Cursor)
+ * Backend for a chat session (Claude CLI, Codex CLI, OpenCode, Cursor, PI, or Command Code)
  */
-export type Backend = 'claude' | 'codex' | 'opencode' | 'cursor'
+export type Backend =
+  | 'claude'
+  | 'codex'
+  | 'opencode'
+  | 'cursor'
+  | 'pi'
+  | 'commandcode'
+  | 'grok'
 
 /**
  * Execution mode for Claude CLI permission handling
@@ -115,7 +124,7 @@ export interface PlanToolInput {
   plan_preview?: string
   explanation?: string
   steps?: PlanStep[]
-  source?: 'claude' | 'codex'
+  source?: 'claude' | 'codex' | 'grok'
 }
 
 /**
@@ -127,6 +136,7 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; tool_call_id: string }
   | { type: 'thinking'; thinking: string }
+  | { type: 'user_input'; text: string }
 
 /**
  * A single chat message
@@ -196,7 +206,7 @@ export interface Session {
   messages: ChatMessage[]
   /** Message count (populated separately for efficiency when full messages not needed) */
   message_count?: number
-  /** Backend for this session (claude, codex, opencode, or cursor) */
+  /** Backend for this session (claude, codex, opencode, cursor, or grok) */
   backend?: Backend
   /** Claude CLI session ID for resuming conversations */
   claude_session_id?: string
@@ -208,6 +218,12 @@ export interface Session {
   opencode_session_id?: string
   /** Cursor chat ID for resuming conversations */
   cursor_chat_id?: string
+  /** PI session ID for resuming conversations */
+  pi_session_id?: string
+  /** Command Code uses standalone headless invocations; stores no native resume id */
+  commandcode_session_id?: string
+  /** Grok headless session ID for resuming conversations */
+  grok_session_id?: string
   /** Selected model for this session */
   selected_model?: string
   /** Selected thinking level for this session */
@@ -436,6 +452,7 @@ export interface ChunkEvent {
   session_id: string
   worktree_id: string // Kept for backward compatibility
   content: string
+  run_id?: string
 }
 
 /**
@@ -495,6 +512,7 @@ export interface CancelledEvent {
   worktree_id: string // Kept for backward compatibility
   undo_send: boolean // True if user message should be restored to input (instant cancellation)
   emitted_at_ms: number
+  run_id?: string
 }
 
 /**
@@ -804,6 +822,36 @@ export function buildCodexUserInputAnswerMap(
   )
 }
 
+
+export function getAskUserQuestions(input: unknown): Question[] | null {
+  if (typeof input !== 'object' || input === null || !('questions' in input)) {
+    return null
+  }
+
+  const rawQuestions = (input as { questions?: unknown }).questions
+  if (Array.isArray(rawQuestions)) return rawQuestions as Question[]
+
+  if (typeof rawQuestions === 'string') {
+    try {
+      const parsed = JSON.parse(rawQuestions)
+      return Array.isArray(parsed) ? (parsed as Question[]) : null
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
+export function normalizeQuestionMultipleField(
+  questions: (Question & { multiple?: boolean })[]
+): Question[] {
+  return questions.map(q => ({
+    ...q,
+    multiSelect: q.multiSelect ?? q.multiple === true,
+  }))
+}
+
 /**
  * Input structure for AskUserQuestion tool
  */
@@ -822,10 +870,7 @@ export function isAskUserQuestion(
     (toolCall.name === 'AskUserQuestion' ||
       toolCall.name === 'question' ||
       toolCall.name === 'request_user_input') &&
-    typeof toolCall.input === 'object' &&
-    toolCall.input !== null &&
-    'questions' in toolCall.input &&
-    Array.isArray((toolCall.input as AskUserQuestionInput).questions)
+    getAskUserQuestions(toolCall.input) !== null
   )
 }
 
@@ -1412,4 +1457,6 @@ export interface LabelData {
   name: string
   /** Background color hex value (e.g. "#eab308") */
   color: string
+  /** Show this worktree label as a project-view filter tab when used in the current project */
+  pinned?: boolean
 }

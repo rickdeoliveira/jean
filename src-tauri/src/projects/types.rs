@@ -13,6 +13,41 @@ pub enum SessionType {
     Base,
 }
 
+/// Origin/category for a worktree.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeOrigin {
+    Manual,
+    AutoFix,
+}
+
+/// Per-project automated issue fixing settings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectAutoFixSettings {
+    pub enabled: bool,
+    pub interval_minutes: u64,
+    pub issue_limit: u32,
+    pub max_parallel_worktrees: u32,
+    #[serde(default)]
+    pub included_labels: Vec<String>,
+    #[serde(default)]
+    pub excluded_labels: Vec<String>,
+    pub planning_backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning_model: Option<String>,
+    #[serde(default)]
+    pub auto_yolo_enabled: bool,
+    pub yolo_backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yolo_model: Option<String>,
+    #[serde(default)]
+    pub active_hours_enabled: bool,
+    #[serde(default)]
+    pub active_hours_start: u8, // 0-23 local hour, inclusive
+    #[serde(default)]
+    pub active_hours_end: u8, // 0-23 local hour, exclusive
+}
+
 /// Type of merge operation for merging worktree to base
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +65,8 @@ pub enum MergeType {
 pub struct PortEntry {
     pub port: u16,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 /// Jean configuration from jean.json
@@ -126,6 +163,9 @@ pub struct Project {
     /// IDs of linked projects for cross-project context sharing
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_project_ids: Vec<String>,
+    /// Per-project automated issue fixing settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_fix_settings: Option<ProjectAutoFixSettings>,
 }
 
 /// A git worktree created for a project
@@ -231,6 +271,9 @@ pub struct Worktree {
     /// Display order within project (lower = higher in list, base sessions ignore this)
     #[serde(default)]
     pub order: u32,
+    /// Worktree origin/category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<WorktreeOrigin>,
     /// User-assigned labels with colors (e.g. "In Progress").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<LabelData>,
@@ -464,6 +507,8 @@ pub struct WorktreeCreatingEvent {
     pub security_alert_number: Option<u64>,
     /// Advisory GHSA ID (if created from an advisory)
     pub advisory_ghsa_id: Option<String>,
+    /// Worktree origin/category.
+    pub origin: Option<WorktreeOrigin>,
     /// Whether Jean UI should auto-select/open this worktree when events arrive
     pub auto_open_in_jean: bool,
 }
@@ -590,6 +635,8 @@ pub struct WorktreePathExistsEvent {
     pub security_context: Option<super::github_issues::SecurityAlertContext>,
     /// Advisory context to use when creating a new worktree with the suggested name
     pub advisory_context: Option<super::github_issues::AdvisoryContext>,
+    /// Origin of the worktree request, used to suppress user-facing conflicts for background jobs
+    pub origin: Option<WorktreeOrigin>,
 }
 
 /// Event emitted when worktree creation fails because the branch already exists
@@ -611,6 +658,8 @@ pub struct WorktreeBranchExistsEvent {
     pub security_context: Option<super::github_issues::SecurityAlertContext>,
     /// Advisory context to use when creating a new worktree with the suggested name
     pub advisory_context: Option<super::github_issues::AdvisoryContext>,
+    /// Origin of the worktree request, used to suppress user-facing conflicts for background jobs
+    pub origin: Option<WorktreeOrigin>,
 }
 
 impl Worktree {
@@ -668,5 +717,123 @@ mod label_tests {
         assert_eq!(worktree.labels.len(), 1);
         assert_eq!(worktree.labels[0].name, "Keep");
         assert!(worktree.label.is_none());
+    }
+
+    #[test]
+    fn label_pinned_defaults_false_and_serializes_when_true() {
+        let worktree: Worktree = serde_json::from_value(serde_json::json!({
+            "id": "wt", "project_id": "p", "name": "n", "path": "/tmp", "branch": "b",
+            "created_at": 1, "setup_output": null, "setup_script": null,
+            "order": 0,
+            "labels": [
+                { "name": "Default", "color": "#eab308" },
+                { "name": "Pinned", "color": "#22c55e", "pinned": true }
+            ]
+        }))
+        .expect("worktree");
+
+        assert!(!worktree.labels[0].pinned);
+        assert!(worktree.labels[1].pinned);
+
+        let serialized = serde_json::to_value(&worktree).expect("serialize");
+        assert_eq!(
+            serialized["labels"],
+            serde_json::json!([
+                { "name": "Default", "color": "#eab308" },
+                { "name": "Pinned", "color": "#22c55e", "pinned": true }
+            ])
+        );
+    }
+
+    #[test]
+    fn project_auto_fix_settings_round_trip() {
+        let settings = ProjectAutoFixSettings {
+            enabled: true,
+            interval_minutes: 15,
+            issue_limit: 3,
+            max_parallel_worktrees: 2,
+            included_labels: vec!["bug".to_string()],
+            excluded_labels: vec!["wontfix".to_string()],
+            planning_backend: "claude".to_string(),
+            planning_model: Some("claude-opus-4-8[1m]".to_string()),
+            auto_yolo_enabled: true,
+            yolo_backend: "codex".to_string(),
+            yolo_model: Some("gpt-5.3-codex".to_string()),
+            active_hours_enabled: true,
+            active_hours_start: 20,
+            active_hours_end: 8,
+        };
+
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"interval_minutes\":15"));
+        let parsed: ProjectAutoFixSettings = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.issue_limit, 3);
+        assert_eq!(parsed.included_labels, vec!["bug".to_string()]);
+        assert_eq!(parsed.excluded_labels, vec!["wontfix".to_string()]);
+        assert!(parsed.auto_yolo_enabled);
+        assert_eq!(parsed.yolo_backend, "codex");
+    }
+
+    #[test]
+    fn project_auto_fix_settings_default_to_plan_only() {
+        let json = serde_json::json!({
+            "enabled": true,
+            "interval_minutes": 15,
+            "issue_limit": 3,
+            "max_parallel_worktrees": 2,
+            "planning_backend": "claude",
+            "yolo_backend": "codex"
+        });
+
+        let parsed: ProjectAutoFixSettings = serde_json::from_value(json).unwrap();
+
+        assert!(!parsed.auto_yolo_enabled);
+        assert!(parsed.included_labels.is_empty());
+        assert!(parsed.excluded_labels.is_empty());
+    }
+
+    #[test]
+    fn worktree_origin_serializes_as_auto_fix() {
+        let origin = WorktreeOrigin::AutoFix;
+        let json = serde_json::to_string(&origin).unwrap();
+
+        assert_eq!(json, "\"auto_fix\"");
+    }
+
+    #[test]
+    fn conflict_events_serialize_auto_fix_origin() {
+        let path_event = WorktreePathExistsEvent {
+            id: "pending".to_string(),
+            project_id: "project".to_string(),
+            path: "/tmp/existing".to_string(),
+            suggested_name: "issue-1-abcd".to_string(),
+            archived_worktree_id: None,
+            archived_worktree_name: None,
+            issue_context: None,
+            security_context: None,
+            advisory_context: None,
+            origin: Some(WorktreeOrigin::AutoFix),
+        };
+        let branch_event = WorktreeBranchExistsEvent {
+            id: "pending".to_string(),
+            project_id: "project".to_string(),
+            branch: "issue-1".to_string(),
+            suggested_name: "issue-1-abcd".to_string(),
+            issue_context: None,
+            pr_context: None,
+            security_context: None,
+            advisory_context: None,
+            origin: Some(WorktreeOrigin::AutoFix),
+        };
+
+        assert_eq!(
+            serde_json::to_value(path_event).unwrap()["origin"],
+            serde_json::json!("auto_fix")
+        );
+        assert_eq!(
+            serde_json::to_value(branch_event).unwrap()["origin"],
+            serde_json::json!("auto_fix")
+        );
     }
 }

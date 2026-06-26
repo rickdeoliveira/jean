@@ -96,6 +96,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
   const [snapshotItems, setSnapshotItems] = useState<UnreadItem[] | null>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const isMobile = useIsMobile()
+  const showDesktopKeyboardAffordances = isNativeApp() && !isMobile
   const queryClient = useQueryClient()
   const unreadCount = useUnreadCount()
   const { data: allSessions, isLoading } = useAllSessions(open)
@@ -133,6 +134,22 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
   useEffect(() => {
     if (!open) setSnapshotItems(null)
   }, [open])
+
+  // Prune deleted sessions from the open snapshot. A session removed from the
+  // live ['all-sessions'] data (closed/archived/worktree deleted) is dropped,
+  // while a row that merely flipped status stays present in `entries` — so this
+  // does not reintroduce the mid-interaction yank the snapshot prevents.
+  useEffect(() => {
+    if (!open || !allSessions) return
+    const liveIds = new Set(
+      allSessions.entries.flatMap(e => e.sessions.map(s => s.id))
+    )
+    setSnapshotItems(prev =>
+      prev ? prev.filter(item => liveIds.has(item.session.id)) : prev
+    )
+    // snapshotItems intentionally omitted to avoid a self-triggering loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allSessions, open])
 
   const unreadItems = useMemo((): UnreadItem[] => {
     if (!allSessions) return []
@@ -309,6 +326,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
         case 'Backspace':
         case 'r':
         case 'R':
+          if (!showDesktopKeyboardAffordances) break
           e.preventDefault()
           if (focusedIndex >= 0 && displayItems[focusedIndex]) {
             handleMarkOneRead(displayItems[focusedIndex])
@@ -316,7 +334,13 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
           break
       }
     },
-    [displayItems, focusedIndex, handleSelect, handleMarkOneRead]
+    [
+      displayItems,
+      focusedIndex,
+      handleSelect,
+      handleMarkOneRead,
+      showDesktopKeyboardAffordances,
+    ]
   )
 
   // Scroll focused item into view
@@ -357,7 +381,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
             <BellDot className="h-3.5 w-3.5 shrink-0 animate-[bell-ring_2s_ease-in-out_infinite]" />
             {displayCount} finished{' '}
             {displayCount === 1 ? 'session' : 'sessions'}
-            {isNativeApp() && !isMobile && (
+            {showDesktopKeyboardAffordances && (
               <Kbd className="ml-1 h-4 px-1 text-[10px] opacity-60">
                 {formatShortcutDisplay('mod+shift+f')}
               </Kbd>
@@ -431,14 +455,15 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
                       <span className="text-[11px] text-muted-foreground/40 shrink-0 ml-auto">
                         {formatRelativeTime(item.session.updated_at)}
                       </span>
-                      {focusedIndex === idx && (
-                        <Kbd
-                          className="h-4 min-w-4 px-1 text-[10px] opacity-70"
-                          title="Press R to mark read"
-                        >
-                          R
-                        </Kbd>
-                      )}
+                      {showDesktopKeyboardAffordances &&
+                        focusedIndex === idx && (
+                          <Kbd
+                            className="h-4 min-w-4 px-1 text-[10px] opacity-70"
+                            title="Press R to mark read"
+                          >
+                            R
+                          </Kbd>
+                        )}
                     </div>
                     <span className="text-[13px] truncate block">
                       {item.session.name}

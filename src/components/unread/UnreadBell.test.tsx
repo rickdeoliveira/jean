@@ -29,11 +29,16 @@ vi.mock('./useUnreadCount', () => ({
 }))
 
 vi.mock('@/hooks/use-mobile', () => ({
-  useIsMobile: () => false,
+  useIsMobile: () =>
+    (globalThis as typeof globalThis & { __JEAN_TEST_IS_MOBILE__?: boolean })
+      .__JEAN_TEST_IS_MOBILE__ ?? false,
 }))
 
-vi.mock('@/lib/environment', () => ({
-  isNativeApp: () => true,
+vi.mock('@/lib/environment', async importOriginal => ({
+  ...(await importOriginal()),
+  isNativeApp: () =>
+    (globalThis as typeof globalThis & { __JEAN_TEST_IS_NATIVE__?: boolean })
+      .__JEAN_TEST_IS_NATIVE__ ?? true,
 }))
 
 const selectProjectMock = vi.fn()
@@ -116,6 +121,12 @@ async function openDropdown() {
 describe('UnreadBell', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    ;(
+      globalThis as typeof globalThis & { __JEAN_TEST_IS_MOBILE__?: boolean }
+    ).__JEAN_TEST_IS_MOBILE__ = false
+    ;(
+      globalThis as typeof globalThis & { __JEAN_TEST_IS_NATIVE__?: boolean }
+    ).__JEAN_TEST_IS_NATIVE__ = true
     unreadCount = 2
     allSessions = {
       entries: [
@@ -175,5 +186,55 @@ describe('UnreadBell', () => {
 
     expect(within(secondRow).getByText('R')).toBeInTheDocument()
     expect(within(firstRow).queryByText('R')).not.toBeInTheDocument()
+  })
+
+  it('shows the finished sessions shortcut hint on native desktop', () => {
+    renderWithQueryClient(<UnreadBell title="Jean" />)
+
+    expect(
+      screen.getByText(/(?:⌘|⌃|Ctrl) \+ ⇧|Shift \+ F/i)
+    ).toBeInTheDocument()
+  })
+
+  it('hides unread keyboard affordances in web access', async () => {
+    ;(
+      globalThis as typeof globalThis & { __JEAN_TEST_IS_NATIVE__?: boolean }
+    ).__JEAN_TEST_IS_NATIVE__ = false
+
+    const user = await openDropdown()
+
+    expect(
+      screen.queryByText(/(?:⌘|⌃|Ctrl) \+ (?:⇧|Shift) \+ F/i)
+    ).not.toBeInTheDocument()
+
+    const firstRow = screen.getByText('Session one').closest('button')
+    if (!firstRow) throw new Error('Expected first unread session row')
+    expect(within(firstRow).queryByText('R')).not.toBeInTheDocument()
+
+    await user.keyboard('r')
+
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(screen.getByText('Session one')).toBeInTheDocument()
+  })
+
+  it('hides unread keyboard affordances on mobile', async () => {
+    ;(
+      globalThis as typeof globalThis & { __JEAN_TEST_IS_MOBILE__?: boolean }
+    ).__JEAN_TEST_IS_MOBILE__ = true
+
+    const user = await openDropdown()
+
+    expect(
+      screen.queryByText(/(?:⌘|⌃|Ctrl) \+ (?:⇧|Shift) \+ F/i)
+    ).not.toBeInTheDocument()
+
+    const firstRow = screen.getByText('Session one').closest('button')
+    if (!firstRow) throw new Error('Expected first unread session row')
+    expect(within(firstRow).queryByText('R')).not.toBeInTheDocument()
+
+    await user.keyboard('r')
+
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(screen.getByText('Session one')).toBeInTheDocument()
   })
 })

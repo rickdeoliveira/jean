@@ -9,8 +9,26 @@ const mocks = vi.hoisted(() => ({
   openExternal: vi.fn(),
 }))
 
+interface UiStoreMock {
+  openInModalOpen: boolean
+  setOpenInModalOpen: typeof mocks.setOpenInModalOpen
+  openPreferencesPane: typeof mocks.openPreferencesPane
+  sessionChatModalWorktreeId: string | null
+  openRemotePicker: typeof mocks.openRemotePicker
+}
+
+interface ProjectsStoreMock {
+  selectedWorktreeId: string
+  selectedProjectId: string
+}
+
+interface ChatStoreMock {
+  activeWorktreeId: string | null
+  activeSessionIds: Record<string, string>
+}
+
 vi.mock('@/store/ui-store', () => ({
-  useUIStore: (selector?: (state: any) => unknown) => {
+  useUIStore: (selector?: (state: UiStoreMock) => unknown) => {
     const state = {
       openInModalOpen: true,
       setOpenInModalOpen: mocks.setOpenInModalOpen,
@@ -23,7 +41,7 @@ vi.mock('@/store/ui-store', () => ({
 }))
 
 vi.mock('@/store/projects-store', () => ({
-  useProjectsStore: (selector?: (state: any) => unknown) => {
+  useProjectsStore: (selector?: (state: ProjectsStoreMock) => unknown) => {
     const state = {
       selectedWorktreeId: 'wt-1',
       selectedProjectId: 'project-1',
@@ -34,7 +52,7 @@ vi.mock('@/store/projects-store', () => ({
 
 vi.mock('@/store/chat-store', () => ({
   useChatStore: Object.assign(
-    (selector?: (state: any) => unknown) => {
+    (selector?: (state: ChatStoreMock) => unknown) => {
       const state = {
         activeWorktreeId: null,
         activeSessionIds: { 'wt-1': 'session-1' },
@@ -140,9 +158,13 @@ describe('OpenInModal', () => {
   it('shows worktree and loaded security/advisory context URLs', async () => {
     render(<OpenInModal />)
 
-    expect(await screen.findByText('Advisory GHSA-892v-qq52-xprh')).toBeInTheDocument()
+    expect(
+      await screen.findByText('Advisory GHSA-892v-qq52-xprh')
+    ).toBeInTheDocument()
     expect(screen.getByText('Security #7')).toBeInTheDocument()
     expect(screen.getByText('Security #9')).toBeInTheDocument()
-    expect(screen.getByText('Advisory GHSA-loaded-1234-5678')).toBeInTheDocument()
+    expect(
+      screen.getByText('Advisory GHSA-loaded-1234-5678')
+    ).toBeInTheDocument()
   })
 })

@@ -58,6 +58,8 @@ import { isNativeApp } from '@/lib/environment'
 import {
   CODEX_EFFORT_LEVEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
+  GROK_EFFORT_LEVEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import {
@@ -84,7 +86,7 @@ import { getResumeCommand } from '@/components/chat/session-card-utils'
 interface MobileSettingsMenuProps {
   isDisabled: boolean
   providerLocked?: boolean
-  selectedBackend: 'claude' | 'codex' | 'opencode' | 'cursor'
+  selectedBackend: CliBackend
   selectedProvider: string | null
   backendModelLabel: ReactNode
   backendModelLabelText: string
@@ -130,7 +132,6 @@ interface MobileSettingsMenuProps {
 
 export function MobileSettingsMenu({
   isDisabled,
-  providerLocked,
   selectedBackend,
   selectedProvider,
   backendModelLabel,
@@ -168,19 +169,31 @@ export function MobileSettingsMenu({
   worktreeId,
   onAttach,
 }: MobileSettingsMenuProps) {
-  const effortLevelOptions = isCodex
-    ? CODEX_EFFORT_LEVEL_OPTIONS
-    : EFFORT_LEVEL_OPTIONS
-  const displayedEffortLevel = isCodex
-    ? selectedEffortLevel === 'max'
-      ? 'high'
-      : selectedEffortLevel === 'ultracode'
-        ? 'xhigh'
+  const isPi = selectedBackend === 'pi'
+  const isGrok = selectedBackend === 'grok'
+  const usesEffortControl = useAdaptiveThinking || isCodex || isPi || isGrok
+  const effortLevelOptions = isPi
+    ? PI_EFFORT_LEVEL_OPTIONS
+    : isCodex
+      ? CODEX_EFFORT_LEVEL_OPTIONS
+      : isGrok
+        ? GROK_EFFORT_LEVEL_OPTIONS
+        : EFFORT_LEVEL_OPTIONS
+  const displayedEffortLevel =
+    isCodex || isPi
+      ? selectedEffortLevel === 'max'
+        ? 'high'
+        : selectedEffortLevel === 'ultracode'
+          ? 'xhigh'
+          : selectedEffortLevel
+      : isGrok && selectedEffortLevel === 'ultracode'
+        ? 'max'
         : selectedEffortLevel
-    : selectedEffortLevel
   const displayedEffortLabel =
     effortLevelOptions.find(o => o.value === displayedEffortLevel)?.label ??
     displayedEffortLevel
+  const hideReasoningControl =
+    hideThinkingLevel || selectedBackend === 'commandcode'
 
   const isMobile = useIsMobile()
   const queryClient = useQueryClient()
@@ -334,9 +347,7 @@ export function MobileSettingsMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align={isMobile ? 'end' : 'start'} className="w-72">
-        {customCliProfiles.length > 0 &&
-          !providerLocked &&
-          selectedBackend === 'claude' && (
+        {customCliProfiles.length > 0 && selectedBackend === 'claude' && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <Sparkles className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -388,7 +399,7 @@ export function MobileSettingsMenu({
           )}
         </DropdownMenuItem>
 
-        {hideThinkingLevel ? null : useAdaptiveThinking || isCodex ? (
+        {hideReasoningControl ? null : usesEffortControl ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="[&>svg:last-child]:!ml-2">
               <Brain className="mr-2 h-4 w-4 text-muted-foreground" />

@@ -157,7 +157,7 @@ export function useAvailableOpencodeModels(options?: { enabled?: boolean }) {
         return await invoke<string[]>('list_opencode_models')
       } catch (error) {
         logger.error('Failed to list OpenCode models', { error })
-        return []
+        throw error
       }
     },
     enabled: options?.enabled ?? true,

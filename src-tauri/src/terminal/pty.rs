@@ -16,6 +16,14 @@ fn get_user_shell() -> String {
     crate::platform::get_default_shell()
 }
 
+fn is_windows_batch_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false)
+}
+
 /// Spawn a terminal, optionally running a command
 ///
 /// When `command_args` is provided alongside `command`, the binary at `command`
@@ -56,45 +64,7 @@ pub fn spawn_terminal(
     let shell = get_user_shell();
     log::trace!("Using shell: {shell}");
 
-    // Build command - either run a specific command or start interactive shell
-    let mut cmd = if let Some(ref run_command) = command {
-        if run_command.is_empty() {
-            return Err("Command is empty".to_string());
-        }
-        if let Some(ref args) = command_args {
-            // Validate absolute paths exist upfront for a clear error message.
-            if run_command.starts_with('/') && !std::path::Path::new(run_command).exists() {
-                return Err(format!("Binary not found: {run_command}"));
-            }
-
-            // Direct binary invocation — CommandBuilder uses execvp which handles
-            // spaces in paths natively. No shell wrapper needed.
-            let mut c = CommandBuilder::new(run_command);
-            for arg in args {
-                c.arg(arg);
-            }
-            c
-        } else {
-            // Run the command wrapped in a shell
-            let mut c = CommandBuilder::new(&shell);
-            #[cfg(windows)]
-            {
-                c.arg("-Command");
-                c.arg(run_command.to_string());
-            }
-            #[cfg(not(windows))]
-            {
-                c.arg("-c");
-                c.arg(run_command);
-            }
-            c
-        }
-    } else {
-        CommandBuilder::new(&shell)
-    };
-    // Use the requested working directory if it exists, otherwise fall back to
-    // the system temp directory. This is critical on Windows where `/tmp` doesn't
-    // exist — CLI login terminals pass `/tmp` as a placeholder path.
+    // Resolve working directory: use requested path if it exists, else temp dir
     let cwd = if std::path::Path::new(&worktree_path).is_dir() {
         worktree_path.clone()
     } else {
@@ -106,12 +76,102 @@ pub fn spawn_terminal(
         );
         fallback
     };
+
+    // Check if we should route through WSL
+    #[cfg(windows)]
+    let wsl_config = crate::platform::get_wsl_config();
+    #[cfg(not(windows))]
+    let wsl_config = crate::platform::wsl::WslConfig::default();
+
+    // Build command - either run a specific command or start interactive shell
+    let mut cmd = if wsl_config.enabled {
+        // WSL mode: route everything through wsl.exe
+        let unix_cwd = crate::platform::win_to_wsl_path(&cwd);
+        if let Some(ref run_command) = command {
+            if run_command.is_empty() {
+                return Err("Command is empty".to_string());
+            }
+            let mut c = CommandBuilder::new("wsl.exe");
+            c.arg("-d");
+            c.arg(&wsl_config.distro);
+            c.arg("--cd");
+            c.arg(&unix_cwd);
+            c.arg("--");
+            if let Some(ref args) = command_args {
+                // Direct binary invocation inside WSL
+                c.arg(run_command);
+                for arg in args {
+                    c.arg(arg);
+                }
+            } else {
+                // Shell-wrapped command inside WSL
+                c.arg("sh");
+                c.arg("-c");
+                c.arg(run_command);
+            }
+            c
+        } else {
+            // Interactive WSL shell
+            let mut c = CommandBuilder::new("wsl.exe");
+            c.arg("-d");
+            c.arg(&wsl_config.distro);
+            c.arg("--cd");
+            c.arg(&unix_cwd);
+            c
+        }
+    } else if let Some(ref run_command) = command {
+        if run_command.is_empty() {
+            return Err("Command is empty".to_string());
+        }
+        if let Some(ref args) = command_args {
+            // Validate absolute paths exist upfront for a clear error message.
+            if run_command.starts_with('/') && !std::path::Path::new(run_command).exists() {
+                return Err(format!("Binary not found: {run_command}"));
+            }
+
+            let mut c = if cfg!(windows) && is_windows_batch_file(run_command) {
+                let mut c = CommandBuilder::new("cmd.exe");
+                c.arg("/C");
+                c.arg(run_command);
+                c
+            } else {
+                // Direct binary invocation — CommandBuilder uses execvp which handles
+                // spaces in paths natively. No shell wrapper needed.
+                CommandBuilder::new(run_command)
+            };
+            for arg in args {
+                c.arg(arg);
+            }
+            c
+        } else {
+            // Run the command wrapped in a shell
+            let mut c = CommandBuilder::new(&shell);
+            #[cfg(windows)]
+            {
+                c.arg("-Command");
+                c.arg(run_command);
+            }
+            #[cfg(not(windows))]
+            {
+                c.arg("-c");
+                c.arg(run_command);
+            }
+            c
+        }
+    } else {
+        CommandBuilder::new(&shell)
+    };
+
     log::debug!(
-        "Terminal {terminal_id}: cwd={cwd}, command={:?}, args={:?}",
+        "Terminal {terminal_id}: cwd={cwd}, command={:?}, args={:?}, wsl={}",
         command,
-        command_args
+        command_args,
+        wsl_config.enabled
     );
-    cmd.cwd(&cwd);
+    // WSL mode handles cwd via --cd flag; native mode uses cwd() on the command
+    if !wsl_config.enabled {
+        cmd.cwd(&cwd);
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("JEAN_WORKTREE_PATH", &worktree_path);
@@ -399,4 +459,19 @@ pub fn kill_all_terminals() -> usize {
     eprintln!("[TERMINAL CLEANUP] Cleanup complete, killed {count} terminal(s)");
 
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_windows_batch_file;
+
+    #[test]
+    fn detects_windows_batch_shims_case_insensitively() {
+        assert!(is_windows_batch_file(
+            r"C:\Users\u\AppData\Roaming\npm\opencode.CMD"
+        ));
+        assert!(is_windows_batch_file(r"C:\tools\run.bat"));
+        assert!(!is_windows_batch_file(r"C:\tools\opencode.exe"));
+        assert!(!is_windows_batch_file(r"C:\tools\opencode"));
+    }
 }

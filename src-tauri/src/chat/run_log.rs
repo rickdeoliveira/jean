@@ -14,8 +14,8 @@ use super::storage::{
     get_session_dir, list_all_session_ids, load_metadata, save_metadata, with_metadata_mut,
 };
 use super::types::{
-    Backend, ChatMessage, ContentBlock, LoadedMessages, MessageRole, RunEntry, RunStatus, ToolCall,
-    UsageData,
+    is_claude_compaction_summary_text, Backend, ChatMessage, ContentBlock, LoadedMessages,
+    MessageRole, RunEntry, RunStatus, ToolCall, UsageData,
 };
 
 // ============================================================================
@@ -330,6 +330,7 @@ pub fn start_run(
     thinking_level: Option<&str>,
     effort_level: Option<&str>,
     backend: Option<Backend>,
+    custom_profile_name: Option<&str>,
 ) -> Result<RunLogWriter, String> {
     let run_id = Uuid::new_v4().to_string();
     let now = now_timestamp();
@@ -373,6 +374,8 @@ pub fn start_run(
         execution_mode: execution_mode.map(|s| s.to_string()),
         thinking_level: thinking_level.map(|s| s.to_string()),
         effort_level: effort_level.map(|s| s.to_string()),
+        backend: backend.clone(),
+        custom_profile_name: custom_profile_name.map(|s| s.to_string()),
         started_at: now,
         ended_at: None,
         status: RunStatus::Running,
@@ -385,6 +388,7 @@ pub fn start_run(
         codex_thread_id: None,
         codex_turn_id: None,
         cursor_chat_id: None,
+        grok_session_id: None,
     };
 
     with_metadata_mut(
@@ -527,6 +531,8 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
     // Used to filter out denied blocking tools (AskUserQuestion/ExitPlanMode)
     // that Claude retried multiple times.
     let mut errored_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut errored_tool_outputs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     // OpenCode echoes the user prompt as the first text block in assistant messages.
     // Skip it during replay so the prompt doesn't appear twice.
     let mut skipped_prompt_echo = false;
@@ -633,6 +639,13 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
         let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         match msg_type {
+            "steered_user_message" => {
+                if let Some(text) = msg.get("text").and_then(|v| v.as_str()) {
+                    content_blocks.push(ContentBlock::UserInput {
+                        text: text.to_string(),
+                    });
+                }
+            }
             "assistant" => {
                 // Text-routing gate (mirrors live-stream logic): if ANY armed
                 // Monitor has initial_turn_finished=true, this assistant turn
@@ -650,7 +663,9 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                                     if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
                                         // Skip CLI placeholder text emitted when extended
                                         // thinking starts before any real text content
-                                        if text == "(no content)" {
+                                        if text == "(no content)"
+                                            || is_claude_compaction_summary_text(text)
+                                        {
                                             continue;
                                         }
                                         if !skipped_prompt_echo
@@ -786,6 +801,8 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                                 // Track errored tool results for filtering
                                 if is_error && !tool_id.is_empty() {
                                     errored_tool_ids.insert(tool_id.to_string());
+                                    errored_tool_outputs
+                                        .insert(tool_id.to_string(), output.to_string());
                                 }
 
                                 // For armed Monitors, capture the tool_result text
@@ -913,10 +930,21 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
     // Filter out blocking tool calls (AskUserQuestion/plan approval) that received
     // error responses. When Jean denies a blocking tool, it sends back an error
     // tool_result. Claude may retry the same tool multiple times, producing duplicate
-    // question/plan UIs on recovery. Only filter errored blocking tools when
+    // question/plan UIs on recovery. Only filter generic errored blocking tools when
     // non-errored blocking tools of the same type remain — never remove ALL blocking
-    // tools, as the last one is the legitimate pending one.
+    // tools, as the last one may be the legitimate pending one.
+    //
+    // Exception: if Claude CLI says the tool is unavailable/not enabled, there is
+    // no pending UI to answer. Drop it unconditionally so Jean does not park the
+    // session on an impossible AskUserQuestion/ExitPlanMode approval.
     if !errored_tool_ids.is_empty() {
+        let is_unavailable_error = |id: &str| {
+            errored_tool_outputs.get(id).is_some_and(|output| {
+                output.contains("No such tool available")
+                    || output.contains("not enabled in this context")
+            })
+        };
+
         let errored_blocking: std::collections::HashSet<String> = tool_calls
             .iter()
             .filter(|tc| {
@@ -927,6 +955,28 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                     && errored_tool_ids.contains(&tc.id)
             })
             .map(|tc| tc.id.clone())
+            .collect();
+
+        let unavailable_blocking: std::collections::HashSet<String> = errored_blocking
+            .iter()
+            .filter(|id| is_unavailable_error(id))
+            .cloned()
+            .collect();
+
+        if !unavailable_blocking.is_empty() {
+            tool_calls.retain(|tc| !unavailable_blocking.contains(&tc.id));
+            content_blocks.retain(|cb| {
+                if let ContentBlock::ToolUse { tool_call_id } = cb {
+                    !unavailable_blocking.contains(tool_call_id)
+                } else {
+                    true
+                }
+            });
+        }
+
+        let errored_blocking: std::collections::HashSet<String> = errored_blocking
+            .difference(&unavailable_blocking)
+            .cloned()
             .collect();
 
         if !errored_blocking.is_empty() {
@@ -991,7 +1041,7 @@ fn should_inject_synthetic_exit_plan(
             .any(|tc| tc.name == "ExitPlanMode" || tc.name == "CodexPlan");
 
     match backend {
-        Backend::Opencode => base_match,
+        Backend::Opencode | Backend::Pi | Backend::Commandcode => base_match,
         Backend::Cursor => false, // Plan approval only on real createPlanToolCall / interaction_query
         _ => false,
     }
@@ -1052,9 +1102,82 @@ pub fn load_session_messages(
     Ok(load_session_messages_window(app, session_id, None, None)?.messages)
 }
 
+struct RenderableRunWindow {
+    run_indices: Vec<usize>,
+    start_index: usize,
+}
+
+fn select_renderable_run_window<F>(
+    runs: &[RunEntry],
+    limit: Option<usize>,
+    before_run_index: Option<usize>,
+    is_renderable: F,
+) -> RenderableRunWindow
+where
+    F: FnMut(usize, &RunEntry) -> bool,
+{
+    let end = before_run_index.unwrap_or(runs.len()).min(runs.len());
+    let max_renderable = limit.unwrap_or(usize::MAX);
+    let mut run_indices = Vec::new();
+    let mut is_renderable = is_renderable;
+
+    if max_renderable > 0 {
+        for index in (0..end).rev() {
+            if is_renderable(index, &runs[index]) {
+                run_indices.push(index);
+                if run_indices.len() >= max_renderable {
+                    break;
+                }
+            }
+        }
+    }
+
+    run_indices.reverse();
+    let start_index = run_indices.first().copied().unwrap_or(0);
+
+    RenderableRunWindow {
+        run_indices,
+        start_index,
+    }
+}
+
+fn run_uses_codex_history_parser(metadata_backend: &Backend, run: &RunEntry) -> bool {
+    if run.model.is_some() {
+        run.model
+            .as_deref()
+            .map(crate::is_codex_model)
+            .unwrap_or(false)
+    } else {
+        metadata_backend == &Backend::Codex
+    }
+}
+
+fn cancelled_codex_run_has_visible_artifacts(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    metadata_backend: &Backend,
+    run: &RunEntry,
+) -> bool {
+    if run.status != RunStatus::Cancelled || run.assistant_message_id.is_some() {
+        return false;
+    }
+    if !run_uses_codex_history_parser(metadata_backend, run) {
+        return false;
+    }
+
+    let Ok(lines) = read_run_log(app, session_id, &run.run_id) else {
+        return false;
+    };
+
+    super::codex::codex_run_log_has_visible_assistant_artifacts(
+        &lines,
+        run.execution_mode.as_deref() == Some("plan"),
+    )
+}
+
 /// Load a window of messages for a session by parsing JSONL files.
 ///
-/// - `limit`: max number of runs (most recent within window) to parse. `None` = all.
+/// - `limit`: max number of renderable runs (most recent within window) to parse. `None` = all.
 /// - `before_run_index`: only parse runs strictly before this index. `None` = up to end.
 ///
 /// Returned `LoadedMessages.loaded_run_start_index` is the index of the first run actually
@@ -1078,64 +1201,63 @@ pub fn load_session_messages_window(
     };
 
     let total_runs = metadata.runs.len();
-    let end = before_run_index.unwrap_or(total_runs).min(total_runs);
-    let start = limit.map_or(0, |n| end.saturating_sub(n));
+    let cancelled_artifact_run_indices = std::cell::RefCell::new(std::collections::HashSet::new());
+    let mut is_renderable = |index: usize, run: &RunEntry| {
+        if run.is_renderable_in_chat_history() {
+            return true;
+        }
+        if cancelled_codex_run_has_visible_artifacts(app, session_id, &metadata.backend, run) {
+            cancelled_artifact_run_indices.borrow_mut().insert(index);
+            return true;
+        }
+        false
+    };
+    let window =
+        select_renderable_run_window(&metadata.runs, limit, before_run_index, &mut is_renderable);
 
     log::debug!(
-        "[LoadMessages] session={session_id} metadata has {} runs (backend={:?}) — window [{start}..{end}]",
+        "[LoadMessages] session={session_id} metadata has {} runs (backend={:?}) — renderable window start={} count={}",
         total_runs,
-        metadata.backend
+        metadata.backend,
+        window.start_index,
+        window.run_indices.len(),
     );
 
     let mut messages = Vec::new();
 
-    for run in &metadata.runs[start..end] {
-        // Skip user message for instant-cancelled runs (undo_send)
-        // These have Cancelled status but no assistant_message_id
-        let is_undo_send = run.status == RunStatus::Cancelled && run.assistant_message_id.is_none();
+    for run_index in &window.run_indices {
+        let run = &metadata.runs[*run_index];
 
-        if !is_undo_send {
-            // Add user message
-            messages.push(ChatMessage {
-                id: run.user_message_id.clone(),
-                session_id: session_id.to_string(),
-                role: MessageRole::User,
-                content: run.user_message.clone(),
-                timestamp: run.started_at,
-                tool_calls: vec![],
-                content_blocks: vec![],
-                cancelled: false,
-                plan_approved: false,
-                model: run.model.clone(),
-                execution_mode: run.execution_mode.clone(),
-                thinking_level: run.thinking_level.clone(),
-                effort_level: run.effort_level.clone(),
-                recovered: false,
-                usage: None, // User messages don't have token usage
-            });
-        }
+        // Add user message
+        messages.push(ChatMessage {
+            id: run.user_message_id.clone(),
+            session_id: session_id.to_string(),
+            role: MessageRole::User,
+            content: run.user_message.clone(),
+            timestamp: run.started_at,
+            tool_calls: vec![],
+            content_blocks: vec![],
+            cancelled: false,
+            plan_approved: false,
+            model: run.model.clone(),
+            execution_mode: run.execution_mode.clone(),
+            thinking_level: run.thinking_level.clone(),
+            effort_level: run.effort_level.clone(),
+            recovered: false,
+            usage: None, // User messages don't have token usage
+        });
 
-        // Add assistant message for every non-undo run, including Running runs.
+        // Add assistant message for every run that should render assistant output.
         // Running logs contain partial JSONL snapshots that we can surface on reload.
-        if !is_undo_send {
+        if run.renders_assistant_message()
+            || cancelled_artifact_run_indices.borrow().contains(run_index)
+        {
             let lines = read_run_log(app, session_id, &run.run_id)?;
 
             // Parse JSONL content — route by backend.
             // Per-run model is authoritative when present. Only fall back to
             // session-level metadata.backend for legacy runs with no model stored.
-            let run_is_codex = run
-                .model
-                .as_deref()
-                .map(crate::is_codex_model)
-                .unwrap_or(false);
-            let use_codex_parser = if run.model.is_some() {
-                // Model stored per-run: only Codex runs use the Codex history parser.
-                // OpenCode persists Claude-style `type: assistant` JSONL lines.
-                run_is_codex
-            } else {
-                // Legacy run without model field: fall back to session backend.
-                metadata.backend == Backend::Codex
-            };
+            let use_codex_parser = run_uses_codex_history_parser(&metadata.backend, run);
             let mut assistant_msg = if use_codex_parser {
                 super::codex::parse_codex_run_to_message(&lines, run)?
             } else {
@@ -1163,6 +1285,8 @@ pub fn load_session_messages_window(
             assistant_msg.session_id = session_id.to_string();
             if run.status == RunStatus::Running {
                 assistant_msg.id = format!("running-{}", run.run_id);
+            } else if run.status == RunStatus::Cancelled && run.assistant_message_id.is_none() {
+                assistant_msg.id = format!("cancelled-{}", run.run_id);
             }
 
             if should_inject_synthetic_enter_plan(&metadata.backend, run, &assistant_msg) {
@@ -1200,17 +1324,6 @@ pub fn load_session_messages_window(
                     "*Response content was not captured for this completed run.*".to_string();
             }
 
-            // Skip cancelled runs with no content (instant cancel race window).
-            // During the brief period between mark_running_run_cancelled() setting
-            // a placeholder assistant_message_id and the command handler setting it
-            // to None, the JSONL may be empty. Don't show an empty message.
-            if run.status == RunStatus::Cancelled
-                && assistant_msg.content.is_empty()
-                && assistant_msg.tool_calls.is_empty()
-            {
-                continue;
-            }
-
             messages.push(assistant_msg);
         }
     }
@@ -1218,7 +1331,7 @@ pub fn load_session_messages_window(
     Ok(LoadedMessages {
         messages,
         total_runs,
-        loaded_run_start_index: start,
+        loaded_run_start_index: window.start_index,
     })
 }
 
@@ -1235,6 +1348,8 @@ mod tests {
             execution_mode: Some("plan".to_string()),
             thinking_level: None,
             effort_level: None,
+            backend: Some(Backend::Codex),
+            custom_profile_name: None,
             started_at: 1,
             ended_at: Some(2),
             status: RunStatus::Completed,
@@ -1247,6 +1362,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         }
     }
 
@@ -1284,6 +1400,38 @@ mod tests {
         ));
 
         inject_synthetic_exit_plan(&Backend::Opencode, &run.run_id, &mut msg);
+
+        assert_eq!(msg.tool_calls.len(), 1);
+        assert_eq!(msg.tool_calls[0].name, "ExitPlanMode");
+        assert_eq!(msg.tool_calls[0].id, "synthetic-exit-plan-run-123");
+    }
+
+    #[test]
+    fn injects_synthetic_exit_plan_for_completed_commandcode_plan_runs() {
+        let run = sample_run();
+        let mut msg = sample_assistant_message();
+
+        assert!(should_inject_synthetic_exit_plan(
+            &Backend::Commandcode,
+            &run,
+            &msg,
+        ));
+
+        inject_synthetic_exit_plan(&Backend::Commandcode, &run.run_id, &mut msg);
+
+        assert_eq!(msg.tool_calls.len(), 1);
+        assert_eq!(msg.tool_calls[0].name, "ExitPlanMode");
+        assert_eq!(msg.tool_calls[0].id, "synthetic-exit-plan-run-123");
+    }
+
+    #[test]
+    fn injects_synthetic_exit_plan_for_completed_pi_plan_runs() {
+        let run = sample_run();
+        let mut msg = sample_assistant_message();
+
+        assert!(should_inject_synthetic_exit_plan(&Backend::Pi, &run, &msg));
+
+        inject_synthetic_exit_plan(&Backend::Pi, &run.run_id, &mut msg);
 
         assert_eq!(msg.tool_calls.len(), 1);
         assert_eq!(msg.tool_calls[0].name, "ExitPlanMode");
@@ -1358,6 +1506,206 @@ mod tests {
         inject_synthetic_enter_plan("run-123", &mut msg);
 
         assert_eq!(msg.tool_calls.len(), before_tool_count);
+    }
+
+    #[test]
+    fn renderable_window_backfills_past_recent_cancelled_runs() {
+        let mut runs = Vec::new();
+        for index in 0..3 {
+            runs.push(RunEntry {
+                run_id: format!("completed-{index}"),
+                user_message_id: format!("user-completed-{index}"),
+                user_message: format!("completed prompt {index}"),
+                started_at: index as u64,
+                ended_at: Some(index as u64 + 1),
+                ..sample_run()
+            });
+        }
+        for index in 0..10 {
+            runs.push(RunEntry {
+                run_id: format!("cancelled-{index}"),
+                user_message_id: format!("user-cancelled-{index}"),
+                user_message: format!("cancelled prompt {index}"),
+                started_at: 100 + index as u64,
+                ended_at: Some(101 + index as u64),
+                status: RunStatus::Cancelled,
+                assistant_message_id: None,
+                cancelled: true,
+                ..sample_run()
+            });
+        }
+
+        let window = select_renderable_run_window(&runs, Some(10), None, |_, run| {
+            run.is_renderable_in_chat_history()
+        });
+
+        assert_eq!(window.start_index, 0);
+        assert_eq!(window.run_indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn renderable_window_includes_cancelled_runs_with_assistant_id() {
+        let runs = vec![RunEntry {
+            run_id: "cancelled-with-assistant".to_string(),
+            user_message_id: "user-cancelled".to_string(),
+            user_message: "cancelled prompt".to_string(),
+            status: RunStatus::Cancelled,
+            assistant_message_id: Some("assistant-cancelled".to_string()),
+            cancelled: true,
+            ..sample_run()
+        }];
+
+        let window = select_renderable_run_window(&runs, Some(10), None, |_, run| {
+            run.is_renderable_in_chat_history()
+        });
+
+        assert_eq!(window.run_indices, vec![0]);
+    }
+
+    #[test]
+    fn renderable_window_can_include_cancelled_codex_runs_with_persisted_artifacts() {
+        let runs = vec![RunEntry {
+            run_id: "cancelled-with-artifacts".to_string(),
+            user_message_id: "user-cancelled".to_string(),
+            user_message: "continue".to_string(),
+            status: RunStatus::Cancelled,
+            assistant_message_id: None,
+            cancelled: true,
+            ..sample_run()
+        }];
+
+        let window = select_renderable_run_window(&runs, Some(10), None, |_, run| {
+            run.is_renderable_in_chat_history() || run.run_id == "cancelled-with-artifacts"
+        });
+
+        assert_eq!(window.run_indices, vec![0]);
+    }
+
+    #[test]
+    fn parse_run_preserves_steered_user_messages() {
+        let run = sample_run();
+        let lines = vec![
+            r#"{"_run_meta":true}"#.to_string(),
+            r#"{"type":"steered_user_message","text":"2"}"#.to_string(),
+            r#"{"type":"steered_user_message","text":"3"}"#.to_string(),
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}"#
+                .to_string(),
+        ];
+
+        let message = parse_run_to_message(&lines, &run).unwrap();
+
+        assert!(matches!(
+            &message.content_blocks[0],
+            ContentBlock::UserInput { text } if text == "2"
+        ));
+        assert!(matches!(
+            &message.content_blocks[1],
+            ContentBlock::UserInput { text } if text == "3"
+        ));
+        assert!(matches!(
+            &message.content_blocks[2],
+            ContentBlock::Text { text } if text == "done"
+        ));
+    }
+
+    #[test]
+    fn parse_run_drops_unavailable_ask_user_question_errors() {
+        let run = sample_run();
+        let tool_id = "toolu_unavailable_question";
+        let lines = vec![
+            serde_json::json!({
+                "type": "assistant",
+                "message": {
+                    "content": [{
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": "AskUserQuestion",
+                        "input": {
+                            "questions": "[{\"question\":\"Pick one\",\"options\":[{\"label\":\"A\"}]}]"
+                        }
+                    }]
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "type": "user",
+                "message": {
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "is_error": true,
+                        "content": "<tool_use_error>Error: No such tool available: AskUserQuestion. AskUserQuestion exists but is not enabled in this context. Use one of the available tools instead.</tool_use_error>"
+                    }]
+                }
+            })
+            .to_string(),
+        ];
+
+        let msg = parse_run_to_message(&lines, &run).unwrap();
+
+        assert!(msg.tool_calls.is_empty());
+        assert!(msg.content_blocks.is_empty());
+    }
+
+    #[test]
+    fn parse_run_skips_claude_compaction_summary_text() {
+        let run = RunEntry {
+            run_id: "run-compact".to_string(),
+            user_message_id: "user-compact".to_string(),
+            user_message: "continue".to_string(),
+            model: Some("claude-sonnet-4-6".to_string()),
+            execution_mode: Some("yolo".to_string()),
+            thinking_level: None,
+            effort_level: None,
+            backend: Some(Backend::Claude),
+            custom_profile_name: None,
+            started_at: 1,
+            ended_at: Some(2),
+            status: RunStatus::Cancelled,
+            assistant_message_id: Some("assistant-compact".to_string()),
+            cancelled: true,
+            recovered: false,
+            claude_session_id: None,
+            pid: None,
+            usage: None,
+            codex_thread_id: None,
+            codex_turn_id: None,
+            cursor_chat_id: None,
+            grok_session_id: None,
+        };
+
+        let lines = vec![
+            r#"{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":170298}}"#.to_string(),
+            serde_json::json!({
+                "type": "assistant",
+                "message": {
+                    "content": [{
+                        "type": "text",
+                        "text": "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\n- old compacted work\n\nContinue the conversation from where it left off without asking the user any further questions."
+                    }]
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "type": "assistant",
+                "message": {
+                    "content": [{
+                        "type": "text",
+                        "text": "Actual partial response."
+                    }]
+                }
+            })
+            .to_string(),
+        ];
+
+        let msg = parse_run_to_message(&lines, &run).unwrap();
+
+        assert_eq!(msg.content, "Actual partial response.");
+        assert_eq!(msg.content_blocks.len(), 1);
+        assert!(matches!(
+            &msg.content_blocks[0],
+            ContentBlock::Text { text } if text == "Actual partial response."
+        ));
     }
 }
 
@@ -1463,7 +1811,7 @@ pub fn persist_partial_cancelled_content(
                 }
                 ("assistant", "text") => {
                     let text = block.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                    if !text.trim().is_empty() {
+                    if !text.trim().is_empty() && !is_claude_compaction_summary_text(text) {
                         existing_has_text = true;
                     }
                 }
@@ -1486,7 +1834,9 @@ pub fn persist_partial_cancelled_content(
         .iter()
         .filter(|tc| tc.output.is_some() && !existing_tool_result_ids.contains(&tc.id))
         .collect();
-    let needs_text = !existing_has_text && !content.trim().is_empty();
+    let needs_text = !existing_has_text
+        && !content.trim().is_empty()
+        && !is_claude_compaction_summary_text(content);
 
     if missing_tool_calls.is_empty() && missing_tool_results.is_empty() && !needs_text {
         log::trace!(
@@ -1512,7 +1862,10 @@ pub fn persist_partial_cancelled_content(
         for cb in content_blocks {
             match cb {
                 ContentBlock::Text { text } => {
-                    if !wrote_text && !text.trim().is_empty() {
+                    if !wrote_text
+                        && !text.trim().is_empty()
+                        && !is_claude_compaction_summary_text(text)
+                    {
                         blocks.push(serde_json::json!({"type": "text", "text": text}));
                         wrote_text = true;
                     }
@@ -1539,6 +1892,9 @@ pub fn persist_partial_cancelled_content(
                 }
                 ContentBlock::Thinking { thinking } => {
                     blocks.push(serde_json::json!({"type": "thinking", "thinking": thinking}));
+                }
+                ContentBlock::UserInput { text } => {
+                    blocks.push(serde_json::json!({"type": "user_input", "text": text}));
                 }
             }
         }

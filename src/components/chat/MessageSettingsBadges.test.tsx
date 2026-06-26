@@ -14,8 +14,8 @@ describe('MessageSettingsBadges', () => {
       />
     )
 
-    expect(screen.getByText('GPT 5.5 Fast')).toBeVisible()
-    expect(screen.getByText('· yolo')).toBeVisible()
+    expect(screen.getByText('Codex · GPT 5.5 Fast')).toBeVisible()
+    expect(screen.getByText('· Yolo')).toBeVisible()
     expect(screen.getByText('· Medium')).toBeVisible()
   })
 
@@ -30,7 +30,7 @@ describe('MessageSettingsBadges', () => {
       />
     )
 
-    expect(screen.getByText('GPT 5.4')).toBeVisible()
+    expect(screen.getByText('Codex · GPT 5.4')).toBeVisible()
   })
 
   it('does not show Claude thinking labels for Codex models', () => {
@@ -44,7 +44,7 @@ describe('MessageSettingsBadges', () => {
       />
     )
 
-    expect(screen.getByText('GPT 5.5 Fast')).toBeVisible()
+    expect(screen.getByText('Codex · GPT 5.5 Fast')).toBeVisible()
     expect(screen.queryByText('· Megathink')).toBeNull()
   })
 
@@ -59,7 +59,7 @@ describe('MessageSettingsBadges', () => {
       />
     )
 
-    expect(screen.getByText('Haiku')).toBeVisible()
+    expect(screen.getByText('Claude · Haiku')).toBeVisible()
     expect(screen.getByText('· Think')).toBeVisible()
   })
 
@@ -74,13 +74,45 @@ describe('MessageSettingsBadges', () => {
       />
     )
 
-    expect(screen.getByText('Opus 4.6 (1M) Fast')).toBeVisible()
-    expect(screen.getByText('· plan')).toBeVisible()
+    expect(screen.getByText('Claude · Opus 4.6 (1M) Fast')).toBeVisible()
+    expect(screen.getByText('· Plan')).toBeVisible()
     expect(screen.getByText('· High')).toBeVisible()
     expect(screen.queryByText('claude-opus-4-6[1m]-fast')).toBeNull()
   })
 
-  it('formats unknown slash models as provider labels', () => {
+  it('formats OpenCode slash models with backend prefix', () => {
+    render(
+      <MessageSettingsBadges
+        model="opencode/openrouter/anthropic/claude-3.5-haiku"
+        executionMode="build"
+        thinkingLevel={undefined}
+        effortLevel={undefined}
+        isCursor={false}
+      />
+    )
+
+    expect(screen.getByText('OpenCode · Claude 3.5 Haiku')).toBeVisible()
+    expect(screen.getByText('· Build')).toBeVisible()
+  })
+
+  it('formats CommandCode prompt model labels with backend prefix', () => {
+    render(
+      <MessageSettingsBadges
+        model="commandcode/deepseek/deepseek-v4-flash"
+        executionMode="plan"
+        thinkingLevel={undefined}
+        effortLevel={undefined}
+        isCursor={false}
+      />
+    )
+
+    expect(screen.getByText('Command Code · Deepseek V4 Flash')).toBeVisible()
+    expect(
+      screen.queryByText('Deepseek/deepseek V4 Flash (Commandcode)')
+    ).toBeNull()
+  })
+
+  it('formats unknown slash models as provider labels without backend prefix', () => {
     render(
       <MessageSettingsBadges
         model="openrouter/anthropic/claude-3.5-haiku"
@@ -92,6 +124,23 @@ describe('MessageSettingsBadges', () => {
     )
 
     expect(screen.getByText('Claude 3.5 Haiku (Anthropic)')).toBeVisible()
+  })
+
+  it('treats PI models with codex provider names as PI models', () => {
+    render(
+      <MessageSettingsBadges
+        model="pi/openai-codex/gpt-5.5"
+        executionMode="plan"
+        thinkingLevel="megathink"
+        effortLevel="low"
+        isCursor={false}
+      />
+    )
+
+    expect(screen.getByText('PI · GPT 5.5 (OpenAI Codex)')).toBeVisible()
+    expect(screen.getByText('· Plan')).toBeVisible()
+    expect(screen.getByText('· Low')).toBeVisible()
+    expect(screen.queryByText('· Megathink')).toBeNull()
   })
 
   it('falls back to raw ids for unknown non-slash models', () => {

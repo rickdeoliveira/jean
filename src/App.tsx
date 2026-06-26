@@ -9,9 +9,11 @@ import {
   setWsDataReady,
   useWsAuthError,
   preloadInitialData,
-  refetchInitialData,
+  prefetchReconnectInitialData,
+  consumeReconnectInitialData,
   setAppDataDir,
   hasPreloadedData,
+  listen,
   type InitialData,
 } from '@/lib/transport'
 import { isNativeApp } from '@/lib/environment'
@@ -27,7 +29,11 @@ import MainWindow from './components/layout/MainWindow'
 import { ThemeProvider } from './components/ThemeProvider'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaudeCliStatus, useClaudeCliAuth } from './services/claude-cli'
-import { useCodexCliStatus, useCodexCliAuth } from './services/codex-cli'
+import {
+  useCodexCliStatus,
+  useCodexCliAuth,
+  useCodexUsageUpdateListener,
+} from './services/codex-cli'
 import { useGhCliStatus, useGhCliAuth } from './services/gh-cli'
 import {
   useOpencodeCliStatus,
@@ -38,6 +44,8 @@ import type { AppPreferences } from './types/preferences'
 import { useChatStore } from './store/chat-store'
 import { useProjectsStore } from './store/projects-store'
 import { useFontSettings } from './hooks/use-font-settings'
+import { usePreventFileDropNavigation } from './hooks/usePreventFileDropNavigation'
+import { useLinuxFileDrop } from './hooks/useLinuxFileDrop'
 import { useZoom } from './hooks/use-zoom'
 import { useImmediateSessionStateSave } from './hooks/useImmediateSessionStateSave'
 import { useCliVersionCheck } from './hooks/useCliVersionCheck'
@@ -54,7 +62,20 @@ import {
   endSessionStateHydration,
 } from './lib/session-state-hydration'
 import { scheduleIdleWork } from './lib/idle'
+import { isWindows } from './lib/platform'
 import { checkWebClientVersion } from './lib/web-client-version'
+import {
+  collectExecutionModes,
+  collectWorktreePaths,
+} from './lib/initial-data-cache'
+import { useExternalLinkInterceptor } from './hooks/useExternalLinkInterceptor'
+
+interface AutoFixStoppedEvent {
+  projectId: string
+  projectName: string
+  backend: string
+  error: string
+}
 
 /** Loading screen shown while preloading initial data (browser mode only). */
 function WebLoadingScreen() {
@@ -119,9 +140,32 @@ function App() {
   const jeanMcpIntroOpen = useUIStore(state => state.jeanMcpIntroOpen)
   const hasStartedTransportRef = useRef(false)
 
+  // Prevent a stray file drop from navigating the webview to file:// (which
+  // would lock the whole window). Always-on catch-all for views without their
+  // own drop handler.
+  usePreventFileDropNavigation()
+
+  // Linux: route OS file drops (intercepted in Rust) to a terminal or the chat.
+  useLinuxFileDrop()
+
   // Holds the update object so the title bar indicator can trigger install later
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pendingUpdateRef = useRef<any>(null)
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    listen<AutoFixStoppedEvent>('auto-fix:stopped', event => {
+      const { projectName, backend, error } = event.payload
+      toast.error(`Mr. Robot stopped for ${projectName}`, {
+        description: `${backend}: ${error}`,
+        duration: Infinity,
+        closeButton: true,
+      })
+    }).then(fn => {
+      unlisten = fn
+    })
+    return () => unlisten?.()
+  }, [])
 
   const installAppUpdate = useCallback(
     async (update: {
@@ -214,13 +258,40 @@ function App() {
           )
         }
       }
+      const worktreePaths = collectWorktreePaths(data.worktreesByProject)
+      if (Object.keys(worktreePaths).length > 0) {
+        const currentState = useChatStore.getState()
+        useChatStore.setState({
+          worktreePaths: {
+            ...currentState.worktreePaths,
+            ...worktreePaths,
+          },
+        })
+      }
+      const executionModeUpdates = collectExecutionModes({
+        sessionsByWorktree: data.sessionsByWorktree,
+        activeSessions: data.activeSessions,
+      })
+      if (Object.keys(executionModeUpdates).length > 0) {
+        beginSessionStateHydration()
+        try {
+          useChatStore.setState(state => ({
+            executionModes: {
+              ...state.executionModes,
+              ...executionModeUpdates,
+            },
+          }))
+        } finally {
+          endSessionStateHydration()
+        }
+      }
+
       // Seed sessions for each worktree (WorktreeSessions struct)
       // Also restore Zustand state for reviewing/waiting status
       if (data.sessionsByWorktree) {
         const reviewingUpdates: Record<string, boolean> = {}
         const waitingUpdates: Record<string, boolean> = {}
         const sessionMappings: Record<string, string> = {}
-        const worktreePaths: Record<string, string> = {}
 
         for (const [worktreeId, sessionsData] of Object.entries(
           data.sessionsByWorktree
@@ -250,17 +321,6 @@ function App() {
           }
         }
 
-        // Get worktree paths from worktreesByProject
-        if (data.worktreesByProject) {
-          for (const worktrees of Object.values(data.worktreesByProject)) {
-            for (const wt of worktrees as { id: string; path: string }[]) {
-              if (wt.id && wt.path) {
-                worktreePaths[wt.id] = wt.path
-              }
-            }
-          }
-        }
-
         // Update Zustand store with session state
         const currentState = useChatStore.getState()
         const storeUpdates: Partial<ReturnType<typeof useChatStore.getState>> =
@@ -270,12 +330,6 @@ function App() {
           storeUpdates.sessionWorktreeMap = {
             ...currentState.sessionWorktreeMap,
             ...sessionMappings,
-          }
-        }
-        if (Object.keys(worktreePaths).length > 0) {
-          storeUpdates.worktreePaths = {
-            ...currentState.worktreePaths,
-            ...worktreePaths,
           }
         }
         // Clear stale waiting/reviewing state for sessions actively running a turn.
@@ -317,14 +371,31 @@ function App() {
       // Use function updater to avoid overwriting cache that has MORE messages
       // (e.g., from chat:done upsert that arrived before this reconnect seed).
       if (data.activeSessions) {
+        const activeSessionWorktreeIds = data.activeSessionWorktreeIds ?? {}
+        const activeReviewingUpdates: Record<string, boolean> = {}
+        const activeWaitingUpdates: Record<string, boolean> = {}
+        const activeSessionMappings: Record<string, string> = {}
+
         for (const [sessionId, initSession] of Object.entries(
           data.activeSessions
         )) {
+          const session = initSession as Session
+          const worktreeId = activeSessionWorktreeIds[sessionId]
+          if (worktreeId) {
+            activeSessionMappings[sessionId] = worktreeId
+          }
+          if (session.is_reviewing) {
+            activeReviewingUpdates[sessionId] = true
+          }
+          if (session.waiting_for_input) {
+            activeWaitingUpdates[sessionId] = true
+          }
+
           queryClient.setQueryData<Session>(
             chatQueryKeys.session(sessionId),
             old => {
-              if (!old) return initSession as Session
-              const init = initSession as Session
+              if (!old) return session
+              const init = session
               if (old.messages.length > init.messages.length) {
                 logger.warn('[seedCache] preserving cached messages', {
                   sessionId,
@@ -346,6 +417,35 @@ function App() {
             lastMsg.id.startsWith('running-')
           ) {
             runningSnapshotMessages.push({ sessionId, message: lastMsg })
+          }
+        }
+
+        if (
+          Object.keys(activeSessionMappings).length > 0 ||
+          Object.keys(activeReviewingUpdates).length > 0 ||
+          Object.keys(activeWaitingUpdates).length > 0
+        ) {
+          beginSessionStateHydration()
+          try {
+            useChatStore.setState(state => ({
+              sessionWorktreeMap:
+                Object.keys(activeSessionMappings).length > 0
+                  ? {
+                      ...state.sessionWorktreeMap,
+                      ...activeSessionMappings,
+                    }
+                  : state.sessionWorktreeMap,
+              reviewingSessions:
+                data.sessionsByWorktree === undefined
+                  ? activeReviewingUpdates
+                  : state.reviewingSessions,
+              waitingForInputSessionIds:
+                data.sessionsByWorktree === undefined
+                  ? activeWaitingUpdates
+                  : state.waitingForInputSessionIds,
+            }))
+          } finally {
+            endSessionStateHydration()
           }
         }
       }
@@ -421,6 +521,29 @@ function App() {
       // Seed UI state into cache
       if (data.uiState) {
         queryClient.setQueryData(['ui-state'], data.uiState)
+        const uiState = data.uiState as { active_project_id?: string | null }
+        const activeProjectId = uiState.active_project_id
+        if (activeProjectId) {
+          const { selectedProjectId, expandProject, selectProject } =
+            useProjectsStore.getState()
+          const { activeWorktreePath } = useChatStore.getState()
+          const projects = Array.isArray(data.projects) ? data.projects : []
+          const projectExists = projects.some(
+            project =>
+              typeof project === 'object' &&
+              project !== null &&
+              'id' in project &&
+              project.id === activeProjectId &&
+              (!('is_folder' in project) || !project.is_folder)
+          )
+          if (!selectedProjectId && !activeWorktreePath && projectExists) {
+            logger.info('Restoring active project from reconnect UI state', {
+              activeProjectId,
+            })
+            selectProject(activeProjectId)
+            expandProject(activeProjectId)
+          }
+        }
       }
       // Cache app data dir for browser-mode file URL conversion
       if (data.appDataDir) {
@@ -520,6 +643,9 @@ function App() {
     }
   }, [])
 
+  // Ensure external anchors open in the OS/default browser instead of the current WebView.
+  useExternalLinkInterceptor()
+
   // Apply font settings from preferences
   useFontSettings()
 
@@ -535,6 +661,9 @@ function App() {
   // Global streaming event listeners - must be at App level so they stay active
   // even when ChatWindow is unmounted (e.g., when viewing a different worktree)
   useStreamingEvents({ queryClient })
+
+  // Keep Codex usage UI fresh when the app-server pushes account rate-limit updates.
+  useCodexUsageUpdateListener()
 
   // Browser mode: only open WebSocket after preload + listener registration.
   // This lets us replay buffered server events before live events start arriving.
@@ -565,19 +694,28 @@ function App() {
   const wsDataReady = useWsDataReady()
   const hadWsConnectionRef = useRef(false)
   useEffect(() => {
-    if (isNativeApp() || !wsConnected) return
+    if (isNativeApp()) return
+
+    if (!wsConnected) {
+      if (hadWsConnectionRef.current) {
+        const activeSessionIds = useChatStore.getState().activeSessionIds
+        const selectedProjectId = useProjectsStore.getState().selectedProjectId
+        void prefetchReconnectInitialData(activeSessionIds, selectedProjectId)
+      }
+      return
+    }
 
     const reconnected = hadWsConnectionRef.current
     hadWsConnectionRef.current = true
 
     if (reconnected) {
-      // Try to use the prefetch that was started during the backoff wait.
+      // Use the prefetch that was started during the backoff wait.
       // Falls back to a fresh fetch with the browser's active session IDs
       // so the server loads the correct sessions even when ui_state.json
       // on disk is stale (debounced save hasn't flushed yet).
       const activeSessionIds = useChatStore.getState().activeSessionIds
       const selectedProjectId = useProjectsStore.getState().selectedProjectId
-      const dataPromise = refetchInitialData(
+      const dataPromise = consumeReconnectInitialData(
         activeSessionIds,
         selectedProjectId
       )
@@ -724,6 +862,14 @@ function App() {
     const hasAiBackendReady = claudeReady || codexReady || opencodeReady
 
     if (useUIStore.getState().onboardingDismissed) return
+
+    // On Windows, show onboarding if WSL mode hasn't been chosen yet
+    const prefs = queryClient.getQueryData<AppPreferences>(['preferences'])
+    if (isWindows && prefs && !prefs.wsl_mode_chosen) {
+      logger.info('Windows WSL mode not chosen, showing onboarding')
+      useUIStore.getState().setOnboardingOpen(true)
+      return
+    }
 
     if (!ghReady || !hasAiBackendReady) {
       logger.info('CLI setup needed, showing onboarding', {
@@ -1065,6 +1211,7 @@ function App() {
 
               hydrateRunningSnapshot(session.session_id, lastMsg, {
                 allowWhileSending: true,
+                dedupeReplayedOutput: sessionSnapshot?.backend === 'claude',
               })
 
               queryClient.setQueryData<Session>(

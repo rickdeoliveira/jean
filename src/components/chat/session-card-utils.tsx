@@ -128,7 +128,22 @@ export function sessionCanBeWaiting(session: Session): boolean {
     session.last_run_status === 'running' ||
     session.last_run_status === 'resumable' ||
     (session.last_run_status === 'completed' &&
-      session.waiting_for_input_type === 'plan')
+      (session.waiting_for_input_type === 'plan' ||
+        session.waiting_for_input_type === 'question'))
+  )
+}
+
+function hasLegacyPendingPlanWaiting(session: Session): boolean {
+  if (
+    session.last_run_status !== 'completed' ||
+    session.waiting_for_input_type !== 'plan' ||
+    !session.pending_plan_message_id
+  ) {
+    return false
+  }
+
+  return !new Set(session.approved_plan_message_ids ?? []).has(
+    session.pending_plan_message_id
   )
 }
 
@@ -142,6 +157,7 @@ export function getEffectiveSessionWaiting(
   const canBeWaiting = sessionCanBeWaiting(session)
   if (!canBeWaiting) return false
   if (session.waiting_for_input ?? false) return true
+  if (hasLegacyPendingPlanWaiting(session)) return true
   const isInReviewState =
     storeState.reviewingSessions[session.id] || !!session.review_results
   if (isInReviewState) return false
@@ -207,7 +223,9 @@ export function computeSessionCardData(
 
   // Use persisted waiting_for_input flag from session metadata
   const persistedWaitingForInput =
-    runCanBeWaiting && (session.waiting_for_input ?? false)
+    runCanBeWaiting &&
+    ((session.waiting_for_input ?? false) ||
+      hasLegacyPendingPlanWaiting(session))
 
   // Check if there are approved plan message IDs
   const approvedPlanIds = new Set(session.approved_plan_message_ids ?? [])
@@ -385,6 +403,12 @@ export function getResumeCommand(session: Session): string | null {
   if (session.backend === 'cursor' && session.cursor_chat_id) {
     return `cursor-agent --resume ${session.cursor_chat_id}`
   }
+  if (session.backend === 'pi' && session.pi_session_id) {
+    return `pi --session ${session.pi_session_id}`
+  }
+  if (session.backend === 'grok' && session.grok_session_id) {
+    return `grok -s ${session.grok_session_id}`
+  }
   return null
 }
 
@@ -419,6 +443,18 @@ export function getResumeArgs(
     return {
       command: cmd || 'cursor-agent',
       args: ['--resume', session.cursor_chat_id],
+    }
+  }
+  if (session.backend === 'pi' && session.pi_session_id) {
+    return {
+      command: cmd || 'pi',
+      args: ['--session', session.pi_session_id],
+    }
+  }
+  if (session.backend === 'grok' && session.grok_session_id) {
+    return {
+      command: cmd || 'grok',
+      args: ['-s', session.grok_session_id],
     }
   }
   return null

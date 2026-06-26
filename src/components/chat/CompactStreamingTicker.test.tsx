@@ -18,7 +18,6 @@ describe('CompactStreamingTicker', () => {
     onQuestionAnswer: noopQuestionAnswer,
     onQuestionSkip: vi.fn(),
     onFileClick: vi.fn(),
-    onEditedFileClick: vi.fn(),
     isQuestionAnswered: vi.fn(() => false),
     getSubmittedAnswers: vi.fn(() => undefined),
     areQuestionsSkipped: vi.fn(() => false),
@@ -72,5 +71,30 @@ describe('CompactStreamingTicker', () => {
     // multiple StackedGroup headers like "2 Bash" while the run was active.
     expect(screen.queryByText('2 Bash')).not.toBeInTheDocument()
     expect(screen.queryByText('3 Bash')).not.toBeInTheDocument()
+  })
+
+  it('shows steered user prompts as separate bubbles above the ticker', () => {
+    render(
+      <CompactStreamingTicker
+        {...baseProps}
+        contentBlocks={[
+          { type: 'tool_use', tool_call_id: 'bash-1' },
+          { type: 'user_input', text: 'also update the docs' },
+        ]}
+        toolCalls={[
+          {
+            id: 'bash-1',
+            name: 'Bash',
+            input: { command: 'rtk git status' },
+            output: 'ok',
+          },
+        ]}
+      />
+    )
+
+    // Steered prompt visible without expanding the ticker
+    expect(screen.getByText('also update the docs')).toBeVisible()
+    // Ticker still summarizes the latest activity, not the steered text
+    expect(screen.getByText('Bash')).toBeVisible()
   })
 })

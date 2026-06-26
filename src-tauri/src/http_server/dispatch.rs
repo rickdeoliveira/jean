@@ -187,6 +187,7 @@ pub async fn dispatch_command(
             let linear_context = field_opt(&args, "linearContext", "linear_context")?;
             let custom_name = field_opt(&args, "customName", "custom_name")?;
             let auto_open_in_jean = field_opt(&args, "autoOpenInJean", "auto_open_in_jean")?;
+            let origin = field_opt(&args, "origin", "origin")?;
             let result = crate::projects::create_worktree(
                 app.clone(),
                 project_id,
@@ -198,6 +199,7 @@ pub async fn dispatch_command(
                 linear_context,
                 custom_name,
                 auto_open_in_jean,
+                origin,
             )
             .await?;
             // No cache invalidation here — worktree creation uses event-based sync
@@ -239,6 +241,8 @@ pub async fn dispatch_command(
                 field_opt(&args, "linearTeamId", "linear_team_id")?;
             let linked_project_ids: Option<Vec<String>> =
                 field_opt(&args, "linkedProjectIds", "linked_project_ids")?;
+            let auto_fix_settings: Option<Option<crate::projects::types::ProjectAutoFixSettings>> =
+                field_nullable_option(&args, "autoFixSettings", "auto_fix_settings")?;
             let result = crate::projects::update_project_settings(
                 app.clone(),
                 project_id,
@@ -253,6 +257,7 @@ pub async fn dispatch_command(
                 linear_api_key,
                 linear_team_id,
                 linked_project_ids,
+                auto_fix_settings,
             )
             .await?;
             emit_cache_invalidation(app, &["projects"]);
@@ -575,6 +580,11 @@ pub async fn dispatch_command(
         // =====================================================================
         // GitHub Issues & PRs
         // =====================================================================
+        "list_github_labels" => {
+            let project_path: String = field(&args, "projectPath", "project_path")?;
+            let result = crate::projects::list_github_labels(app.clone(), project_path).await?;
+            to_value(result)
+        }
         "list_github_issues" => {
             let project_path: String = field(&args, "projectPath", "project_path")?;
             let state: Option<String> = from_field_opt(&args, "state")?;
@@ -935,6 +945,8 @@ pub async fn dispatch_command(
                 "parallelExecutionPrompt",
                 "parallel_execution_prompt",
             )?;
+            let execution_mode: Option<String> =
+                field_opt(&args, "executionMode", "execution_mode")?;
             let result = crate::jean_mcp_core::start_background_investigation(
                 app.clone(),
                 worktree_id,
@@ -948,6 +960,7 @@ pub async fn dispatch_command(
                 chrome_enabled,
                 ai_language,
                 parallel_execution_prompt,
+                execution_mode,
             )
             .await?;
             to_value(result)
@@ -1073,8 +1086,6 @@ pub async fn dispatch_command(
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
             let message: String = from_field(&args, "message")?;
             let model: Option<String> = from_field_opt(&args, "model")?;
-            let execution_mode: Option<String> =
-                field_opt(&args, "executionMode", "execution_mode")?;
             let thinking_level_raw: Option<String> =
                 field_opt(&args, "thinkingLevel", "thinking_level")?;
             let parallel_execution_prompt: Option<String> = field_opt(
@@ -1082,6 +1093,8 @@ pub async fn dispatch_command(
                 "parallelExecutionPrompt",
                 "parallel_execution_prompt",
             )?;
+            let execution_mode: Option<String> =
+                field_opt(&args, "executionMode", "execution_mode")?;
             let ai_language: Option<String> = field_opt(&args, "aiLanguage", "ai_language")?;
             let allowed_tools: Option<Vec<String>> =
                 field_opt(&args, "allowedTools", "allowed_tools")?;
@@ -1101,6 +1114,12 @@ pub async fn dispatch_command(
                 Some("low") => {
                     if effort_level.is_none() {
                         effort_level = Some(crate::chat::types::EffortLevel::Low);
+                    }
+                    Some(crate::chat::types::ThinkingLevel::Off)
+                }
+                Some("minimal") => {
+                    if effort_level.is_none() {
+                        effort_level = Some(crate::chat::types::EffortLevel::Minimal);
                     }
                     Some(crate::chat::types::ThinkingLevel::Off)
                 }
@@ -1136,7 +1155,7 @@ pub async fn dispatch_command(
                 }
                 Some(other) => {
                     return Err(format!(
-                            "invalid args `thinkingLevel` for command `send_chat_message`: unknown variant `{other}`, expected one of `off`, `think`, `megathink`, `ultrathink`"
+                            "invalid args `thinkingLevel` for command `send_chat_message`: unknown variant `{other}`, expected one of `off`, `think`, `megathink`, `ultrathink`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultracode`"
                         ));
                 }
             };
@@ -2126,6 +2145,47 @@ pub async fn dispatch_command(
             crate::claude_cli::uninstall_claude_cli(app.clone()).await?;
             Ok(Value::Null)
         }
+
+        "check_commandcode_cli_installed" => {
+            let result =
+                crate::commandcode_cli::check_commandcode_cli_installed(app.clone()).await?;
+            to_value(result)
+        }
+        "detect_commandcode_in_path" => {
+            let result = crate::commandcode_cli::detect_commandcode_in_path(app.clone()).await?;
+            to_value(result)
+        }
+        "check_commandcode_cli_auth" => {
+            let result = crate::commandcode_cli::check_commandcode_cli_auth(app.clone()).await?;
+            to_value(result)
+        }
+        "list_commandcode_models" => {
+            let result = crate::commandcode_cli::list_commandcode_models(app.clone()).await?;
+            to_value(result)
+        }
+        "get_available_commandcode_versions" => {
+            let result =
+                crate::commandcode_cli::get_available_commandcode_versions(app.clone()).await?;
+            to_value(result)
+        }
+        "get_commandcode_install_command" => {
+            let result =
+                crate::commandcode_cli::get_commandcode_install_command(app.clone()).await?;
+            to_value(result)
+        }
+        "install_commandcode_cli" => {
+            let version: Option<String> = from_field_opt(&args, "version")?;
+            crate::commandcode_cli::install_commandcode_cli(app.clone(), version).await?;
+            Ok(Value::Null)
+        }
+        "uninstall_commandcode_cli" => {
+            crate::commandcode_cli::uninstall_commandcode_cli(app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "update_commandcode_cli" => {
+            crate::commandcode_cli::update_commandcode_cli(app.clone()).await?;
+            Ok(Value::Null)
+        }
         "check_cursor_cli_installed" => {
             let result = crate::cursor_cli::check_cursor_cli_installed(app.clone()).await?;
             to_value(result)
@@ -2145,6 +2205,76 @@ pub async fn dispatch_command(
         "get_cursor_install_command" => {
             let result = crate::cursor_cli::get_cursor_install_command(app.clone()).await?;
             to_value(result)
+        }
+        "check_grok_cli_installed" => {
+            let result = crate::grok_cli::check_grok_cli_installed(app.clone()).await?;
+            to_value(result)
+        }
+        "detect_grok_in_path" => {
+            let result = crate::grok_cli::detect_grok_in_path(app.clone()).await?;
+            to_value(result)
+        }
+        "check_grok_cli_auth" => {
+            let result = crate::grok_cli::check_grok_cli_auth(app.clone()).await?;
+            to_value(result)
+        }
+        "list_grok_models" => {
+            let result = crate::grok_cli::list_grok_models(app.clone()).await?;
+            to_value(result)
+        }
+        "get_available_grok_versions" => {
+            let result = crate::grok_cli::get_available_grok_versions(app.clone()).await?;
+            to_value(result)
+        }
+        "get_grok_install_command" => {
+            let result = crate::grok_cli::get_grok_install_command(app.clone()).await?;
+            to_value(result)
+        }
+        "install_grok_cli" => {
+            let version: Option<String> = from_field_opt(&args, "version")?;
+            crate::grok_cli::install_grok_cli(app.clone(), version).await?;
+            Ok(Value::Null)
+        }
+        "uninstall_grok_cli" => {
+            crate::grok_cli::uninstall_grok_cli(app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "update_grok_cli" => {
+            crate::grok_cli::update_grok_cli(app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "login_grok_cli_device" => {
+            crate::grok_cli::login_grok_cli_device(app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "check_pi_cli_installed" => {
+            let result = crate::pi_cli::check_pi_cli_installed(app.clone()).await?;
+            to_value(result)
+        }
+        "detect_pi_in_path" => {
+            let result = crate::pi_cli::detect_pi_in_path(app.clone()).await?;
+            to_value(result)
+        }
+        "check_pi_cli_auth" => {
+            let result = crate::pi_cli::check_pi_cli_auth(app.clone()).await?;
+            to_value(result)
+        }
+        "list_pi_models" => {
+            let result = crate::pi_cli::list_pi_models(app.clone()).await?;
+            to_value(result)
+        }
+        "get_available_pi_versions" => {
+            let result = crate::pi_cli::get_available_pi_versions(app.clone()).await?;
+            to_value(result)
+        }
+        "install_pi_cli" => {
+            let version: Option<String> = from_field_opt(&args, "version")?;
+            crate::pi_cli::install_pi_cli(app.clone(), version).await?;
+            Ok(Value::Null)
+        }
+        "uninstall_pi_cli" => {
+            crate::pi_cli::uninstall_pi_cli(app.clone()).await?;
+            Ok(Value::Null)
         }
         "check_opencode_cli_installed" => {
             let result = crate::opencode_cli::check_opencode_cli_installed(app.clone()).await?;
@@ -2300,7 +2430,7 @@ pub async fn dispatch_command(
             to_value(result)
         }
         "get_codex_usage" => {
-            let result = crate::codex_cli::get_codex_usage().await?;
+            let result = crate::codex_cli::get_codex_usage(app.clone()).await?;
             to_value(result)
         }
         "install_codex_cli" => {
@@ -2463,6 +2593,59 @@ pub async fn dispatch_command(
             let session_id: String = field(&args, "sessionId", "session_id")?;
             crate::chat::clear_message_queue(app.clone(), worktree_id, worktree_path, session_id)
                 .await?;
+            Ok(Value::Null)
+        }
+        "move_queued_message_front" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let message_id: String = field(&args, "messageId", "message_id")?;
+            let result = crate::chat::move_queued_message_front(
+                app.clone(),
+                worktree_id,
+                worktree_path,
+                session_id,
+                message_id,
+            )
+            .await?;
+            to_value(result)
+        }
+        "steer_codex_turn" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let message: String = from_field(&args, "message")?;
+            let queued_message: Option<Value> =
+                field_opt(&args, "queuedMessage", "queued_message")?;
+            crate::chat::steer_codex_turn(
+                app.clone(),
+                worktree_id,
+                session_id,
+                message,
+                queued_message,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
+        "steer_opencode_turn" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let message: String = from_field(&args, "message")?;
+            crate::chat::steer_opencode_turn(
+                app.clone(),
+                worktree_id,
+                worktree_path,
+                session_id,
+                message,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
+        "steer_pi_turn" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let message: String = from_field(&args, "message")?;
+            crate::chat::steer_pi_turn(app.clone(), worktree_id, session_id, message).await?;
             Ok(Value::Null)
         }
         "answer_opencode_question" => {
@@ -2683,7 +2866,6 @@ pub async fn dispatch_command(
             .await?;
             to_value(result)
         }
-
         // =====================================================================
         // GitHub Issues (additional)
         // =====================================================================
@@ -2850,6 +3032,22 @@ pub async fn dispatch_command(
         }
 
         // =====================================================================
+        // WSL commands
+        // =====================================================================
+        "list_wsl_distros" => to_value(crate::list_wsl_distros()),
+        "check_wsl_tool" => {
+            let distro: String = from_field(&args, "distro")?;
+            let tool: String = from_field(&args, "tool")?;
+            to_value(crate::check_wsl_tool(distro, tool))
+        }
+        "get_wsl_home_dir" => {
+            let distro: String = from_field(&args, "distro")?;
+            let result = crate::get_wsl_home_dir(distro)?;
+            to_value(result)
+        }
+        "is_wsl_available" => to_value(crate::is_wsl_available()),
+
+        // =====================================================================
         // Opinionated plugin commands
         // =====================================================================
         "check_opinionated_plugin_status" => {
@@ -2940,6 +3138,26 @@ fn field_opt<T: serde::de::DeserializeOwned>(
     from_field_opt(args, snake)
 }
 
+/// Try camelCase field first, then snake_case. For optional nullable fields.
+fn field_nullable_option<T: serde::de::DeserializeOwned>(
+    args: &Value,
+    camel: &str,
+    snake: &str,
+) -> Result<Option<Option<T>>, String> {
+    let (field_name, value) = match args.get(camel).or_else(|| args.get(snake)) {
+        None => return Ok(None),
+        Some(value) if args.get(camel).is_some() => (camel, value),
+        Some(value) => (snake, value),
+    };
+
+    match value {
+        Value::Null => Ok(Some(None)),
+        value => serde_json::from_value(value.clone())
+            .map(|value| Some(Some(value)))
+            .map_err(|e| format!("Invalid field '{field_name}': {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3026,6 +3244,40 @@ mod tests {
                 terminal_id: "term-1".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn field_nullable_option_preserves_missing_null_and_value() {
+        type Settings = crate::projects::types::ProjectAutoFixSettings;
+
+        let missing: Option<Option<Settings>> =
+            field_nullable_option(&json!({}), "autoFixSettings", "auto_fix_settings").unwrap();
+        assert_eq!(missing, None);
+
+        let explicit_null: Option<Option<Settings>> = field_nullable_option(
+            &json!({ "autoFixSettings": null }),
+            "autoFixSettings",
+            "auto_fix_settings",
+        )
+        .unwrap();
+        assert_eq!(explicit_null, Some(None));
+
+        let value: Option<Option<Settings>> = field_nullable_option(
+            &json!({
+                "auto_fix_settings": {
+                    "enabled": true,
+                    "interval_minutes": 30,
+                    "issue_limit": 4,
+                    "max_parallel_worktrees": 2,
+                    "planning_backend": "claude",
+                    "yolo_backend": "codex"
+                }
+            }),
+            "autoFixSettings",
+            "auto_fix_settings",
+        )
+        .unwrap();
+        assert_eq!(value.unwrap().unwrap().issue_limit, 4);
     }
 
     #[test]

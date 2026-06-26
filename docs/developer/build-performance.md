@@ -78,9 +78,9 @@ After a build, look for non-zero "Compile requests executed" / "Cache hits". The
 
 ## Expected results
 
-| Scenario | Before | After |
-|----------|-------:|------:|
-| Cold build (`cargo clean` first) | ~3m09s | ~60–90s |
+| Scenario                          | Before |   After |
+| --------------------------------- | -----: | ------: |
+| Cold build (`cargo clean` first)  | ~3m09s | ~60–90s |
 | Incremental (touch one Rust file) | ~3m09s | ~20–45s |
 | Sccache hit (after branch switch) | ~3m09s | ~30–60s |
 

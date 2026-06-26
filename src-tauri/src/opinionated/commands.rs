@@ -10,6 +10,9 @@ pub struct PluginStatus {
 }
 
 const SUPERPOWERS_GIT_WORKTREE_SKILL: &str = "using-git-worktrees";
+const SUPERPOWERS_REPO_URL: &str = "https://github.com/obra/superpowers";
+const SUPERPOWERS_ARCHIVE_URL: &str =
+    "https://github.com/obra/superpowers/archive/refs/heads/main.zip";
 
 fn superpowers_claude_plugin_target() -> &'static str {
     "superpowers@claude-plugins-official"
@@ -210,7 +213,6 @@ async fn install_caveman(app: &AppHandle) -> Result<String, String> {
 async fn check_superpowers_status(app: &AppHandle) -> Result<PluginStatus, String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
     let installed_backends = detected_jean_backends(app);
-    let detected_count = installed_backends.len();
 
     let home_for_check = home.clone();
     let covered_backends = tokio::task::spawn_blocking(move || {
@@ -229,7 +231,7 @@ async fn check_superpowers_status(app: &AppHandle) -> Result<PluginStatus, Strin
     };
 
     Ok(PluginStatus {
-        installed: detected_count > 0 && covered_backends.len() == detected_count,
+        installed: superpowers_status_installed(&covered_backends, &detected_jean_backends(app)),
         version,
     })
 }
@@ -605,20 +607,27 @@ async fn uninstall_superpowers(_app: &AppHandle) -> Result<String, String> {
 }
 
 fn detected_jean_backends(app: &AppHandle) -> Vec<&'static str> {
-    let candidates = [
-        ("claude", crate::claude_cli::resolve_cli_binary(app)),
-        ("codex", crate::codex_cli::resolve_cli_binary(app)),
-        ("opencode", crate::opencode_cli::resolve_cli_binary(app)),
-        ("cursor", crate::cursor_cli::resolve_cli_binary(app)),
+    let candidates: Vec<(&'static str, Option<PathBuf>)> = vec![
+        ("claude", Some(crate::claude_cli::resolve_cli_binary(app))),
+        ("codex", crate::codex_cli::resolve_cli_binary(app).ok()),
+        (
+            "opencode",
+            Some(crate::opencode_cli::resolve_cli_binary(app)),
+        ),
+        ("cursor", Some(crate::cursor_cli::resolve_cli_binary(app))),
     ];
 
     candidates
         .into_iter()
-        .filter_map(|(backend, path)| path.exists().then_some(backend))
+        .filter_map(|(backend, path)| path.filter(|p| p.exists()).map(|_| backend))
         .collect()
 }
 
 fn caveman_status_installed(covered_backends: &[&str], _detected_backends: &[&str]) -> bool {
+    !covered_backends.is_empty()
+}
+
+fn superpowers_status_installed(covered_backends: &[&str], _detected_backends: &[&str]) -> bool {
     !covered_backends.is_empty()
 }
 
@@ -795,27 +804,121 @@ fn clone_superpowers_skills_dir() -> Result<PathBuf, String> {
     std::fs::create_dir_all(&temp)
         .map_err(|e| format!("Failed to create temp dir {temp:?}: {e}"))?;
     let repo_dir = temp.join("superpowers");
-    let output = silent_command("git")
+    let git_result = silent_command("git")
         .args([
             "clone",
             "--depth",
             "1",
-            "https://github.com/obra/superpowers",
+            SUPERPOWERS_REPO_URL,
             repo_dir.to_string_lossy().as_ref(),
         ])
-        .output()
-        .map_err(|e| format!("Failed to run git clone: {e}"))?;
+        .output();
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
-        return Err(format!("Failed to clone Superpowers: {detail}"));
+    let git_error = match git_result {
+        Ok(output) if output.status.success() => {
+            let skills_dir = repo_dir.join("skills");
+            if skills_dir.is_dir() {
+                return Ok(skills_dir);
+            }
+            Some("Superpowers repository did not contain a skills directory".to_string())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if stderr.is_empty() { stdout } else { stderr };
+            Some(format!("Failed to clone Superpowers: {detail}"))
+        }
+        Err(e) => Some(format!("Failed to run git clone: {e}")),
+    };
+
+    match download_superpowers_skills_dir(&temp) {
+        Ok(skills_dir) => Ok(skills_dir),
+        Err(download_error) => Err(format!(
+            "{}; archive fallback failed: {download_error}",
+            git_error.unwrap_or_else(|| "Git clone failed".to_string())
+        )),
+    }
+}
+
+fn download_superpowers_skills_dir(temp: &Path) -> Result<PathBuf, String> {
+    use std::time::Duration;
+
+    let response = reqwest::blocking::Client::builder()
+        .user_agent("jean-superpowers-installer")
+        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?
+        .get(SUPERPOWERS_ARCHIVE_URL)
+        .send()
+        .map_err(|e| format!("Failed to download Superpowers archive: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Failed to download Superpowers archive: HTTP {}",
+            response.status()
+        ));
     }
 
-    let skills_dir = repo_dir.join("skills");
-    if !skills_dir.is_dir() {
-        return Err("Superpowers repository did not contain a skills directory".to_string());
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("Failed to read Superpowers archive: {e}"))?;
+
+    extract_superpowers_archive(&bytes, temp)
+}
+
+fn extract_superpowers_archive(archive_content: &[u8], temp: &Path) -> Result<PathBuf, String> {
+    use std::io::Cursor;
+
+    let extract_root = temp.join("superpowers-archive");
+    let skills_dir = extract_root.join("skills");
+    std::fs::create_dir_all(&skills_dir)
+        .map_err(|e| format!("Failed to create Superpowers skills dir {skills_dir:?}: {e}"))?;
+
+    let cursor = Cursor::new(archive_content);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("Failed to open archive: {e}"))?;
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read archive entry: {e}"))?;
+        let Some(path) = file.enclosed_name() else {
+            continue;
+        };
+
+        let mut relative = PathBuf::new();
+        let mut under_skills = false;
+        for part in path.iter() {
+            if under_skills {
+                relative.push(part);
+            } else if part == std::ffi::OsStr::new("skills") {
+                under_skills = true;
+            }
+        }
+
+        if !under_skills || relative.as_os_str().is_empty() {
+            continue;
+        }
+
+        let target = skills_dir.join(relative);
+        if file.is_dir() {
+            std::fs::create_dir_all(&target)
+                .map_err(|e| format!("Failed to create archive dir {target:?}: {e}"))?;
+        } else {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create archive dir {parent:?}: {e}"))?;
+            }
+            let mut output = std::fs::File::create(&target)
+                .map_err(|e| format!("Failed to create archive file {target:?}: {e}"))?;
+            std::io::copy(&mut file, &mut output)
+                .map_err(|e| format!("Failed to write archive file {target:?}: {e}"))?;
+        }
+    }
+
+    if !dir_contains_skill(&skills_dir) {
+        return Err("Superpowers archive did not contain skills".to_string());
     }
     Ok(skills_dir)
 }
@@ -830,7 +933,7 @@ fn opencode_config_dir(home: &Path) -> PathBuf {
         if let Ok(app_data) = std::env::var("APPDATA") {
             return PathBuf::from(app_data).join("opencode");
         }
-        return home.join("AppData").join("Roaming").join("opencode");
+        home.join("AppData").join("Roaming").join("opencode")
     }
 
     #[cfg(not(windows))]
@@ -1123,6 +1226,15 @@ mod tests {
     }
 
     #[test]
+    fn superpowers_status_is_installed_when_any_backend_is_covered() {
+        assert!(superpowers_status_installed(
+            &["codex"],
+            &["claude", "codex"]
+        ));
+        assert!(!superpowers_status_installed(&[], &["claude"]));
+    }
+
+    #[test]
     fn identifies_superpowers_git_worktree_skill_names() {
         assert!(is_blocked_superpowers_skill_dir("using-git-worktrees"));
         assert!(is_blocked_superpowers_skill_dir(
@@ -1155,6 +1267,40 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(!blocked.exists());
         assert!(allowed.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn extracts_superpowers_skills_from_github_archive() {
+        use std::io::{Cursor, Write};
+
+        let mut archive_bytes = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut archive_bytes);
+            let options = zip::write::SimpleFileOptions::default();
+            writer
+                .add_directory("superpowers-main/skills/writing-plans/", options)
+                .expect("add skill directory");
+            writer
+                .start_file("superpowers-main/skills/writing-plans/SKILL.md", options)
+                .expect("start skill file");
+            writer.write_all(b"# Writing Plans").expect("write skill");
+            writer
+                .start_file("superpowers-main/README.md", options)
+                .expect("start readme");
+            writer.write_all(b"# Superpowers").expect("write readme");
+            writer.finish().expect("finish zip");
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let skills_dir =
+            extract_superpowers_archive(archive_bytes.get_ref(), temp.path()).expect("extract");
+
+        assert!(skills_dir.join("writing-plans").join("SKILL.md").exists());
+        assert!(!temp
+            .path()
+            .join("superpowers-main")
+            .join("README.md")
+            .exists());
     }
 
     #[test]

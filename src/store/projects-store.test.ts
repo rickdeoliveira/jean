@@ -251,5 +251,22 @@ describe('ProjectsStore', () => {
         'manual'
       )
     })
+
+    it('stores pinned label filters per project without changing sort mode', () => {
+      const { setProjectCanvasWorktreeSortMode, setProjectCanvasPinnedLabels } =
+        useProjectsStore.getState()
+
+      setProjectCanvasWorktreeSortMode('project-1', 'manual')
+      setProjectCanvasPinnedLabels('project-1', [
+        { name: 'Bug', color: '#eab308', pinned: true },
+      ])
+
+      expect(
+        useProjectsStore.getState().projectCanvasSettings['project-1']
+      ).toEqual({
+        worktreeSortMode: 'manual',
+        pinnedLabels: [{ name: 'Bug', color: '#eab308', pinned: true }],
+      })
+    })
   })
 })

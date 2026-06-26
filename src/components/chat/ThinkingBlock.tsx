@@ -25,7 +25,10 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   return (
     <details className="group border border-border/50 rounded-md bg-muted/30">
       <summary
-        className={cn(TOOL_CALL_ROW_CLASS, 'cursor-pointer hover:text-foreground transition-colors')}
+        className={cn(
+          TOOL_CALL_ROW_CLASS,
+          'cursor-pointer hover:text-foreground transition-colors'
+        )}
       >
         <Brain className={cn('h-3.5 w-3.5 shrink-0 text-purple-500')} />
         <span>Thinking...</span>
@@ -33,7 +36,9 @@ export const ThinkingBlock = memo(function ThinkingBlock({
       </summary>
       <div className="border-t border-border/50 px-3 py-2">
         <div className="pl-4 border-l-2 border-purple-500/30 text-sm text-muted-foreground">
-          <Markdown streaming={isStreaming}>{thinking}</Markdown>
+          <Markdown streaming={isStreaming} variant="tool-call">
+            {thinking}
+          </Markdown>
         </div>
       </div>
     </details>

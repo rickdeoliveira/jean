@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import { flushSync } from 'react-dom'
 import { ChevronRight, Loader2, Activity, Brain } from 'lucide-react'
 import { Markdown } from '@/components/ui/markdown'
 import {
@@ -26,12 +25,15 @@ import type {
   ToolCall,
 } from '@/types/chat'
 import {
+  getAskUserQuestions,
   hasQuestionAnswerOutput,
   isAskUserQuestion,
   isPlanToolCall,
+  normalizeQuestionMultipleField,
 } from '@/types/chat'
 import { MessageItem } from './MessageItem'
 import { AskUserQuestion } from './AskUserQuestion'
+import { SteeredPromptGroup } from './SteeredPromptGroup'
 import { buildTimeline } from './tool-call-utils'
 import { formatDuration, getAssistantDurationMs } from './time-utils'
 import {
@@ -39,7 +41,16 @@ import {
   TOOL_CALL_DETAIL_PILL_CLASS,
 } from './ToolCallInline'
 import type { VirtualizedMessageListHandle } from './VirtualizedMessageList'
-import type { FileEdit } from './FileEditsDiffModal'
+import {
+  capturePrependScrollAnchor,
+  restorePrependScrollAnchor,
+  type PrependScrollAnchor,
+} from './message-scroll-anchor'
+import {
+  RECAP_HEADING_RE,
+  extractRecapSection,
+  stripRecapFromMessage,
+} from './recap-utils'
 
 const SCROLL_THRESHOLD = 300
 
@@ -69,7 +80,6 @@ interface CompactMessageListProps {
   ) => void
   onQuestionSkip: (toolCallId: string) => void
   onFileClick: (path: string) => void
-  onEditedFileClick: (path: string, edits: FileEdit[]) => void
   onFixFinding: (finding: ReviewFinding, suggestion?: string) => Promise<void>
   onFixAllFindings: (
     findings: { finding: ReviewFinding; suggestion?: string }[]
@@ -103,6 +113,13 @@ type RenderItem =
       latestText: string | null
     }
   | { kind: 'question'; message: ChatMessage; globalIndex: number }
+  | {
+      kind: 'steered'
+      texts: string[]
+      key: string
+      messageId: string
+      globalIndex: number
+    }
 
 /**
  * Returns true if an assistant message should always render in full
@@ -114,6 +131,74 @@ function messageContainsPlan(message: ChatMessage): boolean {
 
 function messageContainsQuestion(message: ChatMessage): boolean {
   return Boolean(message.tool_calls?.some(isAskUserQuestion))
+}
+
+type SteerSegment =
+  | { kind: 'blocks'; message: ChatMessage }
+  | { kind: 'steered'; texts: string[]; key: string }
+
+/**
+ * Splits an assistant message at mid-turn steered user prompts (Codex
+ * `turn/steer`, `user_input` blocks) so the compact view can interleave them
+ * chronologically: activity before a steer renders before its bubble, and
+ * activity after the steer renders after it. Returns null when the message
+ * contains no steered input.
+ */
+function splitMessageAtSteeredInputs(
+  message: ChatMessage
+): SteerSegment[] | null {
+  const blocks = message.content_blocks ?? []
+  if (!blocks.some(block => block.type === 'user_input')) return null
+
+  const segments: SteerSegment[] = []
+  let current: ContentBlock[] = []
+  let part = 0
+
+  const flushBlocks = () => {
+    if (current.length === 0) return
+    const toolIds = new Set(
+      current.flatMap(b => (b.type === 'tool_use' ? [b.tool_call_id] : []))
+    )
+    const text = current
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('')
+    segments.push({
+      kind: 'blocks',
+      message: {
+        ...message,
+        id: `${message.id}-part-${part++}`,
+        content: text,
+        content_blocks: current,
+        tool_calls: (message.tool_calls ?? []).filter(tc => toolIds.has(tc.id)),
+      },
+    })
+    current = []
+  }
+
+  blocks.forEach((block, index) => {
+    if (block.type === 'user_input') {
+      flushBlocks()
+      if (block.text.trim()) {
+        // Consecutive steered prompts merge into one connected group
+        const last = segments[segments.length - 1]
+        if (last && last.kind === 'steered') {
+          last.texts.push(block.text)
+        } else {
+          segments.push({
+            kind: 'steered',
+            texts: [block.text],
+            key: `steered-${message.id}-${index}`,
+          })
+        }
+      }
+    } else {
+      current.push(block)
+    }
+  })
+  flushBlocks()
+
+  return segments
 }
 
 function isPureTextAssistantMessage(message: ChatMessage): boolean {
@@ -129,26 +214,6 @@ function isPureTextAssistantMessage(message: ChatMessage): boolean {
     .join('')
 
   return Boolean(blockText.trim() || message.content?.trim())
-}
-
-const RECAP_HEADING_RE = /^##\s+Recap\s*$/im
-
-/**
- * If `text` contains a `## Recap` markdown heading, returns the slice from
- * that heading to the next H1/H2 (or end of string). Otherwise returns null.
- * The backend instructs the assistant (via system prompt) to terminate every
- * multi-step turn with this section, so the compact view can surface a short
- * summary instead of the full tool-stripped prose replay.
- */
-function extractRecapSection(text: string): string | null {
-  const match = RECAP_HEADING_RE.exec(text)
-  if (!match) return null
-  const start = match.index
-  const afterHeading = start + match[0].length
-  const rest = text.slice(afterHeading)
-  const nextHeading = /^#{1,2}\s+/m.exec(rest)
-  const end = nextHeading ? afterHeading + nextHeading.index : text.length
-  return text.slice(start, end).trim() || null
 }
 
 /**
@@ -178,64 +243,11 @@ function findLatestAssistantText(
 
     const combined = texts.join('\n\n')
     if (!combined.trim()) continue
-    return extractRecapSection(combined) ?? combined
+    const recap = extractRecapSection(combined)
+    if (recap) return recap
+    return texts[texts.length - 1] ?? null
   }
   return null
-}
-
-/**
- * Trims the `## Recap` section (and everything after it up to the next H1/H2)
- * from a markdown string. Returns the original string unchanged when no recap
- * heading is present.
- */
-function stripRecapFromText(text: string): string {
-  const match = RECAP_HEADING_RE.exec(text)
-  if (!match) return text
-  const start = match.index
-  const afterHeading = start + match[0].length
-  const rest = text.slice(afterHeading)
-  const nextHeading = /^#{1,2}\s+/m.exec(rest)
-  const before = text.slice(0, start).trimEnd()
-  const after = nextHeading ? text.slice(afterHeading + nextHeading.index) : ''
-  return after ? `${before}\n\n${after}`.trim() : before
-}
-
-/**
- * Returns a clone of `message` with the `## Recap` section removed from any
- * text content blocks. Used so the latest assistant message doesn't duplicate
- * the recap that already renders in the `latestText` block under the activity
- * row.
- */
-function stripRecapFromMessage(message: ChatMessage): ChatMessage {
-  const blocks = message.content_blocks
-  let changed = false
-  let newBlocks: ContentBlock[] | undefined
-  if (blocks && blocks.length > 0) {
-    newBlocks = []
-    for (const block of blocks) {
-      if (block?.type === 'text' && RECAP_HEADING_RE.test(block.text)) {
-        const stripped = stripRecapFromText(block.text)
-        changed = true
-        if (stripped) newBlocks.push({ ...block, text: stripped })
-      } else {
-        newBlocks.push(block)
-      }
-    }
-  }
-  let newContent = message.content
-  if (newContent && RECAP_HEADING_RE.test(newContent)) {
-    const stripped = stripRecapFromText(newContent)
-    if (stripped !== newContent) {
-      newContent = stripped
-      changed = true
-    }
-  }
-  if (!changed) return message
-  return {
-    ...message,
-    ...(newBlocks ? { content_blocks: newBlocks } : {}),
-    ...(newContent !== message.content ? { content: newContent } : {}),
-  }
 }
 
 /**
@@ -357,7 +369,11 @@ interface CompactActivityRowProps {
   total: number
   renderMessage: (
     item: { message: ChatMessage; globalIndex: number },
-    extra: { hasFollowUpMessage: boolean; durationMs: number | null }
+    extra: {
+      hasFollowUpMessage: boolean
+      durationMs: number | null
+      hideCancelledIndicator?: boolean
+    }
   ) => React.ReactNode
   hasFollowUpFor: (globalIndex: number) => boolean
   durationFor: (globalIndex: number, message: ChatMessage) => number | null
@@ -379,6 +395,10 @@ function CompactActivityRow({
   const summary = useMemo(() => summarizeGroup(group), [group])
   const stepCount = useMemo(() => countSteps(group), [group])
   const messageCount = group.length
+  const hasCancelledMessage = useMemo(
+    () => group.some(item => item.message.cancelled),
+    [group]
+  )
   const groupDurationMs = useMemo(() => {
     for (let i = group.length - 1; i >= 0; i--) {
       const item = group[i]
@@ -450,16 +470,24 @@ function CompactActivityRow({
                 {renderMessage(item, {
                   hasFollowUpMessage: hasFollowUpFor(item.globalIndex),
                   durationMs: durationFor(item.globalIndex, item.message),
+                  hideCancelledIndicator: hasCancelledMessage,
                 })}
               </div>
             ))}
           </div>
         </CollapsibleContent>
       </div>
-      {groupDurationMs != null && (
-        <span className="mt-1 block min-h-4 text-xs leading-4 text-muted-foreground/40 tabular-nums font-mono">
-          {formatDuration(groupDurationMs)}
-        </span>
+      {(groupDurationMs != null || hasCancelledMessage) && (
+        <div className="mt-1 flex min-h-4 items-center gap-2 text-xs leading-4 text-muted-foreground/40">
+          {groupDurationMs != null && (
+            <span className="tabular-nums font-mono">
+              {formatDuration(groupDurationMs)}
+            </span>
+          )}
+          {hasCancelledMessage && (
+            <span className="italic text-muted-foreground/50">(cancelled)</span>
+          )}
+        </div>
       )}
       <span aria-hidden className="sr-only">
         Total: {total}
@@ -489,7 +517,11 @@ interface CompactQuestionMessageProps {
   areQuestionsSkipped: (sessionId: string) => boolean
   renderMessage: (
     item: { message: ChatMessage; globalIndex: number },
-    extra: { hasFollowUpMessage: boolean; durationMs: number | null }
+    extra: {
+      hasFollowUpMessage: boolean
+      durationMs: number | null
+      hideCancelledIndicator?: boolean
+    }
   ) => React.ReactNode
   hasFollowUpFor: (globalIndex: number) => boolean
   durationFor: (globalIndex: number, message: ChatMessage) => number | null
@@ -557,13 +589,11 @@ function CompactQuestionMessage({
           hasFollowUpMessage ||
           isQuestionAnswered(sessionId, item.tool.id) ||
           hasQuestionAnswerOutput(item.tool.output)
-        const rawInput = item.tool.input as {
-          questions: (Question & { multiple?: boolean })[]
-        }
-        const normalizedQuestions = rawInput.questions.map(q => ({
-          ...q,
-          multiSelect: q.multiSelect ?? q.multiple === true,
-        }))
+        const normalizedQuestions = normalizeQuestionMultipleField(
+          (getAskUserQuestions(item.tool.input) ?? []) as (Question & {
+            multiple?: boolean
+          })[]
+        )
         return (
           <AskUserQuestion
             key={item.key}
@@ -637,7 +667,6 @@ export const CompactMessageList = memo(
         onQuestionAnswer,
         onQuestionSkip,
         onFileClick,
-        onEditedFileClick,
         onFixFinding,
         onFixAllFindings,
         isQuestionAnswered,
@@ -659,8 +688,17 @@ export const CompactMessageList = memo(
       ref
     ) {
       const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map())
-      const pendingPrependScrollHeightRef = useRef<number | null>(null)
+      const pendingPrependAnchorRef = useRef<PrependScrollAnchor | null>(null)
       const pendingPrependMessagesLengthRef = useRef<number | null>(null)
+
+      // Stable accessor for the full message list. Kept in a ref so the
+      // identity handed to memoized rows never changes — "subsequent edits"
+      // stays lazy without busting per-row memoization.
+      const messagesRef = useRef(messages)
+      useEffect(() => {
+        messagesRef.current = messages
+      }, [messages])
+      const getMessages = useCallback(() => messagesRef.current, [])
 
       const lastIndex = messages.length - 1
       const hasHiddenPrompts = hiddenPromptCount > 0 && !!onShowHiddenPrompts
@@ -731,6 +769,37 @@ export const CompactMessageList = memo(
           buffer = []
         }
 
+        // Buffer an assistant message. Messages containing mid-turn steered
+        // user prompts are split at each steer so the visible order matches
+        // chronology: activity → steered bubble → activity after the steer.
+        const pushBuffered = (message: ChatMessage, globalIndex: number) => {
+          const segments = splitMessageAtSteeredInputs(message)
+          if (!segments) {
+            buffer.push({ message, globalIndex })
+            return
+          }
+          for (const segment of segments) {
+            if (segment.kind === 'steered') {
+              flush()
+              // Merge with a preceding steered group (e.g. across messages)
+              const last = items[items.length - 1]
+              if (last && last.kind === 'steered') {
+                last.texts.push(...segment.texts)
+              } else {
+                items.push({
+                  kind: 'steered',
+                  texts: segment.texts,
+                  key: segment.key,
+                  messageId: message.id,
+                  globalIndex,
+                })
+              }
+            } else {
+              buffer.push({ message: segment.message, globalIndex })
+            }
+          }
+        }
+
         messages.forEach((message, globalIndex) => {
           if (message.role === 'user') {
             flush()
@@ -747,7 +816,7 @@ export const CompactMessageList = memo(
               items.push({ kind: 'message', message, globalIndex })
               return
             }
-            buffer.push({ message, globalIndex })
+            pushBuffered(message, globalIndex)
             return
           }
 
@@ -757,7 +826,7 @@ export const CompactMessageList = memo(
             return
           }
 
-          buffer.push({ message, globalIndex })
+          pushBuffered(message, globalIndex)
         })
 
         flush()
@@ -770,10 +839,12 @@ export const CompactMessageList = memo(
           extra: {
             hasFollowUpMessage: boolean
             durationMs: number | null
+            hideCancelledIndicator?: boolean
           }
         ) => (
           <MessageItem
             message={item.message}
+            getMessages={getMessages}
             messageIndex={item.globalIndex}
             totalMessages={totalMessages}
             lastPlanMessageIndex={lastPlanMessageIndex}
@@ -799,7 +870,6 @@ export const CompactMessageList = memo(
             onQuestionAnswer={onQuestionAnswer}
             onQuestionSkip={onQuestionSkip}
             onFileClick={onFileClick}
-            onEditedFileClick={onEditedFileClick}
             onFixFinding={onFixFinding}
             onFixAllFindings={onFixAllFindings}
             isQuestionAnswered={isQuestionAnswered}
@@ -808,10 +878,12 @@ export const CompactMessageList = memo(
             isFindingFixed={isFindingFixed}
             onCopyToInput={onCopyToInput}
             hideApproveButtons={hideApproveButtons}
+            hideCancelledIndicator={extra.hideCancelledIndicator}
             durationMs={extra.durationMs}
           />
         ),
         [
+          messages,
           totalMessages,
           lastPlanMessageIndex,
           sessionId,
@@ -831,7 +903,6 @@ export const CompactMessageList = memo(
           onQuestionAnswer,
           onQuestionSkip,
           onFileClick,
-          onEditedFileClick,
           onFixFinding,
           onFixAllFindings,
           isQuestionAnswered,
@@ -850,11 +921,11 @@ export const CompactMessageList = memo(
           !hasOlderOnDisk ||
           isLoadingOlder ||
           !onLoadOlderRuns ||
-          pendingPrependScrollHeightRef.current !== null
+          pendingPrependMessagesLengthRef.current !== null
         ) {
           return
         }
-        pendingPrependScrollHeightRef.current = container.scrollHeight
+        pendingPrependAnchorRef.current = capturePrependScrollAnchor(container)
         pendingPrependMessagesLengthRef.current = messages.length
         onLoadOlderRuns()
       }, [
@@ -868,21 +939,17 @@ export const CompactMessageList = memo(
       // Restore scroll position after older messages prepend.
       useLayoutEffect(() => {
         const container = scrollContainerRef.current
-        const before = pendingPrependScrollHeightRef.current
+        const anchor = pendingPrependAnchorRef.current
         const prevLen = pendingPrependMessagesLengthRef.current
-        if (!container || before === null || prevLen === null) return
+        if (!container || prevLen === null) return
         if (isLoadingOlder) return
 
-        pendingPrependScrollHeightRef.current = null
+        pendingPrependAnchorRef.current = null
         pendingPrependMessagesLengthRef.current = null
 
         if (messages.length === prevLen) return
 
-        flushSync(() => {
-          /* trigger paint */
-        })
-        const delta = container.scrollHeight - before
-        if (delta > 0) container.scrollTop += delta
+        restorePrependScrollAnchor(container, anchor)
       }, [scrollContainerRef, isLoadingOlder, messages.length])
 
       // Scroll-to-top auto-load.
@@ -901,6 +968,7 @@ export const CompactMessageList = memo(
       useEffect(() => {
         if (
           shouldScrollToBottom &&
+          pendingPrependMessagesLengthRef.current === null &&
           messages.length > prevMessageCountRef.current
         ) {
           const lastEl = messageRefs.current.get(lastIndex)
@@ -975,6 +1043,7 @@ export const CompactMessageList = memo(
               return (
                 <div
                   key={item.message.id}
+                  data-message-anchor-id={item.message.id}
                   ref={el => {
                     if (el) messageRefs.current.set(item.globalIndex, el)
                     else messageRefs.current.delete(item.globalIndex)
@@ -999,6 +1068,7 @@ export const CompactMessageList = memo(
               return (
                 <div
                   key={item.message.id}
+                  data-message-anchor-id={item.message.id}
                   ref={el => {
                     if (el) messageRefs.current.set(item.globalIndex, el)
                     else messageRefs.current.delete(item.globalIndex)
@@ -1020,6 +1090,35 @@ export const CompactMessageList = memo(
                     renderMessage={renderMessageItem}
                     hasFollowUpFor={hasFollowUpFor}
                     durationFor={durationFor}
+                  />
+                </div>
+              )
+            }
+
+            if (item.kind === 'steered') {
+              return (
+                <div key={item.key} className="pb-4">
+                  <SteeredPromptGroup
+                    texts={item.texts}
+                    worktreePath={worktreePath}
+                    onCopyText={
+                      onCopyToInput
+                        ? text =>
+                            onCopyToInput({
+                              id: `${item.messageId}-steered-copy`,
+                              session_id:
+                                messages[item.globalIndex]?.session_id ??
+                                sessionId,
+                              role: 'user',
+                              content: text,
+                              timestamp:
+                                messages[item.globalIndex]?.timestamp ??
+                                Date.now(),
+                              content_blocks: [],
+                              tool_calls: [],
+                            })
+                        : undefined
+                    }
                   />
                 </div>
               )
@@ -1065,8 +1164,12 @@ export const CompactMessageList = memo(
             const latestTextIsRecap =
               Boolean(item.latestText) &&
               RECAP_HEADING_RE.test(item.latestText ?? '')
+            const hasCancelledMessage = item.messages.some(
+              ({ message }) => message.cancelled
+            )
             const showLatestText =
               isLatestCompact &&
+              !hasCancelledMessage &&
               Boolean(item.latestText) &&
               !(latestTextIsRecap && latestRunHasPlan)
             const surfaceRecap = latestTextIsRecap && showLatestText

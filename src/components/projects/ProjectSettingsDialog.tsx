@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Settings, Plug, FileJson } from 'lucide-react'
+import { Bot, Settings, Plug, FileJson } from 'lucide-react'
 import { ModalCloseButton } from '@/components/ui/modal-close-button'
 import {
   Breadcrumb,
@@ -37,11 +37,13 @@ import { useProjects } from '@/services/projects'
 import { GeneralPane } from './panes/GeneralPane'
 import { McpServersPane } from './panes/McpServersPane'
 import { JeanJsonPane } from './panes/JeanJsonPane'
+import { AutoFixPane } from './panes/AutoFixPane'
 
-type ProjectSettingsPane = 'general' | 'mcp-servers' | 'jean-json'
+type ProjectSettingsPane = 'general' | 'mcp-servers' | 'jean-json' | 'auto-fix'
 
 const navigationItems = [
   { id: 'general' as const, name: 'General', icon: Settings },
+  { id: 'auto-fix' as const, name: 'Mr. Robot', icon: Bot },
   { id: 'mcp-servers' as const, name: 'MCP Servers', icon: Plug },
   { id: 'jean-json' as const, name: 'Jean.json', icon: FileJson },
 ]
@@ -50,6 +52,8 @@ const getPaneTitle = (pane: ProjectSettingsPane): string => {
   switch (pane) {
     case 'general':
       return 'General'
+    case 'auto-fix':
+      return 'Mr. Robot'
     case 'mcp-servers':
       return 'MCP Servers'
     case 'jean-json':
@@ -206,6 +210,9 @@ function ProjectSettingsDialogContent({
                       projectId={safeProjectId}
                       projectPath={projectPath}
                     />
+                  )}
+                  {activePane === 'auto-fix' && (
+                    <AutoFixPane projectId={safeProjectId} />
                   )}
                   {activePane === 'jean-json' && (
                     <JeanJsonPane

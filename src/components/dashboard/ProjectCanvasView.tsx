@@ -22,7 +22,6 @@ import { invoke } from '@/lib/transport'
 import { cn } from '@/lib/utils'
 import { dismissibleToast } from '@/lib/dismissible-toast'
 import {
-  type LucideIcon,
   Search,
   X,
   MoreHorizontal,
@@ -55,6 +54,16 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -109,7 +118,15 @@ import { SessionChatModal } from '@/components/chat/SessionChatModal'
 import { LabelModal } from '@/components/chat/LabelModal'
 import { getLabelTextColor } from '@/lib/label-colors'
 import {
+  countWorktreesWithLabel,
+  deleteLabelFromRegistry,
   getWorktreeLabels,
+  getPinnedWorktreeLabelTabs,
+  mergeLabelRegistry,
+  mergePinnedLabels,
+  removeLabelFromLabels,
+  setLabelPinned,
+  type PinnedWorktreeLabelTab,
   updateWorktreeLabelsByName,
 } from '@/lib/worktree-labels'
 import {
@@ -147,6 +164,16 @@ import {
   shouldDisableWorktreeTextSelection,
   shouldShowWorktreeLabelContextMenu,
 } from './worktree-label-context'
+import {
+  CANVAS_FILTER_TABS,
+  getCanvasFilterTabCount,
+  isLabelFilterTab,
+  matchesCanvasFilterTab,
+  type CanvasFilterTab,
+  type CanvasPredefinedFilterTab,
+  type CanvasPredefinedFilterTabItem,
+} from './canvas-worktree-filters'
+import { getWorktreeLabelContainerClassName } from './worktree-label-layout'
 const GitDiffModal = lazy(() =>
   import('@/components/chat/GitDiffModal').then(mod => ({
     default: mod.GitDiffModal,
@@ -165,7 +192,7 @@ import {
   triggerImmediateGitPoll,
   performGitPull,
 } from '@/services/git-status'
-import { useRemotePicker } from '@/hooks/useRemotePicker'
+import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import {
   DRAG_SCOPE_CANVAS_WORKTREE_LIST,
   isWorktreeDragData,
@@ -189,6 +216,9 @@ import { openCanvasConflictResolution } from './conflict-resolution-navigation'
 interface ProjectCanvasViewProps {
   projectId: string
 }
+
+const EMPTY_PINNED_LABELS: LabelData[] = []
+const EMPTY_LABELS: LabelData[] = []
 
 interface WorktreeSection {
   worktree: Worktree
@@ -319,62 +349,18 @@ type ActiveStatus =
   | 'review'
   | null
 
-type CanvasFilterTab = 'all' | 'manual' | 'issues' | 'prs' | 'security'
-
-const CANVAS_FILTER_TABS: {
-  value: CanvasFilterTab
-  label: string
-  icon: LucideIcon
-}[] = [
-  { value: 'all', label: 'All', icon: Home },
-  { value: 'manual', label: 'Manual', icon: GitBranch },
-  { value: 'issues', label: 'Issues', icon: CircleDot },
-  { value: 'prs', label: 'PRs', icon: GitPullRequestArrow },
-  { value: 'security', label: 'Security', icon: ShieldAlert },
-]
-
-function isIssueWorktree(worktree: Worktree): boolean {
-  return (
-    worktree.issue_number != null || !!worktree.linear_issue_identifier?.trim()
-  )
+interface CanvasLabelFilterTabItem extends PinnedWorktreeLabelTab {
+  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>
 }
 
-function isPrWorktree(worktree: Worktree): boolean {
-  return worktree.pr_number != null
-}
+type CanvasFilterTabItem =
+  | CanvasPredefinedFilterTabItem
+  | CanvasLabelFilterTabItem
 
-function isSecurityWorktree(worktree: Worktree): boolean {
-  return (
-    worktree.security_alert_number != null ||
-    !!worktree.advisory_ghsa_id?.trim()
-  )
-}
-
-function isManualWorktree(worktree: Worktree): boolean {
-  return (
-    !isBaseSession(worktree) &&
-    !isIssueWorktree(worktree) &&
-    !isPrWorktree(worktree) &&
-    !isSecurityWorktree(worktree)
-  )
-}
-
-function matchesCanvasFilterTab(
-  worktree: Worktree,
-  activeFilterTab: CanvasFilterTab
-): boolean {
-  switch (activeFilterTab) {
-    case 'all':
-      return true
-    case 'manual':
-      return isManualWorktree(worktree)
-    case 'issues':
-      return isIssueWorktree(worktree)
-    case 'prs':
-      return isPrWorktree(worktree)
-    case 'security':
-      return isSecurityWorktree(worktree)
-  }
+function isLabelFilterTabItem(
+  tab: CanvasFilterTabItem
+): tab is CanvasLabelFilterTabItem {
+  return isLabelFilterTab(tab.value)
 }
 
 function getActiveStatus(cards: SessionCardData[]): ActiveStatus {
@@ -528,7 +514,8 @@ function WorktreeSectionHeader({
   const handlePush = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
-      pickRemoteOrRun(async remote => {
+
+      const runPush = async (remote?: string) => {
         const opToast = dismissibleToast.loading('Pushing changes...')
         try {
           const result = await gitPush(
@@ -548,9 +535,15 @@ function WorktreeSectionHeader({
         } catch (error) {
           opToast.error(`Push failed: ${error}`)
         }
-      })
+      }
+
+      if (pushNeedsRemotePicker(worktree.pr_number)) {
+        pickRemoteOrRun(runPush)
+      } else {
+        runPush()
+      }
     },
-    [worktree.path, worktree.pr_number, projectId, pickRemoteOrRun]
+    [pickRemoteOrRun, worktree.path, worktree.pr_number, projectId]
   )
 
   const handleDiffClick = useCallback(() => {
@@ -619,7 +612,7 @@ function WorktreeSectionHeader({
       )}
 
       <div className={cn(showDetails ? 'flex flex-col gap-1.5' : 'contents')}>
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
           {shortcutNumber !== undefined && (
             <kbd className="hidden shrink-0 h-4 min-w-4 items-center justify-center rounded border border-border/50 bg-muted/50 px-0.5 font-mono text-muted-foreground sm:inline-flex">
               <span className="text-[9px]">⌘{shortcutNumber}</span>
@@ -741,7 +734,7 @@ function WorktreeSectionHeader({
             )}
           </span>
           {worktreeLabels.length > 0 && (
-            <span className="ml-auto flex max-w-[45%] flex-wrap justify-end gap-1 self-start shrink-0">
+            <span className={getWorktreeLabelContainerClassName()}>
               {worktreeLabels.slice(0, 3).map(label => (
                 <span
                   key={label.name}
@@ -839,6 +832,14 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     state =>
       state.projectCanvasSettings[projectId]?.worktreeSortMode ?? 'created'
   )
+  const projectPinnedLabels = useProjectsStore(
+    state =>
+      state.projectCanvasSettings[projectId]?.pinnedLabels ??
+      EMPTY_PINNED_LABELS
+  )
+  const projectLabels = useProjectsStore(
+    state => state.projectCanvasSettings[projectId]?.labels ?? EMPTY_LABELS
+  )
 
   // Project action mutations
   const createBaseSession = useCreateBaseSession()
@@ -928,18 +929,42 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     return visibleWorktrees.filter(wt => wt.status === 'pending')
   }, [visibleWorktrees])
 
-  const filterTabCounts = useMemo<Record<CanvasFilterTab, number>>(() => {
+  const filterTabCounts = useMemo<
+    Record<CanvasPredefinedFilterTab, number>
+  >(() => {
     return {
-      all: visibleWorktrees.length,
-      manual: visibleWorktrees.filter(isManualWorktree).length,
-      issues: visibleWorktrees.filter(isIssueWorktree).length,
-      prs: visibleWorktrees.filter(isPrWorktree).length,
-      security: visibleWorktrees.filter(isSecurityWorktree).length,
+      all: getCanvasFilterTabCount(visibleWorktrees, 'all'),
+      manual: getCanvasFilterTabCount(visibleWorktrees, 'manual'),
+      issues: getCanvasFilterTabCount(visibleWorktrees, 'issues'),
+      prs: getCanvasFilterTabCount(visibleWorktrees, 'prs'),
+      security: getCanvasFilterTabCount(visibleWorktrees, 'security'),
+      auto_fix: getCanvasFilterTabCount(visibleWorktrees, 'auto_fix'),
     }
   }, [visibleWorktrees])
 
-  // All worktree labels (unfiltered by search) for the label modal
-  const allWorktreeLabels = useMemo(() => {
+  const pinnedLabelTabs = useMemo(
+    () => getPinnedWorktreeLabelTabs(visibleWorktrees, projectPinnedLabels),
+    [visibleWorktrees, projectPinnedLabels]
+  )
+
+  const canvasFilterTabs = useMemo<CanvasFilterTabItem[]>(
+    () => [
+      ...CANVAS_FILTER_TABS,
+      ...pinnedLabelTabs.map(tab => ({
+        ...tab,
+        icon: Tag,
+      })),
+    ],
+    [pinnedLabelTabs]
+  )
+
+  useEffect(() => {
+    if (!isLabelFilterTab(activeFilterTab)) return
+    if (pinnedLabelTabs.some(tab => tab.value === activeFilterTab)) return
+    setActiveFilterTab('all')
+  }, [activeFilterTab, pinnedLabelTabs])
+
+  const assignedWorktreeLabels = useMemo(() => {
     const labels: LabelData[] = []
     for (const wt of readyWorktrees) {
       labels.push(...getWorktreeLabels(wt))
@@ -949,6 +974,16 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     }
     return labels
   }, [readyWorktrees, pendingWorktrees])
+
+  // All worktree labels (unfiltered by search) for the label modal
+  const allWorktreeLabels = useMemo(
+    () =>
+      mergeLabelRegistry(
+        mergeLabelRegistry(projectLabels, projectPinnedLabels),
+        assignedWorktreeLabels
+      ),
+    [projectLabels, projectPinnedLabels, assignedWorktreeLabels]
+  )
 
   // Load sessions for all worktrees dynamically using useQueries
   const sessionQueries = useQueries({
@@ -2058,20 +2093,20 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
 
   const handleFilterTabKeyboardNav = useCallback(
     (delta: -1 | 1) => {
-      const currentIndex = CANVAS_FILTER_TABS.findIndex(
+      const currentIndex = canvasFilterTabs.findIndex(
         tab => tab.value === activeFilterTab
       )
       const safeCurrentIndex = currentIndex === -1 ? 0 : currentIndex
       const nextIndex =
-        (safeCurrentIndex + delta + CANVAS_FILTER_TABS.length) %
-        CANVAS_FILTER_TABS.length
-      const nextTab = CANVAS_FILTER_TABS[nextIndex]
+        (safeCurrentIndex + delta + canvasFilterTabs.length) %
+        canvasFilterTabs.length
+      const nextTab = canvasFilterTabs[nextIndex]
 
       if (nextTab) {
         handleFilterTabChange(nextTab.value)
       }
     },
-    [activeFilterTab, handleFilterTabChange]
+    [activeFilterTab, canvasFilterTabs, handleFilterTabChange]
   )
   const handleNavigateFilterTabLeft = useCallback(() => {
     handleFilterTabKeyboardNav(-1)
@@ -2185,14 +2220,24 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     worktreeId: string
     currentLabels: LabelData[]
   } | null>(null)
+  const [labelDeleteTarget, setLabelDeleteTarget] = useState<{
+    label: LabelData
+    assignedCount: number
+  } | null>(null)
 
-  const openWorktreeLabelModal = useCallback((worktree: Worktree) => {
-    setWorktreeLabelTarget({
-      worktreeId: worktree.id,
-      currentLabels: getWorktreeLabels(worktree),
-    })
-    setWorktreeLabelModalOpen(true)
-  }, [])
+  const openWorktreeLabelModal = useCallback(
+    (worktree: Worktree) => {
+      setWorktreeLabelTarget({
+        worktreeId: worktree.id,
+        currentLabels: mergePinnedLabels(
+          getWorktreeLabels(worktree),
+          projectPinnedLabels
+        ),
+      })
+      setWorktreeLabelModalOpen(true)
+    },
+    [projectPinnedLabels]
+  )
 
   // Listen for toggle-session-label event — open label modal for worktree
   useEffect(() => {
@@ -2291,6 +2336,18 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
           worktreeId: worktreeLabelTarget.worktreeId,
           labels,
         })
+        useProjectsStore
+          .getState()
+          .setProjectCanvasLabels(
+            projectId,
+            mergeLabelRegistry(
+              mergeLabelRegistry(
+                projectLabels,
+                worktreeLabelTarget.currentLabels
+              ),
+              labels
+            )
+          )
         setWorktreeLabelTarget(target =>
           target ? { ...target, currentLabels: labels } : target
         )
@@ -2301,15 +2358,116 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
         toast.error(`Failed to update labels: ${error}`)
       }
     },
-    [worktreeLabelTarget, queryClient, projectId]
+    [worktreeLabelTarget, queryClient, projectId, projectLabels]
+  )
+
+  const handleLabelPinnedChange = useCallback(
+    async (label: LabelData, pinned: boolean) => {
+      const nextPinnedLabels = setLabelPinned(
+        projectPinnedLabels,
+        label,
+        pinned
+      )
+
+      useProjectsStore
+        .getState()
+        .setProjectCanvasPinnedLabels(projectId, nextPinnedLabels)
+      useProjectsStore
+        .getState()
+        .setProjectCanvasLabels(
+          projectId,
+          mergeLabelRegistry(projectLabels, [{ ...label, pinned }])
+        )
+
+      const worktreesToUpdate = worktreeSections
+        .map(s => s.worktree)
+        .filter(wt =>
+          getWorktreeLabels(wt).some(
+            existing => existing.name.toLowerCase() === label.name.toLowerCase()
+          )
+        )
+
+      if (worktreesToUpdate.length > 0) {
+        const results = await Promise.allSettled(
+          worktreesToUpdate.map(wt =>
+            invoke('update_worktree_labels', {
+              worktreeId: wt.id,
+              labels: getWorktreeLabels(wt).map(existing =>
+                existing.name.toLowerCase() === label.name.toLowerCase()
+                  ? { ...existing, pinned }
+                  : existing
+              ),
+            })
+          )
+        )
+
+        const failures = results.filter(r => r.status === 'rejected')
+        if (failures.length > 0) {
+          toast.error(
+            `Failed to update pinned state for ${failures.length} worktree(s)`
+          )
+        }
+
+        queryClient.invalidateQueries({
+          queryKey: projectsQueryKeys.worktrees(projectId),
+        })
+      }
+
+      setWorktreeLabelTarget(target =>
+        target
+          ? {
+              ...target,
+              currentLabels: mergePinnedLabels(
+                target.currentLabels.map(existing =>
+                  existing.name.toLowerCase() === label.name.toLowerCase()
+                    ? { ...existing, pinned }
+                    : existing
+                ),
+                nextPinnedLabels
+              ),
+            }
+          : target
+      )
+    },
+    [
+      projectId,
+      projectLabels,
+      projectPinnedLabels,
+      queryClient,
+      worktreeSections,
+    ]
   )
 
   const handleLabelColorChange = useCallback(
     async (labelName: string, newColor: string) => {
+      useProjectsStore
+        .getState()
+        .setProjectCanvasLabels(
+          projectId,
+          updateWorktreeLabelsByName(projectLabels, labelName, newColor)
+        )
+
+      if (
+        projectPinnedLabels.some(
+          label => label.name.toLowerCase() === labelName.toLowerCase()
+        )
+      ) {
+        useProjectsStore.getState().setProjectCanvasPinnedLabels(
+          projectId,
+          projectPinnedLabels.map(label =>
+            label.name.toLowerCase() === labelName.toLowerCase()
+              ? { ...label, color: newColor }
+              : label
+          )
+        )
+      }
+
       const worktreesToUpdate = worktreeSections
         .map(s => s.worktree)
         .filter(wt =>
-          getWorktreeLabels(wt).some(label => label.name === labelName)
+          getWorktreeLabels(wt).some(
+            label => label.name.toLowerCase() === labelName.toLowerCase()
+          )
         )
 
       if (worktreesToUpdate.length === 0) return
@@ -2336,15 +2494,105 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
         queryKey: projectsQueryKeys.worktrees(projectId),
       })
     },
-    [worktreeSections, queryClient, projectId]
+    [
+      projectId,
+      projectLabels,
+      projectPinnedLabels,
+      worktreeSections,
+      queryClient,
+    ]
   )
+
+  const handleDeleteLabelRequest = useCallback(
+    (label: LabelData) => {
+      const allWorktrees = [...readyWorktrees, ...pendingWorktrees]
+      setLabelDeleteTarget({
+        label,
+        assignedCount: countWorktreesWithLabel(allWorktrees, label.name),
+      })
+    },
+    [readyWorktrees, pendingWorktrees]
+  )
+
+  const handleConfirmDeleteLabel = useCallback(async () => {
+    if (!labelDeleteTarget) return
+
+    const labelName = labelDeleteTarget.label.name
+    const allWorktrees = [...readyWorktrees, ...pendingWorktrees]
+    const worktreesToUpdate = allWorktrees.filter(wt =>
+      getWorktreeLabels(wt).some(
+        label => label.name.toLowerCase() === labelName.toLowerCase()
+      )
+    )
+
+    useProjectsStore
+      .getState()
+      .setProjectCanvasLabels(
+        projectId,
+        deleteLabelFromRegistry(projectLabels, labelName)
+      )
+    useProjectsStore
+      .getState()
+      .setProjectCanvasPinnedLabels(
+        projectId,
+        deleteLabelFromRegistry(projectPinnedLabels, labelName)
+      )
+
+    if (worktreesToUpdate.length > 0) {
+      const results = await Promise.allSettled(
+        worktreesToUpdate.map(wt =>
+          invoke('update_worktree_labels', {
+            worktreeId: wt.id,
+            labels: removeLabelFromLabels(getWorktreeLabels(wt), labelName),
+          })
+        )
+      )
+
+      const failures = results.filter(r => r.status === 'rejected')
+      if (failures.length > 0) {
+        toast.error(
+          `Failed to delete label from ${failures.length} worktree(s)`
+        )
+      } else {
+        toast.success(`Deleted label "${labelName}"`)
+      }
+
+      queryClient.invalidateQueries({
+        queryKey: projectsQueryKeys.worktrees(projectId),
+      })
+    } else {
+      toast.success(`Deleted label "${labelName}"`)
+    }
+
+    setWorktreeLabelTarget(target =>
+      target
+        ? {
+            ...target,
+            currentLabels: removeLabelFromLabels(
+              target.currentLabels,
+              labelName
+            ),
+          }
+        : target
+    )
+    setLabelDeleteTarget(null)
+  }, [
+    labelDeleteTarget,
+    pendingWorktrees,
+    projectId,
+    projectLabels,
+    projectPinnedLabels,
+    queryClient,
+    readyWorktrees,
+  ])
 
   // Keyboard navigation - disable when any modal/dialog is open
   const isModalOpen =
     !!selectedWorktreeModal ||
     !!planDialogPath ||
     !!planDialogContent ||
-    worktreeLabelModalOpen
+    worktreeLabelModalOpen ||
+    !!labelDeleteTarget
   const { cardRefs } = useCanvasKeyboardNav({
     cards: flatCards,
     selectedIndex,
@@ -2610,8 +2858,7 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
   }
 
   const activeFilterLabel =
-    CANVAS_FILTER_TABS.find(tab => tab.value === activeFilterTab)?.label ??
-    'All'
+    canvasFilterTabs.find(tab => tab.value === activeFilterTab)?.label ?? 'All'
   const hasAnyVisibleWorktrees = filterTabCounts.all > 0
 
   // Track global card index for refs
@@ -2973,37 +3220,130 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
               aria-label="Worktree filters"
               className="flex gap-1 overflow-x-auto"
             >
-              {CANVAS_FILTER_TABS.map(tab => {
+              {canvasFilterTabs.map(tab => {
                 const Icon = tab.icon
                 const isActive = activeFilterTab === tab.value
-                const count = filterTabCounts[tab.value]
-                return (
-                  <button
-                    key={tab.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={isActive}
-                    className={cn(
-                      'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-                      isActive
-                        ? 'border-primary/30 bg-primary/10 text-primary'
-                        : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                    )}
-                    onClick={() => handleFilterTabChange(tab.value)}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    <span>{tab.label}</span>
-                    <span
+                const isPinnedLabelTab = isLabelFilterTabItem(tab)
+                const count = isPinnedLabelTab
+                  ? tab.count
+                  : filterTabCounts[tab.value]
+                const settingsPane =
+                  'settingsPane' in tab ? tab.settingsPane : undefined
+                const settingsPlacement =
+                  'settingsPlacement' in tab ? tab.settingsPlacement : undefined
+                const badge = 'badge' in tab ? tab.badge : undefined
+                if (settingsPane && settingsPlacement === 'inside') {
+                  return (
+                    <div
+                      key={tab.value}
                       className={cn(
-                        'rounded-md px-1.5 py-0.5 text-[10px] leading-none',
+                        'inline-flex shrink-0 items-center overflow-hidden rounded-md border text-xs font-medium transition-colors',
                         isActive
-                          ? 'bg-primary/15 text-primary'
-                          : 'bg-muted text-muted-foreground'
+                          ? 'border-primary/30 bg-primary/10 text-primary'
+                          : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                       )}
                     >
-                      {count}
-                    </span>
-                  </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        className="inline-flex shrink-0 items-center gap-1.5 pl-3 py-1.5"
+                        onClick={() => handleFilterTabChange(tab.value)}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        <span>{tab.label}</span>
+                        {badge && (
+                          <span
+                            className={cn(
+                              'rounded border px-1 py-0 text-[9px] uppercase leading-4 tracking-wide',
+                              isActive
+                                ? 'border-primary/30 text-primary'
+                                : 'border-muted-foreground/20 text-muted-foreground'
+                            )}
+                          >
+                            {badge}
+                          </span>
+                        )}
+                        <span
+                          className={cn(
+                            'rounded-md px-1.5 py-0.5 text-[10px] leading-none',
+                            isActive
+                              ? 'bg-primary/15 text-primary'
+                              : 'bg-muted text-muted-foreground'
+                          )}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Configure ${tab.label}`}
+                        title={`Configure ${tab.label}`}
+                        className={cn(
+                          'mx-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors',
+                          isActive
+                            ? 'text-primary hover:bg-primary/15'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        )}
+                        onClick={() =>
+                          useProjectsStore
+                            .getState()
+                            .openProjectSettings(projectId, settingsPane)
+                        }
+                      >
+                        <Settings className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )
+                }
+                return (
+                  <div key={tab.value} className="inline-flex shrink-0 gap-0.5">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      className={cn(
+                        'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+                        isActive
+                          ? 'border-primary/30 bg-primary/10 text-primary'
+                          : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                      )}
+                      onClick={() => handleFilterTabChange(tab.value)}
+                    >
+                      <Icon
+                        className="h-3.5 w-3.5"
+                        style={
+                          isPinnedLabelTab ? { color: tab.color } : undefined
+                        }
+                      />
+                      <span>{tab.label}</span>
+                      <span
+                        className={cn(
+                          'rounded-md px-1.5 py-0.5 text-[10px] leading-none',
+                          isActive
+                            ? 'bg-primary/15 text-primary'
+                            : 'bg-muted text-muted-foreground'
+                        )}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                    {settingsPane && (
+                      <button
+                        type="button"
+                        aria-label={`Configure ${tab.label}`}
+                        title={`Configure ${tab.label}`}
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                        onClick={() =>
+                          useProjectsStore
+                            .getState()
+                            .openProjectSettings(projectId, settingsPane)
+                        }
+                      >
+                        <Settings className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                 )
               })}
             </div>
@@ -3184,6 +3524,8 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
         />
       ) : null}
 
+
+
       {/* Worktree Label Modal */}
       <LabelModal
         key={worktreeLabelTarget?.worktreeId ?? 'wt-label'}
@@ -3198,8 +3540,42 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
         mode="multi"
         onApplyLabels={handleWorktreeLabelApply}
         onColorChange={handleLabelColorChange}
+        onPinnedChange={handleLabelPinnedChange}
+        onDeleteLabel={handleDeleteLabelRequest}
         extraLabels={allWorktreeLabels}
       />
+
+      <AlertDialog
+        open={!!labelDeleteTarget}
+        onOpenChange={open => {
+          if (!open) setLabelDeleteTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete label?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deleting <strong>{labelDeleteTarget?.label.name}</strong> will
+              remove it from the label list
+              {labelDeleteTarget?.assignedCount
+                ? ` and from ${labelDeleteTarget.assignedCount} worktree${
+                    labelDeleteTarget.assignedCount === 1 ? '' : 's'
+                  }`
+                : ''}
+              . This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={handleConfirmDeleteLabel}
+            >
+              Delete label
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Session Chat Modal */}
       <SessionChatModal

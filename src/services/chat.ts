@@ -1,5 +1,10 @@
 import { useCallback, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query'
 import { invoke } from '@/lib/transport'
 import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
@@ -65,6 +70,29 @@ export function cleanupSessionTerminalForRemovedSession(
 }
 
 /**
+ * Optimistically drop a session from the ['all-sessions'] cache so the
+ * finished-session bell (UnreadBell / useUnreadCount) updates instantly when a
+ * session is closed or archived. Invalidation still runs afterwards to
+ * reconcile with the backend.
+ */
+export function removeSessionFromAllSessionsCache(
+  queryClient: QueryClient,
+  sessionId: string
+): void {
+  queryClient.setQueryData(['all-sessions'], old => {
+    const data = old as { entries?: { sessions?: Session[] }[] } | undefined
+    if (!data?.entries) return old
+    return {
+      ...data,
+      entries: data.entries.map(entry => ({
+        ...entry,
+        sessions: (entry.sessions ?? []).filter(s => s.id !== sessionId),
+      })),
+    }
+  })
+}
+
+/**
  * Whether a session can be reconnected — i.e. it's a native CLI terminal
  * session with a known way to relaunch (a backend resume id, or its persisted
  * terminal command). Used to gate the "Reconnect" menu item.
@@ -88,18 +116,29 @@ export function canReconnectSession(session: Session): boolean {
  *
  * Kills/disposes the old terminal (if any) then spawns a fresh one and reveals
  * the terminal surface.
+ *
+ * `options.openModal` pops the floating terminal drawer (default true — what the
+ * manual "Reconnect" action wants). The startup auto-restore passes false
+ * because the full-screen `FullScreenTerminalSurface` renders inline.
+ * `options.showToast` controls the "Reconnecting…" toast (default true); the
+ * auto-restore silences it to avoid noise on every relaunch.
+ * `options.markOpened` controls whether reconnecting refreshes the session's
+ * last-opened timestamp (default true for manual reconnect; false for silent
+ * startup restore).
  */
 export async function reconnectNativeCliSession(
   session: Session,
-  worktreeId: string
+  worktreeId: string,
+  options?: { openModal?: boolean; showToast?: boolean; markOpened?: boolean }
 ): Promise<void> {
+  const { openModal = true, showToast = true, markOpened = true } = options ?? {}
   const resume = getResumeArgs(session)
   const launch = resume ?? {
     command: session.terminal_command ?? '',
     args: session.terminal_command_args ?? [],
   }
   if (!launch.command) {
-    toast.error('No command available to reconnect this session')
+    if (showToast) toast.error('No command available to reconnect this session')
     return
   }
 
@@ -111,7 +150,9 @@ export async function reconnectNativeCliSession(
     await invoke('stop_terminal', { terminalId: oldTerminalId }).catch(() => {
       // Terminal may already be stopped.
     })
-    await disposeTerminal(oldTerminalId)
+    await disposeTerminal(oldTerminalId).catch(() => {
+      // Terminal UI may already be disposed.
+    })
     terminalStore.removeTerminal(worktreeId, oldTerminalId)
   }
 
@@ -129,10 +170,12 @@ export async function reconnectNativeCliSession(
 
   uiStore.setSessionPrimarySurface(session.id, 'terminal')
   uiStore.setSessionTerminalId(session.id, newTerminalId)
-  terminalStore.setModalTerminalOpen(worktreeId, true)
-  useChatStore.getState().setActiveSession(worktreeId, session.id)
+  if (openModal) terminalStore.setModalTerminalOpen(worktreeId, true)
+  useChatStore.getState().setActiveSession(worktreeId, session.id, {
+    markOpened,
+  })
 
-  toast.success('Reconnecting session…')
+  if (showToast) toast.success('Reconnecting session…')
 }
 
 // Query keys for chat
@@ -344,14 +387,15 @@ export async function prefetchSessions(
         reviewingUpdates[session.id] = true
       }
       // Only restore waiting state if the session's last run is actually active,
-      // OR if it's a completed plan-mode run (Codex/Opencode plan mode intentionally
-      // sets waiting_for_input after the run completes)
+      // OR if it's a completed run parked for user input (plan approval, or an
+      // AskUserQuestion that ends the run with waiting_for_input_type === 'question')
       const canBeWaiting =
         !session.last_run_status ||
         session.last_run_status === 'running' ||
         session.last_run_status === 'resumable' ||
         (session.last_run_status === 'completed' &&
-          session.waiting_for_input_type === 'plan')
+          (session.waiting_for_input_type === 'plan' ||
+            session.waiting_for_input_type === 'question'))
       if (session.waiting_for_input && canBeWaiting) {
         waitingUpdates[session.id] = true
       }
@@ -548,7 +592,19 @@ export function useSession(
         const cached = queryClient.getQueryData<Session>(
           chatQueryKeys.session(sessionId)
         )
-        if (cached && cached.messages.length > session.messages.length) {
+        const cachedStart = cached?.loaded_run_start_index
+        const freshStart = session.loaded_run_start_index ?? 0
+        const cachedIncludesCancelledAssistant = cached?.messages.some(
+          message => message.role === 'assistant' && message.cancelled
+        )
+        const shouldPreserveCachedMessages =
+          cached &&
+          cached.messages.length > session.messages.length &&
+          !cachedIncludesCancelledAssistant &&
+          (useChatStore.getState().sendingSessionIds[sessionId] ||
+            (typeof cachedStart === 'number' && cachedStart < freshStart))
+
+        if (cached && shouldPreserveCachedMessages) {
           logger.warn(
             '[useSession] preserving cached messages over fresh fetch',
             {
@@ -963,6 +1019,10 @@ export function useCloseSession() {
         queryKey: chatQueryKeys.session(sessionId),
       })
 
+      // Drop from the finished-session bell (reads from ['all-sessions']).
+      removeSessionFromAllSessionsCache(queryClient, sessionId)
+      queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
+
       // Clear all session-scoped state
       useChatStore.getState().clearSessionState(sessionId)
       cleanupSessionTerminalForRemovedSession(worktreeId, sessionId)
@@ -1028,6 +1088,10 @@ export function useArchiveSession() {
 
       // Invalidate archived sessions query so it shows up immediately
       queryClient.invalidateQueries({ queryKey: ['all-archived-sessions'] })
+
+      // Drop from the finished-session bell (reads from ['all-sessions']).
+      removeSessionFromAllSessionsCache(queryClient, sessionId)
+      queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
 
       // Clear all session-scoped state
       useChatStore.getState().clearSessionState(sessionId)
@@ -1570,6 +1634,8 @@ export function useSendMessage() {
       chromeEnabled?: boolean
       customProfileName?: string
       backend?: string
+      /** Set by the queue processor — its onError requeues the original message */
+      fromQueue?: boolean
     }): Promise<ChatMessage> => {
       if (!isTauri()) {
         throw new Error('Not in Tauri context')
@@ -1643,7 +1709,7 @@ export function useSendMessage() {
         model,
         execution_mode: executionMode,
         thinking_level:
-          backend === 'cursor'
+          backend === 'cursor' || backend === 'grok'
             ? undefined
             : effortLevel
               ? undefined
@@ -1744,7 +1810,8 @@ export function useSendMessage() {
         queryKey: chatQueryKeys.sessions(worktreeId),
       })
     },
-    onError: (error, { sessionId, worktreeId }, context) => {
+    onError: (error, variables, context) => {
+      const { sessionId, worktreeId } = variables
       // Check for cancellation - Tauri errors may not be Error instances
       // so we check both the stringified error and the message property
       const errorStr = String(error)
@@ -1770,6 +1837,33 @@ export function useSendMessage() {
       if (isCancellation) {
         logger.debug('Message cancelled', { sessionId })
         // Don't rollback - the chat:cancelled event handler preserves the partial response
+        return
+      }
+
+      // Benign race: another queue consumer (backend drain / another client)
+      // started a run for this session first. A run IS active, so keep the
+      // sending state and skip the error banner/toast. The losing message is
+      // requeued: the queue processor's per-call onError handles queued
+      // messages; for direct submits we restore the input draft so the typed
+      // text isn't lost.
+      if (isDuplicateSendError(error)) {
+        logger.warn('Duplicate send rejected — another run is active', {
+          sessionId,
+          fromQueue: variables.fromQueue ?? false,
+        })
+        if (!variables.fromQueue) {
+          const { inputDrafts, setInputDraft } = useChatStore.getState()
+          if (!inputDrafts[sessionId]?.trim()) {
+            setInputDraft(sessionId, variables.message)
+          }
+        }
+        // Drop the optimistic user message by refetching authoritative state
+        queryClient.invalidateQueries({
+          queryKey: chatQueryKeys.session(sessionId),
+        })
+        queryClient.invalidateQueries({
+          queryKey: chatQueryKeys.sessions(worktreeId),
+        })
         return
       }
 
@@ -2557,6 +2651,112 @@ export function persistRemoveQueued(
   }).catch(err => {
     logger.error('Failed to persist remove queued', { err, sessionId })
   })
+}
+
+/**
+ * Atomically move a specific queued message to the front of the persisted queue.
+ * Returns false when the message is no longer queued (another client dequeued
+ * or removed it) — callers must abort their send-now flow in that case.
+ */
+export async function persistMoveQueuedFront(
+  worktreeId: string,
+  worktreePath: string,
+  sessionId: string,
+  messageId: string
+): Promise<boolean> {
+  return invoke<boolean>('move_queued_message_front', {
+    worktreeId,
+    worktreePath,
+    sessionId,
+    messageId,
+  })
+}
+
+/**
+ * Inject a user message into a running Codex turn via app-server `turn/steer`.
+ * Throws when the turn already ended or steering is unavailable — callers
+ * fall back to cancel+send.
+ */
+export async function steerCodexTurn(
+  worktreeId: string,
+  sessionId: string,
+  message: string,
+  queuedMessage?: QueuedMessage
+): Promise<void> {
+  await invoke('steer_codex_turn', {
+    worktreeId,
+    sessionId,
+    message,
+    queuedMessage,
+  })
+}
+
+/**
+ * Inject a text-only user message into a running OpenCode session via
+ * OpenCode's `prompt_async` endpoint. Throws when the OpenCode session is not
+ * available or the async prompt request fails — callers fall back to queue or
+ * cancel+send.
+ */
+export async function steerOpencodeTurn(
+  worktreeId: string,
+  worktreePath: string,
+  sessionId: string,
+  message: string
+): Promise<void> {
+  await invoke('steer_opencode_turn', {
+    worktreeId,
+    worktreePath,
+    sessionId,
+    message,
+  })
+}
+
+/**
+ * Inject a user message into a running Pi RPC turn via Jean's detached Pi host.
+ * Throws when the host is gone or steering is unavailable — callers fall back
+ * to cancel+send.
+ */
+export async function steerPiTurn(
+  worktreeId: string,
+  sessionId: string,
+  message: string
+): Promise<void> {
+  await invoke('steer_pi_turn', { worktreeId, sessionId, message })
+}
+
+/**
+ * Re-insert a message at the FRONT of the persisted queue (sequenced enqueue +
+ * move-to-front). Used when a send lost the race against another queue
+ * consumer and must be retried once the active run completes.
+ */
+export async function persistRequeueFront(
+  worktreeId: string,
+  worktreePath: string,
+  sessionId: string,
+  message: QueuedMessage
+): Promise<void> {
+  await invoke('enqueue_message', {
+    worktreeId,
+    worktreePath,
+    sessionId,
+    message,
+  })
+  await invoke('move_queued_message_front', {
+    worktreeId,
+    worktreePath,
+    sessionId,
+    messageId: message.id,
+  })
+}
+
+/**
+ * True when send_chat_message rejected because another consumer (backend
+ * queue drain, another client, or a concurrent local send) already started
+ * a run for the session. Benign race — the message should be requeued.
+ */
+export function isDuplicateSendError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return message.includes('already has an active request')
 }
 
 /**

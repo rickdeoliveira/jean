@@ -17,11 +17,13 @@ import {
   FitAddon as GhosttyWebFitAddon,
 } from 'ghostty-web'
 import { openExternal } from '@/lib/platform'
+import { attachOrphanCompositionEndGuard } from '@/lib/terminal-composition-guard'
 import { LocalTerminalLinkProvider } from '@/lib/terminal-local-links'
 import {
   invoke,
   isTransportConnected,
   subscribeTransportStatus,
+  requestTerminalReplay,
 } from '@/lib/transport'
 import { listen } from '@/lib/transport'
 import { queryClient } from '@/lib/query-client'
@@ -63,6 +65,7 @@ interface PersistentTerminal {
   command: string | null
   commandArgs: string[] | null
   initialized: boolean // PTY has been started
+  replayRequested: boolean // Buffered web replay has been requested for an existing PTY
   opened: boolean // Terminal UI has been opened into hostElement
   readyForOutput: boolean // Ghostty Web needs one settled paint before writes
   outputReadyPromise: Promise<void> | null
@@ -70,6 +73,7 @@ interface PersistentTerminal {
   lastAppearance: TerminalAppearance | null
   appearanceResizeTimer: ReturnType<typeof setTimeout> | null
   touchScrollCleanup: (() => void) | null
+  compositionGuardCleanup: (() => void) | null
   onStopped?: (exitCode: number | null, signal: string | null) => void
 }
 
@@ -919,6 +923,7 @@ export function getOrCreateTerminal(
     command,
     commandArgs,
     initialized: false,
+    replayRequested: false,
     opened: false,
     readyForOutput: renderer !== 'ghostty-web',
     outputReadyPromise: renderer === 'ghostty-web' ? null : Promise.resolve(),
@@ -926,6 +931,7 @@ export function getOrCreateTerminal(
     lastAppearance: null,
     appearanceResizeTimer: null,
     touchScrollCleanup: null,
+    compositionGuardCleanup: null,
   }
 
   // Apply any pending onStopped callback registered before creation
@@ -995,6 +1001,22 @@ export async function attachToContainer(
     terminal.open(hostElement)
     disableGhosttyScrollbar(instance)
     instance.touchScrollCleanup = attachTouchScroll(instance)
+    // Re-run-safe: drop any prior guard before (re)attaching so a reattach
+    // can never leak listeners on a stale host or register duplicates.
+    instance.compositionGuardCleanup?.()
+    instance.compositionGuardCleanup = null
+    if (instance.renderer === 'xterm') {
+      // WebKitGTK+ibus commits composed chars (é, ç…) without
+      // compositionstart, which breaks xterm.js's composition handling and
+      // duplicates input — see terminal-composition-guard.ts. The guard
+      // swallows the orphan compositionend and delivers the committed char
+      // itself, bypassing xterm's racy keydown-diff path.
+      const xterm = terminal as XtermTerminal
+      instance.compositionGuardCleanup = attachOrphanCompositionEndGuard(
+        hostElement,
+        data => xterm.input(data, true)
+      )
+    }
     if (!instance.initialized) {
       // A brand-new visible terminal should never show stale renderer/DOM
       // contents from a previously attached terminal. Do not clear when a PTY
@@ -1029,7 +1051,13 @@ export async function attachToContainer(
       if (!isCurrentInstance(terminalId, instance)) return
 
       if (ptyExists) {
-        // PTY exists - just resize and mark as running
+        // PTY exists - replay buffered output, then resize and mark as running.
+        // This is the web-refresh reconnect path: the Rust PTY survived, but
+        // the browser lost its in-memory xterm instance and seq tracking.
+        if (!instance.replayRequested) {
+          instance.replayRequested = true
+          requestTerminalReplay(terminalId, 0)
+        }
         useTerminalStore.getState().setTerminalRunning(terminalId, true)
         await invoke('terminal_resize', { terminalId, cols, rows }).catch(
           console.error
@@ -1161,6 +1189,8 @@ export async function disposeTerminal(terminalId: string): Promise<void> {
   }
   instance.touchScrollCleanup?.()
   instance.touchScrollCleanup = null
+  instance.compositionGuardCleanup?.()
+  instance.compositionGuardCleanup = null
 
   // Dispose terminal renderer (clears buffer, removes DOM)
   instance.terminal?.dispose()

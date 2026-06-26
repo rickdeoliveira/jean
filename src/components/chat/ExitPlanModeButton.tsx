@@ -11,9 +11,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import {
-  DropdownMenuItem,
-  DropdownMenuShortcut,
-} from '@/components/ui/dropdown-menu'
+  ApprovalActionMenu,
+  type ApprovalModelOverride,
+} from './ApprovalModelSubmenu'
 import { formatShortcutDisplay, DEFAULT_KEYBINDINGS } from '@/types/keybindings'
 
 interface ExitPlanModeButtonProps {
@@ -23,10 +23,10 @@ interface ExitPlanModeButtonProps {
   hasFollowUpMessage?: boolean
   onPlanApproval?: () => void
   onPlanApprovalYolo?: () => void
-  onClearContextApproval?: () => void
-  onClearContextBuildApproval?: () => void
-  onWorktreeBuildApproval?: () => void
-  onWorktreeYoloApproval?: () => void
+  onClearContextApproval?: (override?: ApprovalModelOverride) => void
+  onClearContextBuildApproval?: (override?: ApprovalModelOverride) => void
+  onWorktreeBuildApproval?: (override?: ApprovalModelOverride) => void
+  onWorktreeYoloApproval?: (override?: ApprovalModelOverride) => void
   buttonRef?: React.RefObject<HTMLButtonElement | null>
   shortcut?: string
   shortcutYolo?: string
@@ -57,8 +57,18 @@ export function ExitPlanModeButton({
   const sessionBackend = useChatStore(state =>
     sessionId ? (state.selectedBackends[sessionId] ?? null) : null
   )
-  const buildLabel = resolveApprovalLabel('build', preferences, sessionBackend)
-  const yoloLabel = resolveApprovalLabel('yolo', preferences, sessionBackend)
+  const buildNewContextLabel = resolveApprovalLabel(
+    'build',
+    preferences,
+    sessionBackend,
+    { forceModeOverride: true }
+  )
+  const yoloNewContextLabel = resolveApprovalLabel(
+    'yolo',
+    preferences,
+    sessionBackend,
+    { forceModeOverride: true }
+  )
 
   if (!toolCalls) return null
 
@@ -79,7 +89,7 @@ export function ExitPlanModeButton({
 
   const hasApproveDropdownItems =
     !!onClearContextBuildApproval || !!onWorktreeBuildApproval
-  const hasAutoDropdownItems =
+  const hasYoloDropdownItems =
     !!onClearContextApproval || !!onWorktreeYoloApproval
 
   const approveTooltip = shortcut
@@ -88,53 +98,60 @@ export function ExitPlanModeButton({
   const yoloTooltip = shortcutYolo
     ? `Approve with yolo mode (${shortcutYolo})`
     : 'Approve with yolo mode'
-
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
-      {/* Approve button - split if dropdown items exist */}
+      {hasYoloDropdownItems ? (
+        <SplitButton
+          label="YOLO"
+          tooltip={yoloTooltip}
+          onClick={() => onPlanApprovalYolo?.()}
+        >
+          <ApprovalActionMenu
+            yoloDefaultModelLabel={yoloNewContextLabel}
+            clearContextShortcut={formatShortcutDisplay(
+              DEFAULT_KEYBINDINGS.approve_plan_clear_context
+            )}
+            worktreeYoloShortcut={formatShortcutDisplay(
+              DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
+            )}
+            onClearContextApprove={onClearContextApproval}
+            onWorktreeYoloApprove={onWorktreeYoloApproval}
+          />
+        </SplitButton>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="sm" onClick={() => onPlanApprovalYolo?.()}>
+              YOLO
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{yoloTooltip}</TooltipContent>
+        </Tooltip>
+      )}
       {hasApproveDropdownItems ? (
         <SplitButton
           label="Approve"
           tooltip={approveTooltip}
+          variant="outline"
           onClick={() => onPlanApproval?.()}
         >
-          <DropdownMenuItem onClick={() => onClearContextBuildApproval?.()}>
-            <span className="flex flex-col">
-              <span>New Session</span>
-              {buildLabel && (
-                <span className="text-[10px] text-muted-foreground">
-                  {buildLabel}
-                </span>
-              )}
-            </span>
-            <DropdownMenuShortcut>
-              {formatShortcutDisplay(
-                DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
-              )}
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-          {onWorktreeBuildApproval && (
-            <DropdownMenuItem onClick={() => onWorktreeBuildApproval()}>
-              <span className="flex flex-col">
-                <span>New Worktree</span>
-                {buildLabel && (
-                  <span className="text-[10px] text-muted-foreground">
-                    {buildLabel}
-                  </span>
-                )}
-              </span>
-              <DropdownMenuShortcut>
-                {formatShortcutDisplay(
-                  DEFAULT_KEYBINDINGS.approve_plan_worktree_build
-                )}
-              </DropdownMenuShortcut>
-            </DropdownMenuItem>
-          )}
+          <ApprovalActionMenu
+            buildDefaultModelLabel={buildNewContextLabel}
+            clearContextBuildShortcut={formatShortcutDisplay(
+              DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
+            )}
+            worktreeBuildShortcut={formatShortcutDisplay(
+              DEFAULT_KEYBINDINGS.approve_plan_worktree_build
+            )}
+            onClearContextBuildApprove={onClearContextBuildApproval}
+            onWorktreeBuildApprove={onWorktreeBuildApproval}
+          />
         </SplitButton>
       ) : (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              variant="outline"
               ref={buttonRef}
               size="sm"
               onClick={() => onPlanApproval?.()}
@@ -143,62 +160,6 @@ export function ExitPlanModeButton({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{approveTooltip}</TooltipContent>
-        </Tooltip>
-      )}
-
-      {/* Auto button - split if dropdown items exist */}
-      {hasAutoDropdownItems ? (
-        <SplitButton
-          label="YOLO"
-          tooltip={yoloTooltip}
-          variant="outline"
-          onClick={() => onPlanApprovalYolo?.()}
-        >
-          <DropdownMenuItem onClick={() => onClearContextApproval?.()}>
-            <span className="flex flex-col">
-              <span>New Session (YOLO)</span>
-              {yoloLabel && (
-                <span className="text-[10px] text-muted-foreground">
-                  {yoloLabel}
-                </span>
-              )}
-            </span>
-            <DropdownMenuShortcut>
-              {formatShortcutDisplay(
-                DEFAULT_KEYBINDINGS.approve_plan_clear_context
-              )}
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-          {onWorktreeYoloApproval && (
-            <DropdownMenuItem onClick={() => onWorktreeYoloApproval()}>
-              <span className="flex flex-col">
-                <span>New Worktree (YOLO)</span>
-                {yoloLabel && (
-                  <span className="text-[10px] text-muted-foreground">
-                    {yoloLabel}
-                  </span>
-                )}
-              </span>
-              <DropdownMenuShortcut>
-                {formatShortcutDisplay(
-                  DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
-                )}
-              </DropdownMenuShortcut>
-            </DropdownMenuItem>
-          )}
-        </SplitButton>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPlanApprovalYolo?.()}
-            >
-              YOLO
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{yoloTooltip}</TooltipContent>
         </Tooltip>
       )}
     </div>

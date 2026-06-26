@@ -118,6 +118,7 @@ fn load_native_sessions_uncached(
         "claude" => list_claude_sessions(worktree_path, None, MAX_NATIVE_HISTORY_CACHE_ROWS),
         "opencode" => list_opencode_sessions(worktree_path, None, MAX_NATIVE_HISTORY_CACHE_ROWS),
         "cursor" => list_cursor_sessions(worktree_path, None, MAX_NATIVE_HISTORY_CACHE_ROWS),
+        "commandcode" => Ok(Vec::new()),
         other => Err(format!("Unsupported native CLI history backend: {other}")),
     }
 }
@@ -680,7 +681,7 @@ fn sort_and_limit(
     mut sessions: Vec<NativeCliHistorySession>,
     limit: usize,
 ) -> Result<Vec<NativeCliHistorySession>, String> {
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
     sessions.truncate(limit);
     Ok(sessions)
 }

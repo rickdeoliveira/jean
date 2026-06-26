@@ -20,13 +20,19 @@ export async function openExternal(
   url: string,
   preOpenedWindow?: Window | null
 ): Promise<void> {
+  if (isNativeApp()) {
+    // Do not pass `inAppBrowser`: Tauri opener defaults to the OS/browser app on
+    // mobile, while `inAppBrowser` is the embedded-browser behavior we avoid.
+    await openUrl(url)
+    return
+  }
+
   if (preOpenedWindow) {
     preOpenedWindow.location.href = url
-  } else if (isNativeApp()) {
-    await openUrl(url)
-  } else {
-    window.open(url, '_blank')
+    return
   }
+
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 /**
@@ -46,4 +52,31 @@ export function getFileManagerName(): string {
   if (isMacOS) return 'Finder'
   if (isWindows) return 'Explorer'
   return 'Files'
+}
+
+/**
+ * Strip WSL UNC prefix from a path for display purposes.
+ * `\\wsl.localhost\Ubuntu\home\user\project` -> `/home/user/project`
+ * `\\wsl$\Ubuntu\home\user` -> `/home/user`
+ * Non-WSL paths are returned as-is.
+ */
+export function getDisplayPath(path: string, wslEnabled?: boolean): string {
+  if (!wslEnabled) return path
+
+  // Normalize backslashes for matching
+  const normalized = path.replace(/\\/g, '/')
+
+  // Match \\wsl.localhost\<distro>\... or \\wsl$\<distro>\...
+  for (const prefix of ['//wsl.localhost/', '//wsl$/']) {
+    if (normalized.startsWith(prefix)) {
+      const rest = normalized.slice(prefix.length)
+      const slashPos = rest.indexOf('/')
+      if (slashPos >= 0) {
+        return rest.slice(slashPos)
+      }
+      return '/'
+    }
+  }
+
+  return path
 }

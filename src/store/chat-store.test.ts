@@ -10,6 +10,7 @@ vi.mock('@/lib/transport', () => ({
 
 import { useChatStore } from './chat-store'
 import type {
+  ContentBlock,
   ToolCall,
   QueuedMessage,
   CodexCommandApprovalRequest,
@@ -41,6 +42,7 @@ describe('ChatStore', () => {
       streamingContents: {},
       activeToolCalls: {},
       streamingContentBlocks: {},
+      streamingReplayContentBlocks: {},
       streamingThinkingContent: {},
       inputDrafts: {},
       executionModes: {},
@@ -523,6 +525,68 @@ describe('ChatStore', () => {
     })
   })
 
+  describe('streaming replay dedupe', () => {
+    const replayBlocks: ContentBlock[] = [
+      { type: 'text', text: 'Before tool. ' },
+      { type: 'tool_use', tool_call_id: 'tool-1' },
+      { type: 'text', text: 'After tool.' },
+    ]
+
+    it('consumes replayed text and tool blocks without changing rendered order', () => {
+      const store = useChatStore.getState()
+
+      store.addTextBlock('session-1', 'Before tool. ')
+      store.addToolBlock('session-1', 'tool-1')
+      store.addTextBlock('session-1', 'After tool.')
+      store.setStreamingReplayContentBlocks('session-1', replayBlocks)
+
+      expect(
+        store.consumeStreamingReplayText('session-1', 'Before tool. ')
+      ).toBe('')
+      expect(store.consumeStreamingReplayToolBlock('session-1', 'tool-1')).toBe(
+        true
+      )
+      expect(store.consumeStreamingReplayText('session-1', 'After tool.')).toBe(
+        ''
+      )
+
+      expect(
+        useChatStore.getState().getStreamingContentBlocks('session-1')
+      ).toEqual(replayBlocks)
+      expect(
+        useChatStore.getState().streamingReplayContentBlocks['session-1']
+      ).toBeUndefined()
+    })
+
+    it('clears replay dedupe and keeps new text when incoming text does not match', () => {
+      const store = useChatStore.getState()
+
+      store.setStreamingReplayContentBlocks('session-1', replayBlocks)
+
+      expect(store.consumeStreamingReplayText('session-1', 'New output')).toBe(
+        'New output'
+      )
+      expect(
+        useChatStore.getState().streamingReplayContentBlocks['session-1']
+      ).toBeUndefined()
+    })
+
+    it('returns the non-replayed suffix when a text chunk crosses the replay boundary', () => {
+      const store = useChatStore.getState()
+
+      store.setStreamingReplayContentBlocks('session-1', [
+        { type: 'text', text: 'Old' },
+      ])
+
+      expect(store.consumeStreamingReplayText('session-1', 'OldNew')).toBe(
+        'New'
+      )
+      expect(
+        useChatStore.getState().streamingReplayContentBlocks['session-1']
+      ).toBeUndefined()
+    })
+  })
+
   describe('execution mode', () => {
     it('cycles execution mode', () => {
       const { cycleExecutionMode, getExecutionMode } = useChatStore.getState()
@@ -678,6 +742,53 @@ describe('ChatStore', () => {
       clearQueue('session-1')
 
       expect(getQueueLength('session-1')).toBe(0)
+    })
+
+    it('moves middle message to front', () => {
+      const { enqueueMessage, moveQueuedMessageFront, getQueuedMessages } =
+        useChatStore.getState()
+
+      enqueueMessage('session-1', createMockMessage('msg-1', 'First'))
+      enqueueMessage('session-1', createMockMessage('msg-2', 'Second'))
+      enqueueMessage('session-1', createMockMessage('msg-3', 'Third'))
+
+      moveQueuedMessageFront('session-1', 'msg-2')
+
+      expect(getQueuedMessages('session-1').map(m => m.id)).toEqual([
+        'msg-2',
+        'msg-1',
+        'msg-3',
+      ])
+    })
+
+    it('moves last message to front', () => {
+      const { enqueueMessage, moveQueuedMessageFront, getQueuedMessages } =
+        useChatStore.getState()
+
+      enqueueMessage('session-1', createMockMessage('msg-1', 'First'))
+      enqueueMessage('session-1', createMockMessage('msg-2', 'Second'))
+
+      moveQueuedMessageFront('session-1', 'msg-2')
+
+      expect(getQueuedMessages('session-1').map(m => m.id)).toEqual([
+        'msg-2',
+        'msg-1',
+      ])
+    })
+
+    it('move-to-front is a no-op for unknown id or already-first message', () => {
+      const { enqueueMessage, moveQueuedMessageFront } = useChatStore.getState()
+
+      enqueueMessage('session-1', createMockMessage('msg-1', 'First'))
+      enqueueMessage('session-1', createMockMessage('msg-2', 'Second'))
+
+      const before = useChatStore.getState().messageQueues['session-1']
+      moveQueuedMessageFront('session-1', 'unknown-id')
+      // Same reference — no subscribers notified
+      expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
+
+      moveQueuedMessageFront('session-1', 'msg-1')
+      expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
     })
   })
 

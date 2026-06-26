@@ -1,4 +1,4 @@
-import { Check, Star, Zap } from 'lucide-react'
+import { Check, RefreshCw, Star, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import {
@@ -13,22 +13,29 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Kbd } from '@/components/ui/kbd'
-import {
-  getModelFastInfo,
-  type CliBackend,
-  type CustomCliProfile,
-} from '@/types/preferences'
+import { toast } from 'sonner'
+import type { CliBackend, CustomCliProfile } from '@/types/preferences'
 import { usePatchPreferences, usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
+import { useAvailablePiModels } from '@/services/pi-cli'
+import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
+import { useAvailableGrokModels } from '@/services/grok-cli'
+import {
+  getCatalogModelFastInfo,
+  useModelCatalog,
+  useRefreshModelCatalog,
+} from '@/services/model-catalog'
 import { cn } from '@/lib/utils'
 import {
   getBackendIcon,
   getBackendPlainLabel,
+  isBetaBackend,
 } from '@/components/ui/backend-label'
 import {
   formatCursorModelLabel,
   formatOpencodeModelLabel,
+  formatPiModelLabel,
   getProviderDisplayName,
 } from '@/components/chat/toolbar/toolbar-utils'
 import { useToolbarDerivedState } from '@/components/chat/toolbar/useToolbarDerivedState'
@@ -46,6 +53,7 @@ interface BackendModelPickerContentProps {
   onModelChange: (model: string) => void
   onBackendModelChange: (backend: CliBackend, model: string) => void
   onRequestClose: () => void
+  defaultModelOption?: { value: string; label: string }
   searchPlaceholder?: string
   className?: string
   commandListClassName?: string
@@ -58,11 +66,12 @@ export function BackendModelPickerContent({
   selectedProvider,
   installedBackends,
   customCliProfiles,
-  sessionHasMessages,
+  sessionHasMessages: _sessionHasMessages,
   providerLocked,
   onModelChange,
   onBackendModelChange,
   onRequestClose,
+  defaultModelOption,
   searchPlaceholder,
   className,
   commandListClassName,
@@ -78,9 +87,13 @@ export function BackendModelPickerContent({
     /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')
   const fastShortcutLabel = isApplePlatform ? '⌘F' : 'Ctrl F'
 
-  const isLocked = Boolean(sessionHasMessages)
+  // Sessions with messages can now switch backends because the backend gets a
+  // hidden Jean-local handoff prompt on provider changes.
+  const isLocked = false
 
   const { data: prefs } = usePreferences()
+  const { data: modelCatalog } = useModelCatalog()
+  const refreshModelCatalog = useRefreshModelCatalog()
   const patchPreferences = usePatchPreferences()
   const favoriteModels = useMemo(
     () => prefs?.favorite_models ?? [],
@@ -122,21 +135,30 @@ export function BackendModelPickerContent({
     [favKey, fastSet, fastModels, patchPreferences]
   )
 
-  const { data: availableOpencodeModels } = useAvailableOpencodeModels({
-    enabled: installedBackends.includes('opencode'),
-  })
+  const { data: availableOpencodeModels, isError: opencodeModelsError } =
+    useAvailableOpencodeModels({
+      enabled: installedBackends.includes('opencode'),
+    })
   const { data: availableCursorModels } = useAvailableCursorModels({
     enabled: installedBackends.includes('cursor'),
   })
+  const { data: availablePiModels } = useAvailablePiModels({
+    enabled: installedBackends.includes('pi'),
+  })
+  const { data: availableCommandCodeModels } = useAvailableCommandCodeModels({
+    enabled: installedBackends.includes('commandcode'),
+  })
+  const { data: availableGrokModels } = useAvailableGrokModels({
+    enabled: installedBackends.includes('grok'),
+  })
 
-  const opencodeModelOptions = useMemo(
-    () =>
-      availableOpencodeModels?.map(model => ({
-        value: model,
-        label: formatOpencodeModelLabel(model),
-      })),
-    [availableOpencodeModels]
-  )
+  const opencodeModelOptions = useMemo(() => {
+    if (opencodeModelsError) return []
+    return availableOpencodeModels?.map(model => ({
+      value: model,
+      label: formatOpencodeModelLabel(model),
+    }))
+  }, [availableOpencodeModels, opencodeModelsError])
   const cursorModelOptions = useMemo(
     () =>
       availableCursorModels?.map(model => ({
@@ -145,16 +167,56 @@ export function BackendModelPickerContent({
       })),
     [availableCursorModels]
   )
+  const piModelOptions = useMemo(
+    () =>
+      availablePiModels?.map(model => ({
+        value: `pi/${model.id}`,
+        label: model.label || formatPiModelLabel(model.id),
+        is_default: model.is_default,
+      })),
+    [availablePiModels]
+  )
+  const commandcodeModelOptions = useMemo(
+    () =>
+      availableCommandCodeModels?.map(model => ({
+        value: `commandcode/${model.id}`,
+        label: model.label,
+      })),
+    [availableCommandCodeModels]
+  )
+  const grokModelOptions = useMemo(
+    () =>
+      availableGrokModels?.map(model => ({
+        value: `grok/${model.id}`,
+        label: model.label,
+      })),
+    [availableGrokModels]
+  )
 
-  const { backendModelSections } = useToolbarDerivedState({
-    selectedBackend,
-    selectedProvider,
-    selectedModel,
-    opencodeModelOptions,
-    cursorModelOptions,
-    customCliProfiles,
-    installedBackends,
-  })
+  const { backendModelSections: baseBackendModelSections } =
+    useToolbarDerivedState({
+      selectedBackend,
+      selectedProvider,
+      selectedModel,
+      opencodeModelOptions,
+      cursorModelOptions,
+      piModelOptions,
+      commandcodeModelOptions,
+      grokModelOptions,
+      customCliProfiles,
+      installedBackends,
+    })
+
+  const backendModelSections = useMemo(
+    () =>
+      defaultModelOption
+        ? baseBackendModelSections.map(section => ({
+            ...section,
+            options: [defaultModelOption, ...section.options],
+          }))
+        : baseBackendModelSections,
+    [baseBackendModelSections, defaultModelOption]
+  )
 
   const sidebarBackends = useMemo(
     () =>
@@ -203,7 +265,25 @@ export function BackendModelPickerContent({
       if (favoriteSet.has(favKey(activeBackend, opt.value))) favs.push(opt)
       else rest.push(opt)
     }
-    return [...favs, ...rest]
+    const result = [...favs, ...rest]
+    if (activeBackend === 'commandcode') {
+      const rawQuery = search.trim()
+      if (rawQuery) {
+        const suffix = rawQuery.startsWith('commandcode/')
+          ? rawQuery.slice('commandcode/'.length).trim()
+          : rawQuery
+        if (!suffix) return result
+        const customValue = `commandcode/${suffix}`
+        const customExists = result.some(option => option.value === customValue)
+        if (!customExists) {
+          result.unshift({
+            value: customValue,
+            label: `Use Command Code model "${rawQuery}"`,
+          })
+        }
+      }
+    }
+    return result
   }, [activeBackend, activeSection, favKey, favoriteSet, search])
 
   const getOptionCommandValue = useCallback(
@@ -248,7 +328,7 @@ export function BackendModelPickerContent({
   const handleSelect = useCallback(
     (backend: CliBackend, model: string) => {
       // Resolve to fast variant if user previously enabled fast for this base model.
-      const info = getModelFastInfo(backend, model)
+      const info = getCatalogModelFastInfo(modelCatalog, backend, model)
       const resolved =
         info.supportsFast &&
         !info.isFast &&
@@ -265,6 +345,7 @@ export function BackendModelPickerContent({
     },
     [
       isFastRemembered,
+      modelCatalog,
       onBackendModelChange,
       onModelChange,
       onRequestClose,
@@ -283,10 +364,25 @@ export function BackendModelPickerContent({
     [isLocked, selectedBackend]
   )
 
+  const handleRefreshModelCatalog = useCallback(async () => {
+    const toastId = toast.loading('Refreshing model list...')
+
+    try {
+      await refreshModelCatalog.mutateAsync()
+      toast.success('Model list refreshed', { id: toastId })
+    } catch (error) {
+      toast.error(`Failed to refresh model list: ${error}`, { id: toastId })
+    }
+  }, [refreshModelCatalog])
+
   const handleUseHighlightedFastMode = useCallback(() => {
     if (!highlightedOption) return false
 
-    const fastInfo = getModelFastInfo(activeBackend, highlightedOption.value)
+    const fastInfo = getCatalogModelFastInfo(
+      modelCatalog,
+      activeBackend,
+      highlightedOption.value
+    )
     if (!fastInfo.supportsFast || !fastInfo.fastModel) return false
 
     setFastRemembered(activeBackend, fastInfo.baseModel, true)
@@ -300,6 +396,7 @@ export function BackendModelPickerContent({
   }, [
     activeBackend,
     highlightedOption,
+    modelCatalog,
     onBackendModelChange,
     onModelChange,
     onRequestClose,
@@ -342,13 +439,15 @@ export function BackendModelPickerContent({
 
   const showProviderHint =
     Boolean(providerLocked) &&
-    isLocked &&
     activeBackend === 'claude' &&
     customCliProfiles.length > 0
 
   const placeholder =
     searchPlaceholder ??
     `Search ${getBackendPlainLabel(activeBackend)} models...`
+
+  const canRefreshModelCatalog =
+    activeBackend === 'claude' || activeBackend === 'codex'
 
   const sidebar = showSidebar ? (
     <SidebarBackends
@@ -372,7 +471,7 @@ export function BackendModelPickerContent({
           onValueChange={setHighlightedValue}
           className="flex h-full min-w-0 flex-1 flex-col"
         >
-          <div className="border-b p-2">
+          <div className="flex gap-2 border-b p-2">
             <Input
               ref={searchInputRef}
               value={search}
@@ -386,6 +485,26 @@ export function BackendModelPickerContent({
               placeholder={placeholder}
               className="h-9 text-base md:text-sm"
             />
+            {canRefreshModelCatalog && (
+              <button
+                type="button"
+                aria-label="Refresh model list"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                disabled={refreshModelCatalog.isPending}
+                onClick={event => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  void handleRefreshModelCatalog()
+                }}
+              >
+                <RefreshCw
+                  className={cn(
+                    'h-4 w-4',
+                    refreshModelCatalog.isPending && 'animate-spin'
+                  )}
+                />
+              </button>
+            )}
           </div>
 
           {showProviderHint && (
@@ -402,11 +521,17 @@ export function BackendModelPickerContent({
             )}
           >
             {filteredOptions.length === 0 && (
-              <CommandEmpty>No models found.</CommandEmpty>
+              <CommandEmpty>
+                No {getBackendPlainLabel(activeBackend)} models found.
+              </CommandEmpty>
             )}
 
             {filteredOptions.map(option => {
-              const fastInfo = getModelFastInfo(activeBackend, option.value)
+              const fastInfo = getCatalogModelFastInfo(
+                modelCatalog,
+                activeBackend,
+                option.value
+              )
               const supportsFast = Boolean(
                 fastInfo.supportsFast && fastInfo.fastModel
               )
@@ -627,7 +752,7 @@ function SidebarBackends({
                     {index + 1}
                   </span>
                 )}
-                {backend === 'cursor' && (
+                {isBetaBackend(backend) && (
                   <span
                     aria-hidden
                     className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-yellow-500"

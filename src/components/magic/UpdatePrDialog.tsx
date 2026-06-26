@@ -222,8 +222,8 @@ export function UpdatePrDialog() {
               }}
             />
             <p className="text-xs text-muted-foreground">
-              Jean starts a yolo session that generates user-facing release notes
-              for this PR and updates its description automatically.
+              Jean starts a yolo session that generates user-facing release
+              notes for this PR and updates its description automatically.
             </p>
           </div>
 

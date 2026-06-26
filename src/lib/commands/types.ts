@@ -82,7 +82,6 @@ export interface CommandContext {
 
   // Projects
   addProject: () => void
-  initProject: () => void
   removeProject: () => void
   openProjectSettings: () => void
 

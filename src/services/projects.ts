@@ -33,6 +33,7 @@ import type { AppPreferences } from '@/types/preferences'
 import type { AdvisoryContext } from '@/types/github'
 import { hasBackend } from '@/lib/environment'
 import { openExternal, preOpenWindow } from '@/lib/platform'
+import { shouldSuppressAutoFixConflictNotification } from './worktree-conflict-events'
 
 // Check if a backend is available (Tauri IPC or WebSocket)
 // Kept as `isTauri` for backward compatibility across the codebase
@@ -460,6 +461,7 @@ export function useCreateWorktree() {
       advisoryContext,
       linearContext,
       customName,
+      origin,
       background: _background,
     }: {
       projectId: string
@@ -522,6 +524,8 @@ export function useCreateWorktree() {
       }
       /** Custom worktree name (used when retrying after path conflict) */
       customName?: string
+      /** Origin/category for the worktree */
+      origin?: Worktree['origin']
       /** When true, skip auto-navigation (CMD+Click from new session modal) */
       background?: boolean
     }): Promise<Worktree> => {
@@ -547,6 +551,7 @@ export function useCreateWorktree() {
         advisoryContext,
         linearContext,
         customName,
+        origin,
       })
       return worktree
     },
@@ -941,6 +946,7 @@ export function useWorktreeEvents() {
           issueNumber,
           securityAlertNumber,
           advisoryGhsaId,
+          origin,
         } = event.payload
         logger.info('Worktree creating (background started)', { id, name })
 
@@ -960,6 +966,7 @@ export function useWorktreeEvents() {
               issue_number: issueNumber,
               security_alert_number: securityAlertNumber,
               advisory_ghsa_id: advisoryGhsaId,
+              origin,
               created_at: Math.floor(Date.now() / 1000),
               status: 'pending' as const,
               session_type: 'worktree' as Worktree['session_type'],
@@ -1296,6 +1303,14 @@ export function useWorktreeEvents() {
     // Listen for path exists conflicts — show error toast instead of auto-creating
     unlistenPromises.push(
       listen<WorktreePathExistsEvent>('worktree:path_exists', event => {
+        if (shouldSuppressAutoFixConflictNotification(event.payload)) {
+          logger.info('Suppressing auto-fix worktree path conflict toast', {
+            path: event.payload.path,
+            suggestedName: event.payload.suggested_name,
+          })
+          return
+        }
+
         const { path, archived_worktree_id, archived_worktree_name } =
           event.payload
 
@@ -1323,6 +1338,14 @@ export function useWorktreeEvents() {
     // Listen for branch exists conflicts — dispatch DOM event for BranchConflictDialog
     unlistenPromises.push(
       listen<WorktreeBranchExistsEvent>('worktree:branch_exists', event => {
+        if (shouldSuppressAutoFixConflictNotification(event.payload)) {
+          logger.info('Suppressing auto-fix worktree branch conflict dialog', {
+            branch: event.payload.branch,
+            suggestedName: event.payload.suggested_name,
+          })
+          return
+        }
+
         const { branch } = event.payload
         logger.warn('Branch conflict', { branch })
         window.dispatchEvent(
@@ -1431,6 +1454,10 @@ export function useDeleteWorktree() {
           )
         }
       )
+
+      // Drop the worktree's sessions from the finished-session bell, which
+      // reads from ['all-sessions'].
+      queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
 
       // Cleanup terminal instances for this worktree
       disposeAllWorktreeTerminals(worktreeId)
@@ -2073,6 +2100,7 @@ export function useOpenWorktreeInEditor() {
 export interface PortEntry {
   port: number
   label: string
+  host?: string | null
 }
 
 /**
@@ -2503,6 +2531,7 @@ export function useUpdateProjectSettings() {
       worktreesDir,
       linearApiKey,
       linearTeamId,
+      autoFixSettings,
     }: {
       projectId: string
       name?: string
@@ -2515,6 +2544,7 @@ export function useUpdateProjectSettings() {
       worktreesDir?: string
       linearApiKey?: string
       linearTeamId?: string
+      autoFixSettings?: Project['auto_fix_settings']
       linkedProjectIds?: string[]
     }): Promise<Project> => {
       if (!isTauri()) {
@@ -2538,6 +2568,7 @@ export function useUpdateProjectSettings() {
         worktreesDir,
         linearApiKey,
         linearTeamId,
+        autoFixSettings,
         linkedProjectIds,
       })
       logger.info('Project settings updated', { project })

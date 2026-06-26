@@ -9,11 +9,13 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { formatShortcutDisplay, DEFAULT_KEYBINDINGS } from '@/types/keybindings'
+import {
+  ApprovalActionMenu,
+  type ApprovalModelOverride,
+} from './ApprovalModelSubmenu'
 
 interface FloatingButtonsProps {
   /** Whether a plan needs approval (streaming or pending) */
@@ -30,14 +32,18 @@ interface FloatingButtonsProps {
   onApprove: () => void
   /** Callback for approve (yolo mode) */
   onYoloApprove: () => void
+  /** Label for the build default backend/model */
+  buildDefaultModelLabel?: string | null
+  /** Label for the yolo default backend/model */
+  yoloDefaultModelLabel?: string | null
   /** Callback for clear context build approval */
-  onClearContextBuildApprove?: () => void
+  onClearContextBuildApprove?: (override?: ApprovalModelOverride) => void
   /** Callback for clear context yolo approval */
-  onClearContextApprove?: () => void
+  onClearContextApprove?: (override?: ApprovalModelOverride) => void
   /** Callback for worktree build approval */
-  onWorktreeBuildApprove?: () => void
+  onWorktreeBuildApprove?: (override?: ApprovalModelOverride) => void
   /** Callback for worktree yolo approval */
-  onWorktreeYoloApprove?: () => void
+  onWorktreeYoloApprove?: (override?: ApprovalModelOverride) => void
   /** Callback to scroll to findings */
   onScrollToFindings: () => void
   /** Callback to scroll to bottom */
@@ -56,6 +62,8 @@ export const FloatingButtons = memo(function FloatingButtons({
   approveShortcut,
   onApprove,
   onYoloApprove,
+  buildDefaultModelLabel,
+  yoloDefaultModelLabel,
   onClearContextBuildApprove,
   onClearContextApprove,
   onWorktreeBuildApprove,
@@ -66,10 +74,14 @@ export const FloatingButtons = memo(function FloatingButtons({
   const showApproveButton = showApprove && !isAtBottom
 
   const withScroll = useCallback(
-    (fn?: () => void) => () => {
-      fn?.()
-      onScrollToBottom()
-    },
+    (
+      fn?: (override?: ApprovalModelOverride) => void,
+      override?: ApprovalModelOverride
+    ) =>
+      () => {
+        fn?.(override)
+        onScrollToBottom()
+      },
     [onScrollToBottom]
   )
 
@@ -77,86 +89,120 @@ export const FloatingButtons = memo(function FloatingButtons({
     <>
       {/* Right side - Approve, Findings, Bottom buttons */}
       <div className="absolute bottom-4 right-4 flex gap-2">
-        {/* Floating Approve button with dropdown - shown when main approve button is not visible */}
+        {/* Floating approval buttons with dropdowns - shown when main approve buttons are not visible */}
         {showApproveButton && (
-          <div className="inline-flex shadow-md rounded-lg">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  className="h-8 gap-1.5 rounded-r-none text-sm"
-                  onClick={withScroll(onApprove)}
-                >
-                  <Check className="h-3.5 w-3.5" />
-                  Approve
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Approve plan ({approveShortcut})</TooltipContent>
-            </Tooltip>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  className="h-8 px-1.5 rounded-l-none border-l border-l-primary-foreground/20"
-                >
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={withScroll(onYoloApprove)}>
-                  YOLO
-                  <DropdownMenuShortcut>
-                    {formatShortcutDisplay(
-                      DEFAULT_KEYBINDINGS.approve_plan_yolo
+          <div className="flex gap-2">
+            <div className="inline-flex shadow-md rounded-lg">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="sm"
+                    className="h-8 gap-1.5 rounded-r-none text-sm"
+                    onClick={withScroll(onYoloApprove)}
+                  >
+                    YOLO
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Approve with yolo mode (
+                  {formatShortcutDisplay(DEFAULT_KEYBINDINGS.approve_plan_yolo)}
+                  )
+                </TooltipContent>
+              </Tooltip>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    className="h-8 px-1.5 rounded-l-none border-l border-l-primary-foreground/20"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <ApprovalActionMenu
+                    yoloDefaultModelLabel={yoloDefaultModelLabel}
+                    clearContextShortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_clear_context
                     )}
-                  </DropdownMenuShortcut>
-                </DropdownMenuItem>
-                {onClearContextBuildApprove && (
-                  <DropdownMenuItem
-                    onClick={withScroll(onClearContextBuildApprove)}
+                    worktreeYoloShortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
+                    )}
+                    onClearContextApprove={
+                      onClearContextApprove
+                        ? (override?: ApprovalModelOverride) => {
+                            onClearContextApprove(override)
+                            onScrollToBottom()
+                          }
+                        : undefined
+                    }
+                    onWorktreeYoloApprove={
+                      onWorktreeYoloApprove
+                        ? (override?: ApprovalModelOverride) => {
+                            onWorktreeYoloApprove(override)
+                            onScrollToBottom()
+                          }
+                        : undefined
+                    }
+                  />
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <div className="inline-flex shadow-md rounded-lg">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 rounded-r-none text-sm"
+                    onClick={withScroll(onApprove)}
                   >
-                    New Session
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                )}
-                {onClearContextApprove && (
-                  <DropdownMenuItem onClick={withScroll(onClearContextApprove)}>
-                    New Session (YOLO)
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_clear_context
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                )}
-                {onWorktreeBuildApprove && (
-                  <DropdownMenuItem
-                    onClick={withScroll(onWorktreeBuildApprove)}
+                    <Check className="h-3.5 w-3.5" />
+                    Approve
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Approve plan ({approveShortcut})
+                </TooltipContent>
+              </Tooltip>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-1.5 rounded-l-none border-l border-l-border"
                   >
-                    New Worktree
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_worktree_build
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                )}
-                {onWorktreeYoloApprove && (
-                  <DropdownMenuItem onClick={withScroll(onWorktreeYoloApprove)}>
-                    New Worktree (YOLO)
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <ApprovalActionMenu
+                    buildDefaultModelLabel={buildDefaultModelLabel}
+                    clearContextBuildShortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
+                    )}
+                    worktreeBuildShortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_worktree_build
+                    )}
+                    onClearContextBuildApprove={
+                      onClearContextBuildApprove
+                        ? (override?: ApprovalModelOverride) => {
+                            onClearContextBuildApprove(override)
+                            onScrollToBottom()
+                          }
+                        : undefined
+                    }
+                    onWorktreeBuildApprove={
+                      onWorktreeBuildApprove
+                        ? (override?: ApprovalModelOverride) => {
+                            onWorktreeBuildApprove(override)
+                            onScrollToBottom()
+                          }
+                        : undefined
+                    }
+                  />
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         )}
         {/* Go to findings button - shown when findings exist and are not visible */}

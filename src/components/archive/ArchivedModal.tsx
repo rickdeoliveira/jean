@@ -745,7 +745,7 @@ export function ArchivedModal({ open, onOpenChange }: ArchivedModalProps) {
             <AlertDialogAction
               onClick={confirmDelete}
               disabled={isDeletingAll}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-destructive/90"
             >
               {permanentlyDeleteWorktree.isPending ||
               deleteArchivedSession.isPending ||

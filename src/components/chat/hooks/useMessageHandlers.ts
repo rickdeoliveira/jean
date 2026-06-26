@@ -36,13 +36,14 @@ import { generateId } from '@/lib/uuid'
 import { preferencesQueryKeys } from '@/services/preferences'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
-import type { AppPreferences } from '@/types/preferences'
+import type { AppPreferences, CliBackend } from '@/types/preferences'
 import type {
   Worktree,
   WorktreeCreatedEvent,
   WorktreeCreateErrorEvent,
 } from '@/types/projects'
 import { clearPlanApprovalTransientState } from './plan-approval-state'
+import type { ApprovalModelOverride } from '../ApprovalModelSubmenu'
 
 /** Git commands to auto-approve for magic prompts (no permission prompts needed) */
 export const GIT_ALLOWED_TOOLS = [
@@ -97,7 +98,7 @@ interface UseMessageHandlersParams {
   yoloBackendRef: RefObject<string | null>
   yoloThinkingLevelRef: RefObject<string | null>
   yoloEffortLevelRef: RefObject<string | null>
-  selectedBackendRef: RefObject<'claude' | 'codex' | 'opencode' | 'cursor'>
+  selectedBackendRef: RefObject<CliBackend>
   getCustomProfileName: () => string | undefined
   executionModeRef: RefObject<ExecutionMode>
   selectedThinkingLevelRef: RefObject<ThinkingLevel>
@@ -130,13 +131,25 @@ interface MessageHandlers {
   handlePlanApprovalYolo: (messageId: string, updatedPlan?: string) => void
   handleStreamingPlanApproval: () => void
   handleStreamingPlanApprovalYolo: () => void
-  handleClearContextApproval: (messageId: string) => void
+  handleClearContextApproval: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   handleStreamingClearContextApproval: () => void
-  handleClearContextApprovalBuild: (messageId: string) => void
+  handleClearContextApprovalBuild: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   handleStreamingClearContextApprovalBuild: () => void
-  handleWorktreeBuildApproval: (messageId: string) => void
+  handleWorktreeBuildApproval: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   handleStreamingWorktreeBuildApproval: () => void
-  handleWorktreeYoloApproval: (messageId: string) => void
+  handleWorktreeYoloApproval: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   handleStreamingWorktreeYoloApproval: () => void
   handlePendingPlanApprovalCallback: () => void
   handlePermissionApproval: (
@@ -228,7 +241,36 @@ function getDefaultModelForBackend(
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
   }
+  if (backend === 'pi') {
+    return preferences?.selected_pi_model ?? 'pi/sonnet'
+  }
+  if (backend === 'commandcode') {
+    return preferences?.selected_commandcode_model ?? 'commandcode/default'
+  }
+  if (backend === 'grok') {
+    return preferences?.selected_grok_model ?? 'grok/grok-composer-2.5-fast'
+  }
   return preferences?.selected_model ?? 'claude-opus-4-8[1m]'
+}
+
+const SESSION_BACKENDS = new Set<Session['backend']>([
+  'claude',
+  'codex',
+  'opencode',
+  'cursor',
+  'commandcode',
+  'grok',
+])
+
+function asSessionBackend(
+  value: string | null | undefined
+): Session['backend'] | undefined {
+  if (!value) return undefined
+  if (SESSION_BACKENDS.has(value as Session['backend'])) {
+    return value as Session['backend']
+  }
+  console.warn('[useMessageHandlers] Ignoring invalid backend override', value)
+  return undefined
 }
 
 /**
@@ -1097,7 +1139,14 @@ export function useMessageHandlers({
   // Handle clear context approval for persisted messages
   // Resolves plan content from message tool calls, marks approved, creates new session, sends plan
   const handleClearContextApproval = useCallback(
-    async (messageId: string, mode: 'yolo' | 'build' = 'yolo') => {
+    async (
+      messageId: string,
+      modeOrOverride: 'yolo' | 'build' | ApprovalModelOverride = 'yolo',
+      oneShotOverride?: ApprovalModelOverride
+    ) => {
+      const mode = typeof modeOrOverride === 'string' ? modeOrOverride : 'yolo'
+      const effectiveOverride =
+        typeof modeOrOverride === 'string' ? oneShotOverride : modeOrOverride
       const sessionId = activeSessionIdRef.current
       const worktreeId = activeWorktreeIdRef.current
       const worktreePath = activeWorktreePathRef.current
@@ -1194,17 +1243,21 @@ export function useMessageHandlers({
       const prefs = queryClient.getQueryData<AppPreferences>(
         preferencesQueryKeys.preferences()
       )
+      const validatedOverrideBackend = asSessionBackend(
+        effectiveOverride?.backend
+      )
       const modeBackendOverride =
-        (modeBackendRef.current as Session['backend']) ?? null
-      const resolvedBackend = modeBackendOverride ?? undefined
+        validatedOverrideBackend ?? asSessionBackend(modeBackendRef.current)
+      const resolvedBackend = modeBackendOverride
       const modelBackend = resolvedBackend ?? currentSessionBackend
       const resolvedModel =
+        effectiveOverride?.model ??
         modeModelRef.current ??
         (modeBackendOverride
           ? getDefaultModelForBackend(modelBackend, prefs)
           : selectedModelRef.current)
       const modeOverride =
-        modeModelRef.current || modeBackendOverride
+        effectiveOverride || modeModelRef.current || modeBackendOverride
           ? [resolvedBackend, resolvedModel].filter(Boolean).join(' / ')
           : ''
       const planMessage = modeOverride
@@ -1217,10 +1270,8 @@ export function useMessageHandlers({
       store.setSelectedModel(newSession.id, resolvedModel)
       store.setExecutingMode(newSession.id, mode)
       if (resolvedBackend) {
-        store.setSelectedBackend(
-          newSession.id,
-          resolvedBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
-        )
+        store.setSelectedBackend(newSession.id, resolvedBackend)
+        store.setSelectedBackend(newSession.id, resolvedBackend as CliBackend)
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model
       // immediately. Without this, session?.backend (from query cache) defaults to 'claude'
@@ -1265,10 +1316,14 @@ export function useMessageHandlers({
       if (isThinkingLevel(modeThinkingRef.current)) {
         resolvedThinkingLevel = modeThinkingRef.current
       }
-      if (effectiveBackend === 'codex') {
+      if (effectiveBackend === 'codex' || effectiveBackend === 'pi') {
         resolvedThinkingLevel = 'off'
       }
-      if (effectiveBackend === 'codex' || useAdaptiveThinkingRef.current) {
+      if (
+        effectiveBackend === 'codex' ||
+        effectiveBackend === 'pi' ||
+        useAdaptiveThinkingRef.current
+      ) {
         resolvedEffortLevel =
           mapCodexReasoningToEffort(modeEffortRef.current) ??
           selectedEffortLevelRef.current
@@ -1435,9 +1490,8 @@ export function useMessageHandlers({
       const prefs = queryClient.getQueryData<AppPreferences>(
         preferencesQueryKeys.preferences()
       )
-      const modeBackendOverride =
-        (modeBackendRef.current as Session['backend']) ?? null
-      const resolvedBackend = modeBackendOverride ?? undefined
+      const modeBackendOverride = asSessionBackend(modeBackendRef.current)
+      const resolvedBackend = modeBackendOverride
       const modelBackend = resolvedBackend ?? currentSessionBackend
       const resolvedModel =
         modeModelRef.current ??
@@ -1458,10 +1512,8 @@ export function useMessageHandlers({
       store.setSelectedModel(newSession.id, resolvedModel)
       store.setExecutingMode(newSession.id, mode)
       if (resolvedBackend) {
-        store.setSelectedBackend(
-          newSession.id,
-          resolvedBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
-        )
+        store.setSelectedBackend(newSession.id, resolvedBackend)
+        store.setSelectedBackend(newSession.id, resolvedBackend as CliBackend)
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model immediately.
       queryClient.setQueryData<Session>(
@@ -1507,10 +1559,14 @@ export function useMessageHandlers({
       if (isThinkingLevel(modeThinkingRef.current)) {
         resolvedThinkingLevel = modeThinkingRef.current
       }
-      if (effectiveBackend === 'codex') {
+      if (effectiveBackend === 'codex' || effectiveBackend === 'pi') {
         resolvedThinkingLevel = 'off'
       }
-      if (effectiveBackend === 'codex' || useAdaptiveThinkingRef.current) {
+      if (
+        effectiveBackend === 'codex' ||
+        effectiveBackend === 'pi' ||
+        useAdaptiveThinkingRef.current
+      ) {
         resolvedEffortLevel =
           mapCodexReasoningToEffort(modeEffortRef.current) ??
           selectedEffortLevelRef.current
@@ -1593,7 +1649,8 @@ export function useMessageHandlers({
   )
 
   const handleClearContextApprovalBuild = useCallback(
-    (messageId: string) => handleClearContextApproval(messageId, 'build'),
+    (messageId: string, override?: ApprovalModelOverride) =>
+      handleClearContextApproval(messageId, 'build', override),
     [handleClearContextApproval]
   )
 
@@ -1604,7 +1661,11 @@ export function useMessageHandlers({
 
   // Handle worktree approval (create new worktree + send plan)
   const handleWorktreeApproval = useCallback(
-    async (messageId: string, mode: 'yolo' | 'build' = 'build') => {
+    async (
+      messageId: string,
+      mode: 'yolo' | 'build' = 'build',
+      oneShotOverride?: ApprovalModelOverride
+    ) => {
       const sessionId = activeSessionIdRef.current
       const worktreeId = activeWorktreeIdRef.current
       const worktreePath = activeWorktreePathRef.current
@@ -1781,17 +1842,21 @@ export function useMessageHandlers({
       const prefs = queryClient.getQueryData<AppPreferences>(
         preferencesQueryKeys.preferences()
       )
+      const validatedOverrideBackend = asSessionBackend(
+        oneShotOverride?.backend
+      )
       const modeBackendOverride =
-        (modeBackendRef.current as Session['backend']) ?? null
-      const resolvedBackend = modeBackendOverride ?? undefined
+        validatedOverrideBackend ?? asSessionBackend(modeBackendRef.current)
+      const resolvedBackend = modeBackendOverride
       const modelBackend = resolvedBackend ?? currentSessionBackend
       const resolvedModel =
+        oneShotOverride?.model ??
         modeModelRef.current ??
         (modeBackendOverride
           ? getDefaultModelForBackend(modelBackend, prefs)
           : selectedModelRef.current)
       const modeOverride =
-        modeModelRef.current || modeBackendOverride
+        oneShotOverride || modeModelRef.current || modeBackendOverride
           ? [resolvedBackend, resolvedModel].filter(Boolean).join(' / ')
           : ''
       const planMessage = modeOverride
@@ -1804,10 +1869,8 @@ export function useMessageHandlers({
       store.setSelectedModel(newSession.id, resolvedModel)
       store.setExecutingMode(newSession.id, mode)
       if (resolvedBackend) {
-        store.setSelectedBackend(
-          newSession.id,
-          resolvedBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
-        )
+        store.setSelectedBackend(newSession.id, resolvedBackend)
+        store.setSelectedBackend(newSession.id, resolvedBackend as CliBackend)
       }
       queryClient.setQueryData<Session>(
         chatQueryKeys.session(newSession.id),
@@ -1847,10 +1910,14 @@ export function useMessageHandlers({
       if (isThinkingLevel(modeThinkingRef.current)) {
         resolvedThinkingLevel = modeThinkingRef.current
       }
-      if (effectiveBackend === 'codex') {
+      if (effectiveBackend === 'codex' || effectiveBackend === 'pi') {
         resolvedThinkingLevel = 'off'
       }
-      if (effectiveBackend === 'codex' || useAdaptiveThinkingRef.current) {
+      if (
+        effectiveBackend === 'codex' ||
+        effectiveBackend === 'pi' ||
+        useAdaptiveThinkingRef.current
+      ) {
         resolvedEffortLevel =
           mapCodexReasoningToEffort(modeEffortRef.current) ??
           selectedEffortLevelRef.current
@@ -2088,9 +2155,8 @@ export function useMessageHandlers({
       const prefs = queryClient.getQueryData<AppPreferences>(
         preferencesQueryKeys.preferences()
       )
-      const modeBackendOverride =
-        (modeBackendRef.current as Session['backend']) ?? null
-      const resolvedBackend = modeBackendOverride ?? undefined
+      const modeBackendOverride = asSessionBackend(modeBackendRef.current)
+      const resolvedBackend = modeBackendOverride
       const modelBackend = resolvedBackend ?? currentSessionBackend
       const resolvedModel =
         modeModelRef.current ??
@@ -2111,10 +2177,8 @@ export function useMessageHandlers({
       store.setSelectedModel(newSession.id, resolvedModel)
       store.setExecutingMode(newSession.id, mode)
       if (resolvedBackend) {
-        store.setSelectedBackend(
-          newSession.id,
-          resolvedBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
-        )
+        store.setSelectedBackend(newSession.id, resolvedBackend)
+        store.setSelectedBackend(newSession.id, resolvedBackend as CliBackend)
       }
       queryClient.setQueryData<Session>(
         chatQueryKeys.session(newSession.id),
@@ -2160,10 +2224,14 @@ export function useMessageHandlers({
       if (isThinkingLevel(modeThinkingRef.current)) {
         resolvedThinkingLevel = modeThinkingRef.current
       }
-      if (effectiveBackend === 'codex') {
+      if (effectiveBackend === 'codex' || effectiveBackend === 'pi') {
         resolvedThinkingLevel = 'off'
       }
-      if (effectiveBackend === 'codex' || useAdaptiveThinkingRef.current) {
+      if (
+        effectiveBackend === 'codex' ||
+        effectiveBackend === 'pi' ||
+        useAdaptiveThinkingRef.current
+      ) {
         resolvedEffortLevel =
           mapCodexReasoningToEffort(modeEffortRef.current) ??
           selectedEffortLevelRef.current
@@ -2239,12 +2307,14 @@ export function useMessageHandlers({
   )
 
   const handleWorktreeBuildApproval = useCallback(
-    (messageId: string) => handleWorktreeApproval(messageId, 'build'),
+    (messageId: string, override?: ApprovalModelOverride) =>
+      handleWorktreeApproval(messageId, 'build', override),
     [handleWorktreeApproval]
   )
 
   const handleWorktreeYoloApproval = useCallback(
-    (messageId: string) => handleWorktreeApproval(messageId, 'yolo'),
+    (messageId: string, override?: ApprovalModelOverride) =>
+      handleWorktreeApproval(messageId, 'yolo', override),
     [handleWorktreeApproval]
   )
 

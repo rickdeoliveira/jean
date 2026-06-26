@@ -62,13 +62,13 @@ export function WorktreeContextMenu({
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        {isNativeApp() && runScripts.length === 1 && (
+        {runScripts.length === 1 && (
           <ContextMenuItem onClick={handleRun}>
             <Play className="mr-2 h-4 w-4" />
             Run
           </ContextMenuItem>
         )}
-        {isNativeApp() && runScripts.length > 1 && (
+        {runScripts.length > 1 && (
           <ContextMenuSub>
             <ContextMenuSubTrigger>
               <Play className="mr-2 h-4 w-4" />
@@ -158,7 +158,7 @@ export function WorktreeContextMenu({
             <AlertDialogAction
               autoFocus
               onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-destructive/90"
             >
               Delete
               <kbd className="ml-1.5 text-xs opacity-70">↵</kbd>

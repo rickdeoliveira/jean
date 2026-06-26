@@ -40,6 +40,8 @@ import {
   useLoadOlderMessages,
   markPlanApproved as markPlanApprovedService,
   chatQueryKeys,
+  reconnectNativeCliSession,
+  canReconnectSession,
 } from '@/services/chat'
 import { useWorktree, useProjects, useRunScripts } from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
@@ -56,12 +58,7 @@ import {
   useAttachedSavedContexts,
 } from '@/services/github'
 import { useLoadedLinearIssueContexts } from '@/services/linear'
-import {
-  useChatStore,
-  DEFAULT_MODEL,
-  DEFAULT_THINKING_LEVEL,
-  type ClaudeModel,
-} from '@/store/chat-store'
+import { useChatStore, DEFAULT_THINKING_LEVEL } from '@/store/chat-store'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
 import { getLabelTextColor } from '@/lib/label-colors'
 import { PREDEFINED_CLI_PROFILES, type CliBackend } from '@/types/preferences'
@@ -103,7 +100,6 @@ import { ImagePreview } from './ImagePreview'
 import { TextFilePreview } from './TextFilePreview'
 import { SkillBadge } from './SkillBadge'
 import { FileContentModal } from './FileContentModal'
-import { FileEditsDiffModal, type FileEdit } from './FileEditsDiffModal'
 import { FilePreview } from './FilePreview'
 import { ContextPreview } from './ContextPreview'
 import { ChatInput } from './ChatInput'
@@ -111,9 +107,12 @@ import { SessionDebugPanel } from './SessionDebugPanel'
 import { ChatToolbar } from './ChatToolbar'
 import { ReviewResultsPanel } from './ReviewResultsPanel'
 import { ReviewMethodModal } from './ReviewMethodModal'
-import { QueuedMessagesList } from './QueuedMessageItem'
+import { QueuedPromptsPanel } from './QueuedPromptsPanel'
+import { useQueuedPromptActions } from './hooks/useQueuedPromptActions'
 import { FloatingButtons } from './FloatingButtons'
 import { PlanDialog } from './PlanDialog'
+import type { ApprovalModelOverride } from './ApprovalModelSubmenu'
+import { resolveApprovalLabel } from './approval-label-utils'
 import { StreamingMessage } from './StreamingMessage'
 import { CompactStreamingTicker } from './CompactStreamingTicker'
 import { CompactMessageList } from './CompactMessageList'
@@ -126,6 +125,7 @@ import { StreamingStatusBar } from './StreamingStatusBar'
 import { ChatErrorFallback } from './ChatErrorFallback'
 import { logger } from '@/lib/logger'
 import { saveCrashState } from '@/lib/recovery'
+import { resolveDefaultModelForBackend } from '@/lib/session-defaults'
 import { ErrorBanner } from './ErrorBanner'
 import {
   VirtualizedMessageList,
@@ -142,14 +142,17 @@ import { buildMcpConfigJson } from '@/services/mcp'
 import type { McpServerInfo } from '@/types/chat'
 import { useGitStatus } from '@/services/git-status'
 import { useRemotePicker } from '@/hooks/useRemotePicker'
-import { supportsAdaptiveThinking } from '@/lib/model-utils'
+import {
+  getModelImpliedBackend,
+  supportsAdaptiveThinking,
+} from '@/lib/model-utils'
 import { copyToClipboard, copyHtmlToClipboard } from '@/lib/clipboard'
 import { useClaudeCliStatus } from '@/services/claude-cli'
+import { useAvailablePiModels } from '@/services/pi-cli'
 import { usePrStatus, usePrStatusEvents } from '@/services/pr-status'
 import type { PrDisplayStatus, CheckStatus } from '@/types/pr-status'
 import type { QueuedMessage, Session, WorktreeSessions } from '@/types/chat'
 import type { DiffRequest } from '@/types/git-diff'
-import { FileDiffModal } from './FileDiffModal'
 import { getEffectiveSessionWaiting } from './session-card-utils'
 
 // Lazy-loaded heavy modals (code splitting)
@@ -448,6 +451,47 @@ export function ChatWindow({
       .setCodexGoal(deferredSessionId, session?.codex_goal ?? null)
   }, [deferredSessionId, session?.codex_goal])
 
+  // Auto-restore a native CLI terminal session after an app restart. On startup
+  // prefetchSessions restores the persisted `primary_surface: 'terminal'`, but
+  // the live PTY is gone so `sessionTerminalId` is unset — without this the
+  // terminal guard fails and ChatWindow falls back to an empty chat. Relaunch
+  // the terminal (e.g. `claude --resume <id>`) lazily for the active session so
+  // the conversation reappears in its terminal surface. The ref guards against
+  // a duplicate spawn while the async relaunch is in flight.
+  const autoReconnectingRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!deferredSessionId || !session || !activeWorktreeId) return
+    // `primarySurface`/`sessionTerminalId` are keyed on `activeSessionId`, while
+    // `session`/`deferredSessionId` lag behind during a switch. Acting on that
+    // mismatch could relaunch the previous session's terminal (and yank the user
+    // back to it). Wait until the deferred value has caught up to the active one.
+    if (isSessionSwitching) return
+    if (primarySurface !== 'terminal' || sessionTerminalId) return
+    if (!canReconnectSession(session)) return
+    if (autoReconnectingRef.current.has(deferredSessionId)) return
+
+    const sessionId = deferredSessionId
+    autoReconnectingRef.current.add(sessionId)
+    void reconnectNativeCliSession(session, activeWorktreeId, {
+      openModal: false,
+      showToast: false,
+      markOpened: false,
+    })
+      .catch(error => {
+        logger.error('Auto-reconnect of terminal session failed', { error })
+      })
+      .finally(() => {
+        autoReconnectingRef.current.delete(sessionId)
+      })
+  }, [
+    deferredSessionId,
+    session,
+    activeWorktreeId,
+    primarySurface,
+    sessionTerminalId,
+    isSessionSwitching,
+  ])
+
   const loadOlderMessages = useLoadOlderMessages()
   const loadedRunStartIndex = session?.loaded_run_start_index ?? 0
   const totalRuns = session?.total_runs ?? 0
@@ -587,6 +631,18 @@ export function ChatWindow({
 
   // Installed backends (only these should be selectable)
   const { installedBackends } = useInstalledBackends()
+  const { data: availablePiModels } = useAvailablePiModels({
+    enabled: installedBackends.includes('pi'),
+  })
+  const availablePiModelOptions = useMemo(
+    () =>
+      availablePiModels?.map(model => ({
+        value: `pi/${model.id}`,
+        label: model.label,
+        is_default: model.is_default,
+      })),
+    [availablePiModels]
+  )
 
   // Per-session backend selection: session → zustand → project default → global default
   const zustandBackend = useChatStore(state =>
@@ -603,15 +659,9 @@ export function ChatWindow({
     globalDefaultBackend
   // Model string is definitive backend source (matches Rust safety net in send_chat_message).
   // Prevents race where setSessionModel invalidation refetches before setSessionBackend persists.
-  const modelImpliedBackend: CliBackend | null =
-    session?.selected_model?.startsWith('cursor/')
-      ? 'cursor'
-      : session?.selected_model?.startsWith('opencode/')
-        ? 'opencode'
-        : session?.selected_model?.startsWith('codex') ||
-            session?.selected_model?.includes('codex')
-          ? 'codex'
-          : null
+  const modelImpliedBackend: CliBackend | null = getModelImpliedBackend(
+    session?.selected_model
+  )
   // Clamp to installed backends — prevents showing "Claude" when only Codex is installed
   const selectedBackend: CliBackend =
     modelImpliedBackend ??
@@ -620,18 +670,27 @@ export function ChatWindow({
       ? (installedBackends[0] as CliBackend)
       : resolvedBackend)
   const isCodexBackend = selectedBackend === 'codex'
-  const isOpencodeBackend = selectedBackend === 'opencode'
   const isCursorBackend = selectedBackend === 'cursor'
 
   // Per-session model selection, falls back to preferences default (backend-aware)
-  const defaultModel: string = isCodexBackend
-    ? (preferences?.selected_codex_model ?? 'gpt-5.5')
-    : isOpencodeBackend
-      ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
-      : isCursorBackend
-        ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-        : ((preferences?.selected_model as ClaudeModel) ?? DEFAULT_MODEL)
+  const defaultModel = resolveDefaultModelForBackend(
+    selectedBackend,
+    preferences,
+    selectedBackend === 'pi' ? availablePiModelOptions : undefined
+  )
   const selectedModel: string = session?.selected_model ?? defaultModel
+  const buildNewContextLabel = resolveApprovalLabel(
+    'build',
+    preferences,
+    selectedBackend,
+    { forceModeOverride: true }
+  )
+  const yoloNewContextLabel = resolveApprovalLabel(
+    'yolo',
+    preferences,
+    selectedBackend,
+    { forceModeOverride: true }
+  )
 
   // Per-session thinking level, falls back to preferences default
   const defaultThinkingLevel =
@@ -1012,18 +1071,6 @@ export function ChatWindow({
   // State for file content modal (opened by clicking filenames in tool calls)
   const [viewingFilePath, setViewingFilePath] = useState<string | null>(null)
 
-  // State for edited-file diff modal (opened by clicking edited file pills)
-  const [viewingFileEdits, setViewingFileEdits] = useState<{
-    filePath: string
-    edits: FileEdit[]
-  } | null>(null)
-  const handleEditedFileClick = useCallback(
-    (filePath: string, edits: FileEdit[]) => {
-      setViewingFileEdits({ filePath, edits })
-    },
-    []
-  )
-
   // State for git diff modal (opened by clicking diff stats)
   const [diffRequest, setDiffRequest] = useState<DiffRequest | null>(null)
 
@@ -1032,9 +1079,6 @@ export function ChatWindow({
     useUIStore.getState().setGitDiffModalOpen(!!diffRequest)
     return () => useUIStore.getState().setGitDiffModalOpen(false)
   }, [diffRequest])
-
-  // State for single file diff modal (opened by clicking edited file badges)
-  const [editedFilePath, setEditedFilePath] = useState<string | null>(null)
 
   // Active todos and agents from streaming/persisted tool calls (with dismissal tracking)
   const {
@@ -1104,7 +1148,7 @@ export function ChatWindow({
 
   // Clear context approval handler for PlanDialog
   const handlePlanDialogClearContextApprove = useCallback(
-    async (editedPlanContent: string) => {
+    async (editedPlanContent: string, override?: ApprovalModelOverride) => {
       if (!activeSessionId || !activeWorktreeId || !activeWorktreePath) return
 
       // Mark pending plan approved if exists
@@ -1158,8 +1202,11 @@ export function ChatWindow({
 
       // Send plan as first message in YOLO mode
       const yoloBackend =
-        (yoloBackendRef.current as Session['backend']) ?? undefined
+        override?.backend ??
+        (yoloBackendRef.current as Session['backend']) ??
+        undefined
       const yoloModel =
+        override?.model ??
         yoloModelRef.current ??
         (yoloBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
@@ -1167,9 +1214,14 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : yoloBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : selectedModelRef.current)
+              : yoloBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : yoloBackend === 'commandcode'
+                  ? (preferences?.selected_commandcode_model ??
+                    'commandcode/default')
+                  : selectedModelRef.current)
       const yoloOverride =
-        yoloModelRef.current || yoloBackend
+        override || yoloModelRef.current || yoloBackend
           ? [yoloBackend, yoloModel].filter(Boolean).join(' / ')
           : ''
       const message = yoloOverride
@@ -1184,8 +1236,14 @@ export function ChatWindow({
       if (yoloBackend) {
         store.setSelectedBackend(
           newSession.id,
-          yoloBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
+          yoloBackend as
+            | 'claude'
+            | 'codex'
+            | 'opencode'
+            | 'cursor'
+            | 'commandcode'
         )
+        store.setSelectedBackend(newSession.id, yoloBackend as CliBackend)
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model immediately.
       queryClient.setQueryData<Session>(
@@ -1224,19 +1282,19 @@ export function ChatWindow({
       const effectiveYoloBackend = yoloBackend ?? session?.backend
       const yoloModeThinking = yoloThinkingLevelRef.current
       const yoloModeEffort = yoloEffortLevelRef.current
-      const yoloThinkingLevel: ThinkingLevel =
-        effectiveYoloBackend === 'codex'
-          ? 'off'
-          : ((yoloModeThinking ??
-              selectedThinkingLevelRef.current) as ThinkingLevel)
-      const yoloEffortLevel: EffortLevel | undefined =
-        effectiveYoloBackend === 'codex'
+      const yoloUsesEffort =
+        effectiveYoloBackend === 'codex' || effectiveYoloBackend === 'pi'
+      const yoloThinkingLevel: ThinkingLevel = yoloUsesEffort
+        ? 'off'
+        : ((yoloModeThinking ??
+            selectedThinkingLevelRef.current) as ThinkingLevel)
+      const yoloEffortLevel: EffortLevel | undefined = yoloUsesEffort
+        ? ((yoloModeEffort as EffortLevel | null) ??
+          selectedEffortLevelRef.current)
+        : useAdaptiveThinkingRef.current
           ? ((yoloModeEffort as EffortLevel | null) ??
             selectedEffortLevelRef.current)
-          : useAdaptiveThinkingRef.current
-            ? ((yoloModeEffort as EffortLevel | null) ??
-              selectedEffortLevelRef.current)
-            : undefined
+          : undefined
       sendMessage.mutate({
         sessionId: newSession.id,
         worktreeId: activeWorktreeId,
@@ -1267,13 +1325,16 @@ export function ChatWindow({
       useAdaptiveThinkingRef,
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
+      preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )
 
   // Clear context approval handler for PlanDialog (build mode)
   const handlePlanDialogClearContextBuildApprove = useCallback(
-    async (editedPlanContent: string) => {
+    async (editedPlanContent: string, override?: ApprovalModelOverride) => {
       if (!activeSessionId || !activeWorktreeId || !activeWorktreePath) return
 
       // Mark pending plan approved if exists
@@ -1327,8 +1388,11 @@ export function ChatWindow({
 
       // Send plan as first message in build mode using build overrides
       const buildBackend =
-        (buildBackendRef.current as Session['backend']) ?? undefined
+        override?.backend ??
+        (buildBackendRef.current as Session['backend']) ??
+        undefined
       const buildModel =
+        override?.model ??
         buildModelRef.current ??
         (buildBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
@@ -1336,9 +1400,14 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : buildBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : selectedModelRef.current)
+              : buildBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : buildBackend === 'commandcode'
+                  ? (preferences?.selected_commandcode_model ??
+                    'commandcode/default')
+                  : selectedModelRef.current)
       const buildOverride =
-        buildModelRef.current || buildBackend
+        override || buildModelRef.current || buildBackend
           ? [buildBackend, buildModel].filter(Boolean).join(' / ')
           : ''
       const message = buildOverride
@@ -1353,8 +1422,14 @@ export function ChatWindow({
       if (buildBackend) {
         store.setSelectedBackend(
           newSession.id,
-          buildBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
+          buildBackend as
+            | 'claude'
+            | 'codex'
+            | 'opencode'
+            | 'cursor'
+            | 'commandcode'
         )
+        store.setSelectedBackend(newSession.id, buildBackend as CliBackend)
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model immediately.
       queryClient.setQueryData<Session>(
@@ -1393,19 +1468,19 @@ export function ChatWindow({
       const effectiveBuildBackend = buildBackend ?? session?.backend
       const buildModeThinking = buildThinkingLevelRef.current
       const buildModeEffort = buildEffortLevelRef.current
-      const buildThinkingLevel: ThinkingLevel =
-        effectiveBuildBackend === 'codex'
-          ? 'off'
-          : ((buildModeThinking ??
-              selectedThinkingLevelRef.current) as ThinkingLevel)
-      const buildEffortLevel: EffortLevel | undefined =
-        effectiveBuildBackend === 'codex'
+      const buildUsesEffort =
+        effectiveBuildBackend === 'codex' || effectiveBuildBackend === 'pi'
+      const buildThinkingLevel: ThinkingLevel = buildUsesEffort
+        ? 'off'
+        : ((buildModeThinking ??
+            selectedThinkingLevelRef.current) as ThinkingLevel)
+      const buildEffortLevel: EffortLevel | undefined = buildUsesEffort
+        ? ((buildModeEffort as EffortLevel | null) ??
+          selectedEffortLevelRef.current)
+        : useAdaptiveThinkingRef.current
           ? ((buildModeEffort as EffortLevel | null) ??
             selectedEffortLevelRef.current)
-          : useAdaptiveThinkingRef.current
-            ? ((buildModeEffort as EffortLevel | null) ??
-              selectedEffortLevelRef.current)
-            : undefined
+          : undefined
       sendMessage.mutate({
         sessionId: newSession.id,
         worktreeId: activeWorktreeId,
@@ -1436,13 +1511,20 @@ export function ChatWindow({
       useAdaptiveThinkingRef,
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
+      preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )
 
   // Worktree approval handler for PlanDialog (creates new worktree + session)
   const handlePlanDialogWorktreeApprove = useCallback(
-    async (editedPlanContent: string, mode: 'build' | 'yolo') => {
+    async (
+      editedPlanContent: string,
+      mode: 'build' | 'yolo',
+      override?: ApprovalModelOverride
+    ) => {
       const projectId = worktree?.project_id
       if (
         !activeSessionId ||
@@ -1575,8 +1657,11 @@ export function ChatWindow({
         : buildThinkingLevelRef
       const modeEffortRef = isYolo ? yoloEffortLevelRef : buildEffortLevelRef
       const modeBackend =
-        (modeBackendRef.current as Session['backend']) ?? undefined
+        override?.backend ??
+        (modeBackendRef.current as Session['backend']) ??
+        undefined
       const modeModel =
+        override?.model ??
         modeModelRef.current ??
         (modeBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
@@ -1584,9 +1669,14 @@ export function ChatWindow({
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : modeBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
-              : selectedModelRef.current)
+              : modeBackend === 'pi'
+                ? (preferences?.selected_pi_model ?? 'pi/sonnet')
+                : modeBackend === 'commandcode'
+                  ? (preferences?.selected_commandcode_model ??
+                    'commandcode/default')
+                  : selectedModelRef.current)
       const modeOverride =
-        modeModelRef.current || modeBackend
+        override || modeModelRef.current || modeBackend
           ? [modeBackend, modeModel].filter(Boolean).join(' / ')
           : ''
       const message = modeOverride
@@ -1601,8 +1691,14 @@ export function ChatWindow({
       if (modeBackend) {
         store.setSelectedBackend(
           newSession.id,
-          modeBackend as 'claude' | 'codex' | 'opencode' | 'cursor'
+          modeBackend as
+            | 'claude'
+            | 'codex'
+            | 'opencode'
+            | 'cursor'
+            | 'commandcode'
         )
+        store.setSelectedBackend(newSession.id, modeBackend as CliBackend)
       }
       queryClient.setQueryData<Session>(
         chatQueryKeys.session(newSession.id),
@@ -1644,19 +1740,17 @@ export function ChatWindow({
       const effectiveBackend = modeBackend ?? session?.backend
       const modeThinking = modeThinkingRef.current
       const modeEffort = modeEffortRef.current
-      const thinkingLevel: ThinkingLevel =
-        effectiveBackend === 'codex'
-          ? 'off'
-          : ((modeThinking ??
-              selectedThinkingLevelRef.current) as ThinkingLevel)
-      const effortLevel: EffortLevel | undefined =
-        effectiveBackend === 'codex'
+      const modeUsesEffort =
+        effectiveBackend === 'codex' || effectiveBackend === 'pi'
+      const thinkingLevel: ThinkingLevel = modeUsesEffort
+        ? 'off'
+        : ((modeThinking ?? selectedThinkingLevelRef.current) as ThinkingLevel)
+      const effortLevel: EffortLevel | undefined = modeUsesEffort
+        ? ((modeEffort as EffortLevel | null) ?? selectedEffortLevelRef.current)
+        : useAdaptiveThinkingRef.current
           ? ((modeEffort as EffortLevel | null) ??
             selectedEffortLevelRef.current)
-          : useAdaptiveThinkingRef.current
-            ? ((modeEffort as EffortLevel | null) ??
-              selectedEffortLevelRef.current)
-            : undefined
+          : undefined
       sendMessage.mutate({
         sessionId: newSession.id,
         worktreeId: readyWorktree.id,
@@ -1691,19 +1785,22 @@ export function ChatWindow({
       useAdaptiveThinkingRef,
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
+      preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )
 
   const handlePlanDialogWorktreeBuildApprove = useCallback(
-    (editedPlanContent: string) =>
-      handlePlanDialogWorktreeApprove(editedPlanContent, 'build'),
+    (editedPlanContent: string, override?: ApprovalModelOverride) =>
+      handlePlanDialogWorktreeApprove(editedPlanContent, 'build', override),
     [handlePlanDialogWorktreeApprove]
   )
 
   const handlePlanDialogWorktreeYoloApprove = useCallback(
-    (editedPlanContent: string) =>
-      handlePlanDialogWorktreeApprove(editedPlanContent, 'yolo'),
+    (editedPlanContent: string, override?: ApprovalModelOverride) =>
+      handlePlanDialogWorktreeApprove(editedPlanContent, 'yolo', override),
     [handlePlanDialogWorktreeApprove]
   )
 
@@ -1773,7 +1870,6 @@ export function ChatWindow({
     handleSubmit,
     handleCancel,
     handleGitDiffAddToPrompt,
-    handleGitDiffExecutePrompt,
   } = useMessageSending({
     activeSessionId,
     activeWorktreeId,
@@ -1791,10 +1887,10 @@ export function ChatWindow({
     selectedBackendRef,
     preferences,
     sendMessage,
+    createSession,
     queryClient,
     markAtBottom,
     sessionsData,
-    setInputDraft,
     clearInputDraft,
     clearChatInputState: () => clearChatInputStateRef.current?.(),
   })
@@ -1808,6 +1904,7 @@ export function ChatWindow({
     handleCommitAndPush,
     handlePull,
     handlePush,
+    handleRevertLastCommit,
     handleOpenPr,
     handleReview,
     handleCodeRabbitReview,
@@ -1831,6 +1928,11 @@ export function ChatWindow({
     setSessionModel,
     setSessionBackend,
     setSessionProvider,
+    sendMessage,
+    selectedThinkingLevelRef,
+    selectedEffortLevelRef,
+    mcpServersDataRef,
+    enabledMcpServersRef,
   })
 
   // Wrap push/pull/commit-and-push with remote picker for multi-remote repos
@@ -1921,6 +2023,7 @@ export function ChatWindow({
     installedBackends,
     session,
     preferences,
+    piModelOptions: availablePiModelOptions,
     queryClient,
     worktreeProjectId: worktree?.project_id,
     setSessionModel,
@@ -1984,6 +2087,7 @@ export function ChatWindow({
     handleCommitAndPush: handleCommitAndPushWithPicker,
     handlePull: handlePullWithPicker,
     handlePush: handlePushWithPicker,
+    handleRevertLastCommit,
     handleOpenPr,
     handleReview,
     handleMerge,
@@ -2116,6 +2220,21 @@ export function ChatWindow({
     }
   }, [])
 
+  const handleCopySteeredText = useCallback(
+    (text: string) => {
+      void handleCopyToInput({
+        id: `${activeSessionId ?? 'streaming'}-steered-copy`,
+        session_id: activeSessionId ?? '',
+        role: 'user',
+        content: text,
+        timestamp: Date.now(),
+        content_blocks: [],
+        tool_calls: [],
+      })
+    },
+    [activeSessionId, handleCopyToInput]
+  )
+
   // Window event listeners (focus, plan, git-diff, cancel, create-session, plan approval, etc.)
   useChatWindowEvents({
     inputRef,
@@ -2189,32 +2308,49 @@ export function ChatWindow({
     isCursorBackend,
   ])
 
-  const floatingClearContextBuildApprove = useCallback(() => {
-    if (pendingPlanMessage)
-      handleClearContextApprovalBuild(pendingPlanMessage.id)
-  }, [pendingPlanMessage, handleClearContextApprovalBuild])
+  const floatingClearContextBuildApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      if (pendingPlanMessage)
+        handleClearContextApprovalBuild(pendingPlanMessage.id, override)
+    },
+    [pendingPlanMessage, handleClearContextApprovalBuild]
+  )
 
-  const floatingClearContextApprove = useCallback(() => {
-    if (pendingPlanMessage) handleClearContextApproval(pendingPlanMessage.id)
-  }, [pendingPlanMessage, handleClearContextApproval])
+  const floatingClearContextApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      if (pendingPlanMessage)
+        handleClearContextApproval(pendingPlanMessage.id, override)
+    },
+    [pendingPlanMessage, handleClearContextApproval]
+  )
 
-  const floatingWorktreeBuildApprove = useCallback(() => {
-    if (pendingPlanMessage) handleWorktreeBuildApproval(pendingPlanMessage.id)
-  }, [pendingPlanMessage, handleWorktreeBuildApproval])
+  const floatingWorktreeBuildApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      if (pendingPlanMessage)
+        handleWorktreeBuildApproval(pendingPlanMessage.id, override)
+    },
+    [pendingPlanMessage, handleWorktreeBuildApproval]
+  )
 
-  const floatingWorktreeYoloApprove = useCallback(() => {
-    if (pendingPlanMessage) handleWorktreeYoloApproval(pendingPlanMessage.id)
-  }, [pendingPlanMessage, handleWorktreeYoloApproval])
+  const floatingWorktreeYoloApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      if (pendingPlanMessage)
+        handleWorktreeYoloApproval(pendingPlanMessage.id, override)
+    },
+    [pendingPlanMessage, handleWorktreeYoloApproval]
+  )
 
-  // Pending attachment removal, slash command execution, queue management
+  // Queued prompts panel actions (remove / send-now)
+  const { handleRemoveQueuedMessage, handleSendQueuedNow } =
+    useQueuedPromptActions()
+
+  // Pending attachment removal, slash command execution
   const {
     handleRemovePendingImage,
     handleRemovePendingTextFile,
     handleRemovePendingSkill,
     handleRemovePendingFile,
     handleCommandExecute,
-    handleRemoveQueuedMessage,
-    handleForceSendQueued,
   } = usePendingAttachments({
     activeSessionId,
     activeWorktreeId,
@@ -2344,7 +2480,10 @@ export function ChatWindow({
         />
       )}
     >
-      <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
+      <div
+        data-chat-session-id={activeSessionId}
+        className="flex h-full w-full min-w-0 flex-col overflow-hidden"
+      >
         <ReviewMethodModal
           open={reviewMethodModalOpen}
           onOpenChange={setReviewMethodModalOpen}
@@ -2514,7 +2653,6 @@ export function ChatWindow({
                                     onQuestionAnswer={handleQuestionAnswer}
                                     onQuestionSkip={handleSkipQuestion}
                                     onFileClick={setViewingFilePath}
-                                    onEditedFileClick={handleEditedFileClick}
                                     onFixFinding={handleFixFinding}
                                     onFixAllFindings={handleFixAllFindings}
                                     isQuestionAnswered={isQuestionAnswered}
@@ -2588,7 +2726,6 @@ export function ChatWindow({
                                     onQuestionAnswer={handleQuestionAnswer}
                                     onQuestionSkip={handleSkipQuestion}
                                     onFileClick={setViewingFilePath}
-                                    onEditedFileClick={handleEditedFileClick}
                                     onFixFinding={handleFixFinding}
                                     onFixAllFindings={handleFixAllFindings}
                                     isQuestionAnswered={isQuestionAnswered}
@@ -2626,10 +2763,11 @@ export function ChatWindow({
                                       onQuestionAnswer={handleQuestionAnswer}
                                       onQuestionSkip={handleSkipQuestion}
                                       onFileClick={setViewingFilePath}
-                                      onEditedFileClick={handleEditedFileClick}
+                                      worktreePath={activeWorktreePath}
                                       isQuestionAnswered={isQuestionAnswered}
                                       getSubmittedAnswers={getSubmittedAnswers}
                                       areQuestionsSkipped={areQuestionsSkipped}
+                                      onCopySteeredText={handleCopySteeredText}
                                     />
                                   ) : (
                                     <StreamingMessage
@@ -2642,10 +2780,11 @@ export function ChatWindow({
                                       onQuestionAnswer={handleQuestionAnswer}
                                       onQuestionSkip={handleSkipQuestion}
                                       onFileClick={setViewingFilePath}
-                                      onEditedFileClick={handleEditedFileClick}
+                                      worktreePath={activeWorktreePath}
                                       isQuestionAnswered={isQuestionAnswered}
                                       getSubmittedAnswers={getSubmittedAnswers}
                                       areQuestionsSkipped={areQuestionsSkipped}
+                                      onCopySteeredText={handleCopySteeredText}
                                     />
                                   ))}
                                 <StreamingStatusBar
@@ -2778,18 +2917,6 @@ export function ChatWindow({
                                 }
                               />
                             )}
-
-                            {/* Queued messages - shown inline after streaming/messages */}
-                            {activeSessionId && (
-                              <QueuedMessagesList
-                                messages={currentQueuedMessages}
-                                sessionId={activeSessionId}
-                                worktreePath={activeWorktreePath}
-                                onRemove={handleRemoveQueuedMessage}
-                                onForceSend={handleForceSendQueued}
-                                isSessionIdle={!isSending}
-                              />
-                            )}
                           </div>
                         </div>
                       </ScrollArea>
@@ -2801,6 +2928,8 @@ export function ChatWindow({
                         isAtBottom={isAtBottom || messages.length === 0}
                         isSending={isSending}
                         approveShortcut={approveShortcut}
+                        buildDefaultModelLabel={buildNewContextLabel}
+                        yoloDefaultModelLabel={yoloNewContextLabel}
                         onApprove={floatingApprove}
                         onYoloApprove={floatingYoloApprove}
                         onClearContextBuildApprove={
@@ -2836,12 +2965,27 @@ export function ChatWindow({
                     <div className="bg-background">
                       <div className="mx-auto max-w-7xl">
                         <div className="relative sm:mx-auto sm:mb-3 sm:max-w-3xl xl:max-w-4xl">
+                          {/* Queued prompts - rendered as an extension above the chat input */}
+                          {activeSessionId &&
+                            currentQueuedMessages.length > 0 && (
+                              <QueuedPromptsPanel
+                                key={activeSessionId}
+                                sessionId={activeSessionId}
+                                messages={currentQueuedMessages}
+                                isSessionBusy={isSending || isWaitingForInput}
+                                onRemove={handleRemoveQueuedMessage}
+                                onSendNow={handleSendQueuedNow}
+                              />
+                            )}
                           {/* Input area - unified container with textarea and toolbar */}
                           <form
                             ref={formRef}
                             onSubmit={handleSubmit}
                             className={cn(
                               'relative overflow-hidden border-t border-border bg-card transition-[background-color,box-shadow] duration-150 sm:rounded-lg sm:border',
+                              activeSessionId &&
+                                currentQueuedMessages.length > 0 &&
+                                'sm:rounded-t-none',
                               isDragging &&
                                 'ring-2 ring-primary ring-inset bg-primary/5'
                             )}
@@ -3197,20 +3341,12 @@ export function ChatWindow({
           onClose={() => setViewingFilePath(null)}
         />
 
-        {/* Edited-file diff modal for viewing diffs of edited files */}
-        <FileEditsDiffModal
-          filePath={viewingFileEdits?.filePath ?? null}
-          edits={viewingFileEdits?.edits ?? []}
-          onClose={() => setViewingFileEdits(null)}
-        />
-
         {/* Git diff modal for viewing diffs */}
         <Suspense fallback={null}>
           <GitDiffModal
             diffRequest={diffRequest}
             onClose={() => setDiffRequest(null)}
             onAddToPrompt={handleGitDiffAddToPrompt}
-            onExecutePrompt={handleGitDiffExecutePrompt}
             uncommittedStats={{
               added: uncommittedAdded,
               removed: uncommittedRemoved,
@@ -3218,13 +3354,6 @@ export function ChatWindow({
             branchStats={{ added: branchDiffAdded, removed: branchDiffRemoved }}
           />
         </Suspense>
-
-        {/* Single file diff modal for viewing edited file changes */}
-        <FileDiffModal
-          filePath={editedFilePath}
-          worktreePath={activeWorktreePath ?? ''}
-          onClose={() => setEditedFilePath(null)}
-        />
 
         {/* Load Context modal for selecting saved contexts */}
         <Suspense fallback={null}>

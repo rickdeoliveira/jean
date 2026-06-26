@@ -1,6 +1,5 @@
 import {
   FolderPlus,
-  FolderGit,
   Bug,
   Keyboard,
   Archive,
@@ -25,21 +24,6 @@ export const projectCommands: AppCommand[] = [
 
     execute: context => {
       context.addProject()
-    },
-  },
-
-  {
-    id: 'init-project',
-    label: 'Initialize Project',
-    description: 'Create a new project from scratch',
-    icon: FolderGit,
-    group: 'projects',
-    keywords: ['project', 'init', 'new', 'create', 'initialize'],
-
-    isAvailable: context => context.hasInstalledBackend(),
-
-    execute: context => {
-      context.initProject()
     },
   },
 
@@ -82,28 +66,30 @@ export const projectCommands: AppCommand[] = [
 
   {
     id: 'help.feature-tour',
-    label: 'Show Boarding Flow',
-    description: 'Run CLI setup and learn keyboard shortcuts',
+    label: 'Show Onboarding Tour',
+    description: 'Replay the Magic Menu and productivity tour',
     icon: Keyboard,
     group: 'help',
     keywords: [
       'tour',
       'boarding',
       'onboarding',
+      'magic',
+      'menu',
+      'automation',
+      'mr',
+      'robot',
       'shortcuts',
       'keybindings',
       'help',
       'keyboard',
-      'install',
-      'cli',
-      'setup',
     ],
 
     execute: () => {
       useUIStore.setState({
-        onboardingManuallyTriggered: true,
-        onboardingDismissed: false,
-        onboardingOpen: true,
+        featureTourOpen: true,
+        onboardingOpen: false,
+        onboardingManuallyTriggered: false,
       })
     },
   },

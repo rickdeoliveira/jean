@@ -14,6 +14,8 @@ pub enum TerminalContextBackend {
     Codex,
     Opencode,
     Cursor,
+    Pi,
+    Commandcode,
 }
 
 impl TerminalContextBackend {
@@ -23,6 +25,8 @@ impl TerminalContextBackend {
             "codex" => Some(Self::Codex),
             "opencode" => Some(Self::Opencode),
             "cursor" => Some(Self::Cursor),
+            "pi" => Some(Self::Pi),
+            "commandcode" => Some(Self::Commandcode),
             _ => None,
         }
     }
@@ -135,7 +139,9 @@ fn build_system_prompt_parts(
         }
     }
 
-    parts.push(super::RECAP_INSTRUCTION.to_string());
+    if super::should_add_recap_instruction(app) {
+        parts.push(super::RECAP_INSTRUCTION.to_string());
+    }
 
     log::debug!(
         "Prepared {} system prompt parts for backend terminal session {session_id}",
@@ -364,7 +370,10 @@ pub fn prepare_backend_terminal_context(
                 format!("base_instructions={}", toml_basic_string(&content)),
             ]
         }
-        TerminalContextBackend::Opencode | TerminalContextBackend::Cursor => Vec::new(),
+        TerminalContextBackend::Opencode
+        | TerminalContextBackend::Cursor
+        | TerminalContextBackend::Pi
+        | TerminalContextBackend::Commandcode => Vec::new(),
     };
 
     Ok(PreparedBackendTerminalContext { command_args })

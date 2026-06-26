@@ -18,7 +18,6 @@ describe('StreamingMessage', () => {
     onQuestionAnswer: noopQuestionAnswer,
     onQuestionSkip: vi.fn(),
     onFileClick: vi.fn(),
-    onEditedFileClick: vi.fn(),
     isQuestionAnswered: vi.fn(() => false),
     getSubmittedAnswers: vi.fn(() => undefined),
     areQuestionsSkipped: vi.fn(() => false),
@@ -426,5 +425,37 @@ describe('StreamingMessage', () => {
     )
 
     expect(screen.getByText('Raptors')).toBeVisible()
+  })
+
+  it('shows a visual Working row after a steered prompt until new activity arrives', () => {
+    render(
+      <StreamingMessage
+        {...baseProps}
+        contentBlocks={[{ type: 'user_input', text: 'please also test this' }]}
+      />
+    )
+
+    expect(screen.getByText('please also test this')).toBeVisible()
+    expect(screen.getByText('Working…')).toBeVisible()
+  })
+
+  it('copies steered prompts while streaming', () => {
+    const onCopySteeredText = vi.fn()
+
+    render(
+      <StreamingMessage
+        {...baseProps}
+        onCopySteeredText={onCopySteeredText}
+        contentBlocks={[
+          { type: 'text', text: 'Before steer' },
+          { type: 'user_input', text: 'copy the live steer' },
+        ]}
+      />
+    )
+
+    screen.getByRole('button', { name: 'Copy steered prompt' }).click()
+
+    expect(onCopySteeredText).toHaveBeenCalledTimes(1)
+    expect(onCopySteeredText).toHaveBeenCalledWith('copy the live steer')
   })
 })

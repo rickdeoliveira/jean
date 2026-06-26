@@ -97,7 +97,9 @@ function CommentItem({ comment }: { comment: GitHubComment }) {
       </div>
       <div className="px-4 py-3">
         {comment.body ? (
-          <Markdown compact className="text-sm">{comment.body}</Markdown>
+          <Markdown compact className="text-sm">
+            {comment.body}
+          </Markdown>
         ) : (
           <p className="text-sm text-muted-foreground italic">
             No description provided.
@@ -156,7 +158,9 @@ function ReviewItem({ review }: { review: GitHubReview }) {
       </div>
       {review.body && (
         <div className="px-4 py-3">
-          <Markdown compact className="text-sm">{review.body}</Markdown>
+          <Markdown compact className="text-sm">
+            {review.body}
+          </Markdown>
         </div>
       )}
     </div>
@@ -194,7 +198,9 @@ function IssueContent({ detail }: { detail: GitHubIssueDetail }) {
         </div>
         <div className="px-4 py-3">
           {detail.body ? (
-            <Markdown compact className="text-sm">{detail.body}</Markdown>
+            <Markdown compact className="text-sm">
+              {detail.body}
+            </Markdown>
           ) : (
             <p className="text-sm text-muted-foreground italic">
               No description provided.
@@ -279,7 +285,9 @@ function PRContent({ detail }: { detail: GitHubPullRequestDetail }) {
         </div>
         <div className="px-4 py-3">
           {detail.body ? (
-            <Markdown compact className="text-sm">{detail.body}</Markdown>
+            <Markdown compact className="text-sm">
+              {detail.body}
+            </Markdown>
           ) : (
             <p className="text-sm text-muted-foreground italic">
               No description provided.
@@ -498,7 +506,9 @@ function AdvisoryContent({ advisory }: { advisory: RepositoryAdvisory }) {
 
           {advisory.description && (
             <div className="pt-2">
-              <Markdown compact className="text-sm">{advisory.description}</Markdown>
+              <Markdown compact className="text-sm">
+                {advisory.description}
+              </Markdown>
             </div>
           )}
         </div>

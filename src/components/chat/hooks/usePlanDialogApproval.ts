@@ -19,6 +19,7 @@ import type {
 } from '@/types/chat'
 import type { Session } from '@/types/chat'
 import type { McpServerInfo } from '@/types/chat'
+import type { CliBackend } from '@/types/preferences'
 
 const THINKING_LEVEL_VALUES = new Set<ThinkingLevel>([
   'off',
@@ -55,7 +56,7 @@ interface UsePlanDialogApprovalParams {
   isCodexBackendRef: RefObject<boolean>
   mcpServersDataRef: RefObject<McpServerInfo[] | undefined>
   enabledMcpServersRef: RefObject<string[]>
-  selectedBackendRef: RefObject<'claude' | 'codex' | 'opencode' | 'cursor'>
+  selectedBackendRef: RefObject<CliBackend>
   markAtBottom: () => void
 }
 
@@ -274,7 +275,9 @@ export function usePlanDialogApproval({
           : buildEffortLevelRef.current
         : null
       const resolvedEffortLevel: EffortLevel | undefined =
-        useAdaptiveThinkingRef.current || isCodexBackendRef.current
+        useAdaptiveThinkingRef.current ||
+        isCodexBackendRef.current ||
+        selectedBackendRef.current === 'pi'
           ? ((effortOverride as EffortLevel | null) ??
             selectedEffortLevelRef.current)
           : undefined

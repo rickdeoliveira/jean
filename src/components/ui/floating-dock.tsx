@@ -13,7 +13,6 @@ import {
   Plus,
   Archive,
   Terminal,
-  Sparkles,
   FileText,
   Github,
   GitPullRequest,
@@ -222,7 +221,13 @@ export function FloatingDock() {
 
   const activeBackend = (selectedBackend ??
     preferences?.default_backend ??
-    'claude') as 'claude' | 'codex' | 'opencode' | 'cursor'
+    'claude') as
+    | 'claude'
+    | 'codex'
+    | 'opencode'
+    | 'cursor'
+    | 'pi'
+    | 'commandcode'
 
   const codexStatus = useCodexCliStatus()
   const codexAuth = useCodexCliAuth({
@@ -484,12 +489,7 @@ export function FloatingDock() {
             </>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => window.dispatchEvent(new CustomEvent('open-recap'))}
-          >
-            <Sparkles className="mr-2 h-4 w-4" />
-            View Recap
-          </DropdownMenuItem>
+
           <DropdownMenuItem
             onClick={() => window.dispatchEvent(new CustomEvent('open-plan'))}
           >

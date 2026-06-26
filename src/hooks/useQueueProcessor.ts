@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChatStore } from '@/store/chat-store'
-import { useSendMessage, persistDequeue } from '@/services/chat'
+import {
+  useSendMessage,
+  persistDequeue,
+  persistRequeueFront,
+  isDuplicateSendError,
+} from '@/services/chat'
 import { usePreferences } from '@/services/preferences'
 import { DEFAULT_PARALLEL_EXECUTION_PROMPT } from '@/types/preferences'
 import { isTauri } from '@/services/projects'
@@ -166,8 +171,34 @@ export function useQueueProcessor(): void {
                   : undefined,
               chromeEnabled: preferences?.chrome_enabled ?? false,
               allowedTools,
+              fromQueue: true,
             },
             {
+              onError: error => {
+                // Lost the send race against the backend queue drain (or
+                // another client). Requeue the original message at the front
+                // so it retries when the active run completes — never drop it.
+                if (!isDuplicateSendError(error)) return
+                logger.warn(
+                  'Queue processor: send race lost, requeueing message',
+                  { sessionId: capturedSessionId, messageId: msg.id }
+                )
+                const st = useChatStore.getState()
+                st.enqueueMessage(capturedSessionId, msg)
+                st.moveQueuedMessageFront(capturedSessionId, msg.id)
+                persistRequeueFront(
+                  capturedWorktreeId,
+                  capturedWorktreePath,
+                  capturedSessionId,
+                  msg
+                ).catch(err => {
+                  logger.error('Queue processor: failed to requeue message', {
+                    sessionId: capturedSessionId,
+                    messageId: msg.id,
+                    err,
+                  })
+                })
+              },
               onSettled: () => {
                 processingRef.current.delete(capturedSessionId)
                 setSettleTrigger(t => t + 1)

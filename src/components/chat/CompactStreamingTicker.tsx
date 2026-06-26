@@ -12,6 +12,7 @@ import {
   TOOL_CALL_DETAIL_PILL_CLASS,
 } from './ToolCallInline'
 import { StreamingMessage } from './StreamingMessage'
+import { SteeredPromptGroup } from './SteeredPromptGroup'
 import { isDuplicatePlanTextBlock, resolvePlanContent } from './tool-call-utils'
 import type { ComponentProps } from 'react'
 
@@ -96,6 +97,8 @@ function filterActivityBlocks(
 ): ContentBlock[] {
   return contentBlocks.filter(block => {
     if (isPlanToolBlock(block, toolCalls)) return false
+    // Steered user prompts render separately above the ticker
+    if (block.type === 'user_input') return false
     if (
       block.type === 'text' &&
       planContent &&
@@ -137,7 +140,13 @@ function hasVisibleActivity(
 export const CompactStreamingTicker = memo(function CompactStreamingTicker(
   props: StreamingMessageProps
 ) {
-  const { contentBlocks, toolCalls, streamingContent } = props
+  const {
+    contentBlocks,
+    toolCalls,
+    streamingContent,
+    onCopySteeredText,
+    worktreePath,
+  } = props
   const [isOpen, setIsOpen] = useState(false)
 
   const {
@@ -146,6 +155,7 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
     planBlocks,
     planToolCalls,
     planStreamingContent,
+    steeredTexts,
   } = useMemo(() => {
     const plan = resolvePlanContent({
       toolCalls,
@@ -159,6 +169,11 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
       planBlocks: filterPlanToolBlocks(contentBlocks, toolCalls),
       planToolCalls: plans,
       planStreamingContent: plan ?? '',
+      // User prompts injected mid-turn (Codex turn/steer) — surfaced as
+      // separate visible bubbles instead of buried in the collapsed ticker.
+      steeredTexts: contentBlocks.flatMap(block =>
+        block.type === 'user_input' && block.text.trim() ? [block.text] : []
+      ),
     }
   }, [contentBlocks, toolCalls, streamingContent])
 
@@ -171,12 +186,19 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
 
   if (hasPlan && !hasActivity) {
     return (
-      <StreamingMessage
-        {...props}
-        contentBlocks={planBlocks}
-        toolCalls={planToolCalls}
-        streamingContent={planStreamingContent}
-      />
+      <div className="space-y-3">
+        <SteeredPromptGroup
+          texts={steeredTexts}
+          worktreePath={worktreePath}
+          onCopyText={onCopySteeredText}
+        />
+        <StreamingMessage
+          {...props}
+          contentBlocks={planBlocks}
+          toolCalls={planToolCalls}
+          streamingContent={planStreamingContent}
+        />
+      </div>
     )
   }
 
@@ -189,6 +211,11 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
 
   return (
     <div className="space-y-3">
+      <SteeredPromptGroup
+        texts={steeredTexts}
+        worktreePath={worktreePath}
+        onCopyText={onCopySteeredText}
+      />
       <Collapsible open={isOpen} onOpenChange={setIsOpen} className="min-w-0">
         <div
           className={

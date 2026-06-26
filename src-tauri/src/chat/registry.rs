@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use once_cell::sync::Lazy;
 use tauri::AppHandle;
+#[cfg(unix)]
+use tauri::Manager;
 
 use super::claude::CancelledEvent;
 use super::run_log;
@@ -39,6 +41,10 @@ static CANCEL_FLAGS: Lazy<Mutex<HashMap<String, OpenCodeCancelEntry>>> =
 static CODEX_TURN_REGISTRY: Lazy<Mutex<HashMap<String, (String, String)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Sessions in PROCESS_REGISTRY whose process is fully detached (survives Jean
+/// quitting). Claude CLI runs are detached; Pi/Cursor are piped children.
+static DETACHED_SESSIONS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
 fn lock_recover<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -54,17 +60,53 @@ fn emit_cancelled_event(app: &AppHandle, session_id: &str, worktree_id: &str, un
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0);
+    let run_id = super::storage::load_metadata(app, session_id)
+        .ok()
+        .flatten()
+        .and_then(|metadata| metadata.runs.last().map(|run| run.run_id.clone()));
 
     let event = CancelledEvent {
         session_id: session_id.to_string(),
         worktree_id: worktree_id.to_string(),
         undo_send,
         emitted_at_ms,
+        run_id,
     };
     if let Err(e) = app.emit_all("chat:cancelled", &event) {
         log::error!("Failed to emit chat:cancelled event: {e}");
     }
 }
+
+#[cfg(unix)]
+fn try_abort_pi_rpc_host(app: &AppHandle, session_id: &str) {
+    let run_id = super::storage::load_metadata(app, session_id)
+        .ok()
+        .flatten()
+        .and_then(|metadata| {
+            metadata
+                .runs
+                .iter()
+                .rev()
+                .find(|run| {
+                    run.status == super::types::RunStatus::Running
+                        && run.backend == Some(super::types::Backend::Pi)
+                })
+                .map(|run| run.run_id.clone())
+        });
+    let Some(run_id) = run_id else { return };
+    let Ok(app_data) = app.path().app_data_dir() else {
+        log::warn!("Failed to resolve app data dir for Pi RPC abort");
+        return;
+    };
+    let socket_path = super::pi::pi_rpc_socket_path(&app_data, session_id, &run_id);
+    let line = super::pi::serialize_pi_rpc_command("abort", None, Some(&format!("abort-{run_id}")));
+    if let Err(e) = super::pi::send_pi_rpc_host_command(&socket_path, &line) {
+        log::warn!("Failed to send Pi RPC abort before kill for session {session_id}: {e}");
+    }
+}
+
+#[cfg(not(unix))]
+fn try_abort_pi_rpc_host(_app: &AppHandle, _session_id: &str) {}
 
 /// Register a running Claude process PID for a session.
 /// Returns `false` if the session was cancelled before registration (process is killed immediately).
@@ -96,12 +138,25 @@ pub fn register_process(session_id: String, pid: u32) -> bool {
     true
 }
 
+/// Register a running detached process PID for a session (e.g. Claude CLI).
+/// Detached processes survive Jean quitting, so they don't block app exit.
+/// Returns `false` if the session was cancelled before registration.
+pub fn register_detached_process(session_id: String, pid: u32) -> bool {
+    let registered = register_process(session_id.clone(), pid);
+    if registered {
+        lock_recover(&DETACHED_SESSIONS, "DETACHED_SESSIONS").insert(session_id);
+    }
+    registered
+}
+
 /// Remove a process from the registry (called after completion or cancellation)
 pub fn unregister_process(session_id: &str) {
     let mut registry = lock_recover(&PROCESS_REGISTRY, "PROCESS_REGISTRY");
     if let Some(pid) = registry.remove(session_id) {
         log::trace!("Unregistered Claude process {pid} for session: {session_id}");
     }
+    drop(registry);
+    lock_recover(&DETACHED_SESSIONS, "DETACHED_SESSIONS").remove(session_id);
 }
 
 /// Register a cancellation flag for an OpenCode session.
@@ -143,6 +198,16 @@ pub fn update_cancel_flag_context(
         entry.opencode_session_id = Some(opencode_session_id);
         entry.working_dir = Some(working_dir);
     }
+}
+
+/// The OpenCode session id of the CURRENTLY RUNNING turn for this Jean session,
+/// as recorded by `update_cancel_flag_context`. Available mid-run — including the
+/// first turn of a brand-new session, before the id is persisted to session
+/// metadata — so steering can resolve the live session id.
+pub fn get_opencode_session_id(session_id: &str) -> Option<String> {
+    lock_recover(&CANCEL_FLAGS, "CANCEL_FLAGS")
+        .get(session_id)
+        .and_then(|entry| entry.opencode_session_id.clone())
 }
 
 /// Fire-and-forget server-side abort for a running OpenCode session.
@@ -205,9 +270,18 @@ pub fn unregister_codex_turn(session_id: &str) {
     lock_recover(&CODEX_TURN_REGISTRY, "CODEX_TURN_REGISTRY").remove(session_id);
 }
 
+/// Get the registered Codex (thread_id, turn_id) for a session, if any.
+/// Used by `turn/steer` to inject user input into the active turn.
+pub fn get_codex_turn(session_id: &str) -> Option<(String, String)> {
+    lock_recover(&CODEX_TURN_REGISTRY, "CODEX_TURN_REGISTRY")
+        .get(session_id)
+        .cloned()
+}
+
 /// Remove all registry state for a session after a backend crash or thread panic.
 pub fn cleanup_session_registrations(session_id: &str) {
     let removed_pid = lock_recover(&PROCESS_REGISTRY, "PROCESS_REGISTRY").remove(session_id);
+    lock_recover(&DETACHED_SESSIONS, "DETACHED_SESSIONS").remove(session_id);
     let removed_pending = lock_recover(&PENDING_CANCELS, "PENDING_CANCELS").remove(session_id);
     let removed_flag = lock_recover(&CANCEL_FLAGS, "CANCEL_FLAGS")
         .remove(session_id)
@@ -221,6 +295,13 @@ pub fn cleanup_session_registrations(session_id: &str) {
             "[Registry] cleaned stale state for session={session_id} pid={removed_pid:?} pending={removed_pending} cancel_flag={removed_flag} codex_turn={removed_turn}"
         );
     }
+}
+
+/// Clear only a queued pre-registration cancel for an otherwise idle session.
+/// Used before starting a fresh send so stale pending cancel state from a
+/// previous idle-cancel race cannot poison the next run.
+pub fn clear_pending_cancel(session_id: &str) -> bool {
+    lock_recover(&PENDING_CANCELS, "PENDING_CANCELS").remove(session_id)
 }
 
 /// Check if a session has a running process
@@ -252,6 +333,27 @@ pub fn get_actively_managed_sessions() -> HashSet<String> {
     sessions
 }
 
+/// Check if any running session would NOT survive Jean quitting.
+///
+/// Survivable: detached Claude CLI processes, and Codex app-server turns on
+/// Unix (the server is detached and runs turns independently of Jean).
+/// Non-survivable: OpenCode sessions (managed server dies with Jean), piped
+/// CLI children (Pi, Cursor), and Codex turns on Windows (stdio transport).
+pub fn has_nonsurvivable_running_sessions() -> bool {
+    if !lock_recover(&CANCEL_FLAGS, "CANCEL_FLAGS").is_empty() {
+        return true;
+    }
+
+    if cfg!(not(unix)) && !lock_recover(&CODEX_TURN_REGISTRY, "CODEX_TURN_REGISTRY").is_empty() {
+        return true;
+    }
+
+    let detached = lock_recover(&DETACHED_SESSIONS, "DETACHED_SESSIONS");
+    lock_recover(&PROCESS_REGISTRY, "PROCESS_REGISTRY")
+        .keys()
+        .any(|session_id| !detached.contains(session_id))
+}
+
 /// Check if a specific session is actively managed (has a running process, cancel flag, or codex turn).
 /// Used by resume_session to avoid starting a duplicate tail.
 pub fn is_session_actively_managed(session_id: &str) -> bool {
@@ -261,8 +363,11 @@ pub fn is_session_actively_managed(session_id: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    static TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     fn clear_registries() {
         lock_recover(&PROCESS_REGISTRY, "PROCESS_REGISTRY").clear();
@@ -273,6 +378,7 @@ mod tests {
 
     #[test]
     fn get_running_sessions_includes_all_backend_registries() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
         clear_registries();
 
         assert!(register_process("claude-session".to_string(), 4242));
@@ -300,7 +406,55 @@ mod tests {
     }
 
     #[test]
+    fn get_opencode_session_id_returns_live_id_after_context_update() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
+        clear_registries();
+
+        // Before the run registers, there is no live id.
+        assert_eq!(get_opencode_session_id("oc-session"), None);
+
+        assert!(register_cancel_flag(
+            "oc-session".to_string(),
+            Arc::new(AtomicBool::new(false))
+        ));
+        // Registered but no OpenCode session id yet (first-turn window).
+        assert_eq!(get_opencode_session_id("oc-session"), None);
+
+        update_cancel_flag_context("oc-session", "ses_live_123".to_string(), "/tmp".to_string());
+        assert_eq!(
+            get_opencode_session_id("oc-session"),
+            Some("ses_live_123".to_string())
+        );
+
+        clear_registries();
+    }
+
+    #[test]
+    fn get_codex_turn_returns_registered_pair() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
+        clear_registries();
+
+        assert!(register_codex_turn(
+            "codex-session".to_string(),
+            "thread-1".to_string(),
+            "turn-1".to_string()
+        ));
+
+        assert_eq!(
+            get_codex_turn("codex-session"),
+            Some(("thread-1".to_string(), "turn-1".to_string()))
+        );
+        assert_eq!(get_codex_turn("unknown-session"), None);
+
+        unregister_codex_turn("codex-session");
+        assert_eq!(get_codex_turn("codex-session"), None);
+
+        clear_registries();
+    }
+
+    #[test]
     fn cleanup_session_registrations_clears_opencode_active_flag() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
         clear_registries();
 
         assert!(register_cancel_flag(
@@ -312,6 +466,23 @@ mod tests {
         cleanup_session_registrations("opencode-session");
 
         assert!(!is_session_actively_managed("opencode-session"));
+
+        clear_registries();
+    }
+
+    #[test]
+    fn clear_pending_cancel_leaves_active_registrations_intact() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
+        clear_registries();
+
+        assert!(register_cancel_flag(
+            "active-session".to_string(),
+            Arc::new(AtomicBool::new(false))
+        ));
+        lock_recover(&PENDING_CANCELS, "PENDING_CANCELS").insert("active-session".to_string());
+
+        assert!(clear_pending_cancel("active-session"));
+        assert!(is_session_actively_managed("active-session"));
 
         clear_registries();
     }
@@ -335,6 +506,7 @@ pub fn cancel_process(
         log::warn!("Registry state: {:?}", registry.iter().collect::<Vec<_>>());
         registry.remove(session_id)
     };
+    lock_recover(&DETACHED_SESSIONS, "DETACHED_SESSIONS").remove(session_id);
 
     if let Some(pid) = pid {
         // SAFETY: Never kill PID 0 (would kill our own process group) or PID 1 (init/launchd)
@@ -343,6 +515,7 @@ pub fn cancel_process(
             return Err(format!("Invalid PID: {pid}"));
         }
 
+        try_abort_pi_rpc_host(app, session_id);
         log::trace!("Cancelling Claude process group {pid} for session: {session_id}");
 
         // Kill the entire process tree to ensure child processes are also terminated
@@ -468,6 +641,7 @@ pub fn cancel_process_if_running(
         let mut registry = lock_recover(&PROCESS_REGISTRY, "PROCESS_REGISTRY");
         registry.remove(session_id)
     };
+    lock_recover(&DETACHED_SESSIONS, "DETACHED_SESSIONS").remove(session_id);
 
     if let Some(pid) = pid {
         if pid == 0 || pid == 1 {
@@ -475,6 +649,7 @@ pub fn cancel_process_if_running(
             return Err(format!("Invalid PID: {pid}"));
         }
 
+        try_abort_pi_rpc_host(app, session_id);
         log::trace!("Cancelling Claude process group {pid} for session: {session_id}");
 
         use crate::platform::{is_process_alive, kill_process, kill_process_tree};

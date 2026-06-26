@@ -1,9 +1,12 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
+import type { LabelData } from '@/types/chat'
 import type { WorktreeSortMode } from '@/types/projects'
 
 export interface ProjectCanvasSettings {
   worktreeSortMode?: WorktreeSortMode
+  pinnedLabels?: LabelData[]
+  labels?: LabelData[]
 }
 
 interface ProjectsUIState {
@@ -104,6 +107,11 @@ interface ProjectsUIState {
     projectId: string,
     sortMode: WorktreeSortMode
   ) => void
+  setProjectCanvasPinnedLabels: (
+    projectId: string,
+    pinnedLabels: LabelData[]
+  ) => void
+  setProjectCanvasLabels: (projectId: string, labels: LabelData[]) => void
 }
 
 export const useProjectsStore = create<ProjectsUIState>()(
@@ -145,7 +153,14 @@ export const useProjectsStore = create<ProjectsUIState>()(
         ),
 
       selectWorktree: id =>
-        set({ selectedWorktreeId: id }, undefined, 'selectWorktree'),
+        set(
+          state =>
+            state.selectedWorktreeId === id
+              ? state
+              : { selectedWorktreeId: id },
+          undefined,
+          'selectWorktree'
+        ),
 
       // Expansion actions
       toggleProjectExpanded: id =>
@@ -166,6 +181,7 @@ export const useProjectsStore = create<ProjectsUIState>()(
       setProjectExpanded: (id, expanded) =>
         set(
           state => {
+            if (state.expandedProjectIds.has(id) === expanded) return state
             const newSet = new Set(state.expandedProjectIds)
             if (expanded) {
               newSet.add(id)
@@ -181,6 +197,7 @@ export const useProjectsStore = create<ProjectsUIState>()(
       expandProject: id =>
         set(
           state => {
+            if (state.expandedProjectIds.has(id)) return state
             const newSet = new Set(state.expandedProjectIds)
             newSet.add(id)
             return { expandedProjectIds: newSet }
@@ -192,6 +209,7 @@ export const useProjectsStore = create<ProjectsUIState>()(
       collapseProject: id =>
         set(
           state => {
+            if (!state.expandedProjectIds.has(id)) return state
             const newSet = new Set(state.expandedProjectIds)
             newSet.delete(id)
             return { expandedProjectIds: newSet }
@@ -235,14 +253,20 @@ export const useProjectsStore = create<ProjectsUIState>()(
 
       setDashboardWorktreeCollapseOverrides: overrides =>
         set(
-          { dashboardWorktreeCollapseOverrides: overrides },
+          state =>
+            state.dashboardWorktreeCollapseOverrides === overrides
+              ? state
+              : { dashboardWorktreeCollapseOverrides: overrides },
           undefined,
           'setDashboardWorktreeCollapseOverrides'
         ),
 
       setProjectCanvasSettings: settings =>
         set(
-          { projectCanvasSettings: settings },
+          state =>
+            state.projectCanvasSettings === settings
+              ? state
+              : { projectCanvasSettings: settings },
           undefined,
           'setProjectCanvasSettings'
         ),
@@ -268,6 +292,55 @@ export const useProjectsStore = create<ProjectsUIState>()(
           'setProjectCanvasWorktreeSortMode'
         ),
 
+      setProjectCanvasPinnedLabels: (projectId, pinnedLabels) =>
+        set(
+          state => {
+            const currentPinnedLabels =
+              state.projectCanvasSettings[projectId]?.pinnedLabels ?? []
+            if (
+              JSON.stringify(currentPinnedLabels) ===
+              JSON.stringify(pinnedLabels)
+            ) {
+              return state
+            }
+
+            return {
+              projectCanvasSettings: {
+                ...state.projectCanvasSettings,
+                [projectId]: {
+                  ...state.projectCanvasSettings[projectId],
+                  pinnedLabels,
+                },
+              },
+            }
+          },
+          undefined,
+          'setProjectCanvasPinnedLabels'
+        ),
+
+      setProjectCanvasLabels: (projectId, labels) =>
+        set(
+          state => {
+            const currentLabels =
+              state.projectCanvasSettings[projectId]?.labels ?? []
+            if (JSON.stringify(currentLabels) === JSON.stringify(labels)) {
+              return state
+            }
+
+            return {
+              projectCanvasSettings: {
+                ...state.projectCanvasSettings,
+                [projectId]: {
+                  ...state.projectCanvasSettings[projectId],
+                  labels,
+                },
+              },
+            }
+          },
+          undefined,
+          'setProjectCanvasLabels'
+        ),
+
       // Folder expansion actions
       toggleFolderExpanded: id =>
         set(
@@ -287,6 +360,7 @@ export const useProjectsStore = create<ProjectsUIState>()(
       expandFolder: id =>
         set(
           state => {
+            if (state.expandedFolderIds.has(id)) return state
             const newSet = new Set(state.expandedFolderIds)
             newSet.add(id)
             return { expandedFolderIds: newSet }
@@ -298,6 +372,7 @@ export const useProjectsStore = create<ProjectsUIState>()(
       collapseFolder: id =>
         set(
           state => {
+            if (!state.expandedFolderIds.has(id)) return state
             const newSet = new Set(state.expandedFolderIds)
             newSet.delete(id)
             return { expandedFolderIds: newSet }
@@ -389,10 +464,18 @@ export const useProjectsStore = create<ProjectsUIState>()(
         ),
 
       openCloneModal: () =>
-        set({ cloneModalOpen: true }, undefined, 'openCloneModal'),
+        set(
+          state => (state.cloneModalOpen ? state : { cloneModalOpen: true }),
+          undefined,
+          'openCloneModal'
+        ),
 
       closeCloneModal: () =>
-        set({ cloneModalOpen: false }, undefined, 'closeCloneModal'),
+        set(
+          state => (state.cloneModalOpen ? { cloneModalOpen: false } : state),
+          undefined,
+          'closeCloneModal'
+        ),
 
       openJeanConfigWizard: projectId =>
         set(
@@ -409,11 +492,19 @@ export const useProjectsStore = create<ProjectsUIState>()(
         ),
 
       setEditingFolderId: id =>
-        set({ editingFolderId: id }, undefined, 'setEditingFolderId'),
+        set(
+          state =>
+            state.editingFolderId === id ? state : { editingFolderId: id },
+          undefined,
+          'setEditingFolderId'
+        ),
 
       setProjectAccessTimestamps: timestamps =>
         set(
-          { projectAccessTimestamps: timestamps },
+          state =>
+            state.projectAccessTimestamps === timestamps
+              ? state
+              : { projectAccessTimestamps: timestamps },
           undefined,
           'setProjectAccessTimestamps'
         ),

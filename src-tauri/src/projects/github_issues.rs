@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 use super::git::get_repo_identifier;
 use crate::gh_cli::config::resolve_gh_binary;
-use crate::platform::silent_command;
+
+fn gh_command(gh: &Path, project_path: &str) -> Command {
+    crate::platform::resolved_cli_command(gh, Some(Path::new(project_path)))
+}
 
 // =============================================================================
 // GitHub Types
@@ -16,6 +20,10 @@ use crate::platform::silent_command;
 pub struct GitHubLabel {
     pub name: String,
     pub color: String,
+}
+
+pub fn parse_github_labels_response(stdout: &str) -> Result<Vec<GitHubLabel>, String> {
+    serde_json::from_str(stdout).map_err(|e| format!("Failed to parse gh labels response: {e}"))
 }
 
 /// GitHub user/author
@@ -69,6 +77,39 @@ pub struct GitHubIssueDetail {
 pub struct GitHubIssueListResult {
     pub issues: Vec<GitHubIssue>,
     pub total_count: u32,
+}
+
+#[tauri::command]
+pub async fn list_github_labels(
+    app: AppHandle,
+    project_path: String,
+) -> Result<Vec<GitHubLabel>, String> {
+    log::trace!("Listing GitHub labels for {project_path}");
+
+    let gh = resolve_gh_binary(&app);
+    let output = gh_command(&gh, &project_path)
+        .args(["label", "list", "--json", "name,color", "-L", "1000"])
+        .output()
+        .map_err(|e| format!("Failed to run gh label list: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if is_gh_cli_auth_error(&stderr) {
+            return Err("GitHub CLI not authenticated. Run 'gh auth login' first.".to_string());
+        }
+        if stderr.contains("not a git repository") {
+            return Err("Not a git repository".to_string());
+        }
+        if stderr.contains("Could not resolve") {
+            return Err("Could not resolve repository. Is this a GitHub repository?".to_string());
+        }
+        return Err(format!("gh label list failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut labels = parse_github_labels_response(&stdout)?;
+    labels.sort_by_key(|label| label.name.to_lowercase());
+    Ok(labels)
 }
 
 /// Issue context to pass when creating a worktree
@@ -125,7 +166,7 @@ pub async fn list_github_issues(
     let state_arg = state.unwrap_or_else(|| "open".to_string());
 
     // Run gh issue list
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "issue",
             "list",
@@ -136,7 +177,6 @@ pub async fn list_github_issues(
             "--state",
             &state_arg,
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh issue list: {e}"))?;
 
@@ -174,7 +214,7 @@ pub async fn list_github_issues(
 ///
 /// Uses `gh api search/issues` to get the real total count without fetching all issues.
 /// Falls back to None on any error so callers can use issues.len() instead.
-fn get_issue_total_count(gh: &PathBuf, project_path: &str, state: &str) -> Option<u32> {
+fn get_issue_total_count(gh: &Path, project_path: &str, state: &str) -> Option<u32> {
     let repo_id = get_repo_identifier(project_path).ok()?;
     let state_qualifier = match state {
         "closed" => "+state:closed",
@@ -186,9 +226,8 @@ fn get_issue_total_count(gh: &PathBuf, project_path: &str, state: &str) -> Optio
         repo_id.owner, repo_id.repo, state_qualifier
     );
 
-    let output = silent_command(gh)
+    let output = gh_command(gh, project_path)
         .args(["api", &query])
-        .current_dir(project_path)
         .output()
         .ok()?;
 
@@ -214,7 +253,7 @@ pub async fn search_github_issues(
     log::trace!("Searching GitHub issues for {project_path} with query: {query}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "issue",
             "list",
@@ -227,7 +266,6 @@ pub async fn search_github_issues(
             "--state",
             "all",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh issue list --search: {e}"))?;
 
@@ -266,7 +304,7 @@ pub async fn get_github_issue_by_number(
     log::trace!("Getting GitHub issue #{issue_number} by number for {project_path}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "issue",
             "view",
@@ -274,7 +312,6 @@ pub async fn get_github_issue_by_number(
             "--json",
             "number,title,body,state,labels,createdAt,author",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh issue view: {e}"))?;
 
@@ -310,7 +347,7 @@ pub async fn get_github_issue(
 
     let gh = resolve_gh_binary(&app);
     // Run gh issue view
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "issue",
             "view",
@@ -318,7 +355,6 @@ pub async fn get_github_issue(
             "--json",
             "number,title,body,state,labels,createdAt,author,url,comments",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh issue view: {e}"))?;
 
@@ -1499,7 +1535,7 @@ pub async fn list_github_prs(
     let state_arg = state.unwrap_or_else(|| "open".to_string());
 
     // Run gh pr list
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "pr",
             "list",
@@ -1510,7 +1546,6 @@ pub async fn list_github_prs(
             "--state",
             &state_arg,
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr list: {e}"))?;
 
@@ -1549,7 +1584,7 @@ pub async fn search_github_prs(
     log::trace!("Searching GitHub PRs for {project_path} with query: {query}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "pr",
             "list",
@@ -1562,7 +1597,6 @@ pub async fn search_github_prs(
             "--state",
             "all",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr list --search: {e}"))?;
 
@@ -1601,7 +1635,7 @@ pub async fn get_github_pr_by_number(
     log::trace!("Getting GitHub PR #{pr_number} by number for {project_path}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "pr",
             "view",
@@ -1609,7 +1643,6 @@ pub async fn get_github_pr_by_number(
             "--json",
             "number,title,body,state,headRefName,baseRefName,isDraft,createdAt,author,labels",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -1645,7 +1678,7 @@ pub async fn get_github_pr(
 
     let gh = resolve_gh_binary(&app);
     // Run gh pr view
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "pr",
             "view",
@@ -1653,7 +1686,6 @@ pub async fn get_github_pr(
             "--json",
             "number,title,body,state,headRefName,baseRefName,isDraft,createdAt,author,url,labels,comments,reviews",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -1730,9 +1762,8 @@ query($owner: String!, $repo: String!, $prNumber: Int!) {
         format!("query={query}"),
     ];
 
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args(&args)
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh api graphql: {e}"))?;
 
@@ -1860,9 +1891,8 @@ pub fn get_pr_diff(
 ) -> Result<String, String> {
     log::debug!("Fetching diff for PR #{pr_number} in {project_path}");
 
-    let output = silent_command(gh_binary)
+    let output = gh_command(gh_binary, project_path)
         .args(["pr", "diff", &pr_number.to_string(), "--color", "never"])
-        .current_dir(project_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr diff: {e}"))?;
 
@@ -2509,9 +2539,8 @@ pub async fn list_dependabot_alerts(
         repo_id.owner, repo_id.repo, state_arg
     );
 
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args(["api", &endpoint])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -2558,9 +2587,8 @@ pub async fn get_dependabot_alert(
         repo_id.owner, repo_id.repo
     );
 
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args(["api", &endpoint])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -2605,9 +2633,8 @@ pub async fn load_security_alert_context(
             "/repos/{}/{}/dependabot/alerts/{alert_number}",
             repo_id.owner, repo_id.repo
         );
-        let output = silent_command(&gh)
+        let output = gh_command(&gh, &project_path)
             .args(["api", &endpoint])
-            .current_dir(&project_path)
             .output()
             .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -2832,9 +2859,8 @@ pub async fn list_repository_advisories(
         endpoint.push_str(&format!("&state={s}"));
     }
 
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args(["api", &endpoint])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -2881,9 +2907,8 @@ pub async fn get_repository_advisory(
         repo_id.owner, repo_id.repo
     );
 
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args(["api", &endpoint])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -2928,9 +2953,8 @@ pub async fn load_advisory_context(
             "/repos/{}/{}/security-advisories/{ghsa_id}",
             repo_id.owner, repo_id.repo
         );
-        let output = silent_command(&gh)
+        let output = gh_command(&gh, &project_path)
             .args(["api", &endpoint])
-            .current_dir(&project_path)
             .output()
             .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -3127,6 +3151,18 @@ mod tests {
             start_line: Some(10),
             line: Some(12),
         }
+    }
+
+    #[test]
+    fn parses_github_labels_response() {
+        let labels = parse_github_labels_response(
+            r##"[{"name":"bug","color":"d73a4a"},{"name":"help wanted","color":"008672"}]"##,
+        )
+        .expect("labels");
+
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[0].name, "bug");
+        assert_eq!(labels[1].color, "008672");
     }
 
     #[test]

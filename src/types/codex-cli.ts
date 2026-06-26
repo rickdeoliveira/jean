@@ -50,6 +50,7 @@ export interface CodexUsageSnapshot {
   weekly: CodexUsageWindowSnapshot | null
   reviews: CodexUsageWindowSnapshot | null
   creditsRemaining: number | null
+  rateLimitReachedType: string | null
   modelLimits: CodexAdditionalUsageLimit[]
   fetchedAt: number
 }

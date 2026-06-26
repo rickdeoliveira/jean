@@ -175,7 +175,7 @@ export const SessionListRow = forwardRef<HTMLDivElement, SessionCardProps>(
                     }}
                   >
                     YOLO
-                    <Kbd className="ml-1 h-3.5 text-[9px] bg-destructive-foreground/20 text-destructive-foreground">
+                    <Kbd className="ml-1 h-3.5 text-[9px] bg-white/20 text-white">
                       {formatShortcutDisplay(
                         DEFAULT_KEYBINDINGS.approve_plan_yolo
                       )}
@@ -191,7 +191,7 @@ export const SessionListRow = forwardRef<HTMLDivElement, SessionCardProps>(
                       }}
                     >
                       Clear Context and yolo
-                      <Kbd className="ml-1 h-3.5 text-[9px] bg-destructive-foreground/20 text-destructive-foreground">
+                      <Kbd className="ml-1 h-3.5 text-[9px] bg-white/20 text-white">
                         {formatShortcutDisplay(
                           DEFAULT_KEYBINDINGS.approve_plan_clear_context
                         )}

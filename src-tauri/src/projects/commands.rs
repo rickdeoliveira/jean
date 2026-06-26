@@ -39,11 +39,11 @@ use super::release_notes::{
 };
 use super::storage::{get_project_worktrees_dir, load_projects_data, save_projects_data};
 use super::types::{
-    JeanConfig, MergeType, Project, SessionType, Worktree, WorktreeArchivedEvent,
-    WorktreeBranchExistsEvent, WorktreeCreateErrorEvent, WorktreeCreatedEvent,
-    WorktreeCreatingEvent, WorktreeDeleteErrorEvent, WorktreeDeletedEvent, WorktreeDeletingEvent,
-    WorktreePathExistsEvent, WorktreePermanentlyDeletedEvent, WorktreeSetupCompleteEvent,
-    WorktreeUnarchivedEvent,
+    JeanConfig, MergeType, Project, ProjectAutoFixSettings, SessionType, Worktree,
+    WorktreeArchivedEvent, WorktreeBranchExistsEvent, WorktreeCreateErrorEvent,
+    WorktreeCreatedEvent, WorktreeCreatingEvent, WorktreeDeleteErrorEvent, WorktreeDeletedEvent,
+    WorktreeDeletingEvent, WorktreeOrigin, WorktreePathExistsEvent,
+    WorktreePermanentlyDeletedEvent, WorktreeSetupCompleteEvent, WorktreeUnarchivedEvent,
 };
 use crate::chat::types::LabelData;
 use crate::claude_cli::resolve_cli_binary;
@@ -52,6 +52,11 @@ use crate::codex_cli::resolve_cli_binary as resolve_codex_cli_binary;
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::http_server::EmitExt;
 use crate::platform::silent_command;
+use crate::platform::wsl_aware_command;
+
+fn gh_command(gh: &Path, project_path: &str) -> std::process::Command {
+    crate::platform::resolved_cli_command(gh, Some(Path::new(project_path)))
+}
 
 static RELEASE_NOTES_PAREN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\(([^)]*)\)").expect("valid release notes parenthetical regex"));
@@ -288,18 +293,16 @@ fn take_review_process_pid(review_run_id: &str) -> Option<u32> {
 /// Check if git global user identity is configured
 #[tauri::command]
 pub async fn check_git_identity() -> Result<GitIdentity, String> {
-    let name = silent_command("git")
+    let name = wsl_aware_command("git", Some(&std::env::temp_dir()))
         .args(["config", "--global", "user.name"])
-        .current_dir(std::env::temp_dir())
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let email = silent_command("git")
+    let email = wsl_aware_command("git", Some(&std::env::temp_dir()))
         .args(["config", "--global", "user.email"])
-        .current_dir(std::env::temp_dir())
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -312,9 +315,8 @@ pub async fn check_git_identity() -> Result<GitIdentity, String> {
 /// Set git global user identity
 #[tauri::command]
 pub async fn set_git_identity(name: String, email: String) -> Result<(), String> {
-    let name_output = silent_command("git")
+    let name_output = wsl_aware_command("git", Some(&std::env::temp_dir()))
         .args(["config", "--global", "user.name", &name])
-        .current_dir(std::env::temp_dir())
         .output()
         .map_err(|e| format!("Failed to set git user.name: {e}"))?;
 
@@ -323,9 +325,8 @@ pub async fn set_git_identity(name: String, email: String) -> Result<(), String>
         return Err(format!("Failed to set git user.name: {stderr}"));
     }
 
-    let email_output = silent_command("git")
+    let email_output = wsl_aware_command("git", Some(&std::env::temp_dir()))
         .args(["config", "--global", "user.email", &email])
-        .current_dir(std::env::temp_dir())
         .output()
         .map_err(|e| format!("Failed to set git user.email: {e}"))?;
 
@@ -499,6 +500,7 @@ pub async fn add_project(
         linear_api_key: None,
         linear_team_id: None,
         linked_project_ids: Vec::new(),
+        auto_fix_settings: None,
     };
 
     data.add_project(project.clone());
@@ -541,9 +543,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
 
     if already_git_repo {
         // Check if it has any commits (HEAD exists)
-        let has_commits = silent_command("git")
+        let has_commits = wsl_aware_command("git", Some(Path::new(&path)))
             .args(["rev-parse", "HEAD"])
-            .current_dir(&path)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
@@ -557,9 +558,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
 
     // Run git init (skip if already a git repo)
     if !already_git_repo {
-        let output = silent_command("git")
+        let output = wsl_aware_command("git", Some(Path::new(&path)))
             .args(["init"])
-            .current_dir(&path)
             .output()
             .map_err(|e| format!("Failed to run git init: {e}"))?;
 
@@ -570,9 +570,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
     }
 
     // Stage all files
-    let add_output = silent_command("git")
+    let add_output = wsl_aware_command("git", Some(Path::new(&path)))
         .args(["add", "."])
-        .current_dir(&path)
         .output()
         .map_err(|e| format!("Failed to run git add: {e}"))?;
 
@@ -582,9 +581,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
     }
 
     // Create initial commit
-    let commit_output = silent_command("git")
+    let commit_output = wsl_aware_command("git", Some(Path::new(&path)))
         .args(["commit", "-m", "Initial commit"])
-        .current_dir(&path)
         .output()
         .map_err(|e| format!("Failed to run git commit: {e}"))?;
 
@@ -596,9 +594,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
         if stderr.contains("nothing to commit") || stdout.contains("nothing to commit") {
             log::warn!("No files to commit, creating empty initial commit");
             // Create an empty commit with --allow-empty
-            let empty_commit = silent_command("git")
+            let empty_commit = wsl_aware_command("git", Some(Path::new(&path)))
                 .args(["commit", "--allow-empty", "-m", "Initial commit"])
-                .current_dir(&path)
                 .output()
                 .map_err(|e| format!("Failed to create empty commit: {e}"))?;
 
@@ -662,6 +659,7 @@ pub async fn init_project(
         linear_api_key: None,
         linear_team_id: None,
         linked_project_ids: Vec::new(),
+        auto_fix_settings: None,
     };
 
     data.add_project(project.clone());
@@ -717,6 +715,7 @@ pub async fn clone_project(
         linear_api_key: None,
         linear_team_id: None,
         linked_project_ids: Vec::new(),
+        auto_fix_settings: None,
     };
 
     data.add_project(project.clone());
@@ -1008,6 +1007,7 @@ fn truncate_utf8(input: &str, max_bytes: usize) -> (String, bool) {
 /// - `worktree:created` - Emitted when creation completes successfully
 /// - `worktree:error` - Emitted if creation fails
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_worktree(
     app: AppHandle,
     project_id: String,
@@ -1019,10 +1019,12 @@ pub async fn create_worktree(
     linear_context: Option<LinearIssueContext>,
     custom_name: Option<String>,
     auto_open_in_jean: Option<bool>,
+    origin: Option<String>,
 ) -> Result<Worktree, String> {
     log::trace!("Creating worktree for project: {project_id}");
 
     let auto_open_in_jean = auto_open_in_jean.unwrap_or(true);
+    let worktree_origin = parse_worktree_origin(origin.as_deref())?;
 
     let data = load_projects_data(&app)?;
 
@@ -1159,6 +1161,7 @@ pub async fn create_worktree(
         issue_number: issue_context.as_ref().map(|ctx| ctx.number as u64),
         security_alert_number: security_context.as_ref().map(|ctx| ctx.number as u64),
         advisory_ghsa_id: advisory_context.as_ref().map(|ctx| ctx.ghsa_id.clone()),
+        origin: worktree_origin.clone(),
         auto_open_in_jean,
     };
     if let Err(e) = app.emit_all("worktree:creating", &creating_event) {
@@ -1206,6 +1209,7 @@ pub async fn create_worktree(
         pr_push_remote: None,
         pr_push_branch: None,
         order: 0, // Placeholder, actual order is set in background thread
+        origin: worktree_origin.clone(),
         archived_at: None,
         labels: Vec::new(),
         label: None,
@@ -1216,6 +1220,7 @@ pub async fn create_worktree(
     let app_clone = app.clone();
     let project_path = project.path.clone();
     let project_name = project.name.clone();
+    let project_worktrees_dir_clone = project_worktrees_dir.clone();
     let worktree_id_clone = worktree_id.clone();
     let project_id_clone = project_id.clone();
     let name_clone = name.clone();
@@ -1226,6 +1231,7 @@ pub async fn create_worktree(
     let security_context_clone = security_context.clone();
     let advisory_context_clone = advisory_context.clone();
     let linear_context_clone = linear_context.clone();
+    let worktree_origin_clone = worktree_origin.clone();
 
     // Spawn background thread for git operations
     thread::spawn(move || {
@@ -1235,6 +1241,8 @@ pub async fn create_worktree(
         let panic_app = app_clone.clone();
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let mut name_clone = name_clone;
+            let mut worktree_path_clone = worktree_path_clone;
             log::trace!("Background: Creating git worktree {name_clone} at {worktree_path_clone}");
 
             // Fetch base branch if enabled, use origin/<base> for up-to-date start point.
@@ -1262,6 +1270,52 @@ pub async fn create_worktree(
             } else {
                 format!("origin/{base_clone}")
             };
+
+            if should_auto_resolve_worktree_conflict(&worktree_origin_clone) {
+                let mut resolved = false;
+                for _ in 0..10 {
+                    let worktree_path = std::path::Path::new(&worktree_path_clone);
+                    let has_path_conflict = worktree_path.exists();
+                    let has_branch_conflict = pr_context_clone.is_none()
+                        && git::branch_exists(&project_path, &name_clone);
+
+                    if !has_path_conflict && !has_branch_conflict {
+                        resolved = true;
+                        break;
+                    }
+
+                    let data = load_projects_data(&app_clone).ok();
+                    let suggested_name = generate_unique_suffix_name(
+                        &name_clone,
+                        &project_path,
+                        &project_id_clone,
+                        data.as_ref(),
+                    );
+                    log::warn!(
+                        "Background: Auto-fix worktree conflict for {name_clone}; retrying with {suggested_name}"
+                    );
+                    name_clone = suggested_name;
+                    let next_path =
+                        project_worktrees_dir_clone.join(sanitize_folder_name(&name_clone));
+                    let Some(next_path_str) = next_path.to_str() else {
+                        log::error!("Background: Invalid auto-fix worktree path");
+                        break;
+                    };
+                    worktree_path_clone = next_path_str.to_string();
+                }
+
+                if !resolved {
+                    let error_event = WorktreeCreateErrorEvent {
+                        id: worktree_id_clone,
+                        project_id: project_id_clone,
+                        error: "Failed to auto-resolve worktree name conflict".to_string(),
+                    };
+                    if let Err(e) = app_clone.emit_all("worktree:error", &error_event) {
+                        log::error!("Failed to emit worktree:error event: {e}");
+                    }
+                    return;
+                }
+            }
 
             // Check if path already exists
             let worktree_path = std::path::Path::new(&worktree_path_clone);
@@ -1299,6 +1353,7 @@ pub async fn create_worktree(
                     issue_context: issue_context_clone.clone(),
                     security_context: security_context_clone.clone(),
                     advisory_context: advisory_context_clone.clone(),
+                    origin: worktree_origin_clone.clone(),
                 };
                 if let Err(e) = app_clone.emit_all("worktree:path_exists", &path_exists_event) {
                     log::error!("Failed to emit worktree:path_exists event: {e}");
@@ -1361,6 +1416,7 @@ pub async fn create_worktree(
                             pr_context: pr_context_clone.clone(),
                             security_context: security_context_clone.clone(),
                             advisory_context: advisory_context_clone.clone(),
+                            origin: worktree_origin_clone.clone(),
                         };
                         if let Err(e) =
                             app_clone.emit_all("worktree:branch_exists", &branch_exists_event)
@@ -1762,6 +1818,7 @@ pub async fn create_worktree(
                     pr_push_remote: None,
                     pr_push_branch: None,
                     order: max_order + 1,
+                    origin: worktree_origin_clone.clone(),
                     archived_at: None,
                     labels: Vec::new(),
                     label: None,
@@ -1868,6 +1925,19 @@ pub async fn create_worktree(
     Ok(pending_worktree)
 }
 
+fn parse_worktree_origin(origin: Option<&str>) -> Result<Option<WorktreeOrigin>, String> {
+    match origin {
+        Some("auto_fix") => Ok(Some(WorktreeOrigin::AutoFix)),
+        Some("manual") => Ok(Some(WorktreeOrigin::Manual)),
+        None => Ok(None),
+        Some(other) => Err(format!("Unsupported worktree origin: {other}")),
+    }
+}
+
+fn should_auto_resolve_worktree_conflict(origin: &Option<WorktreeOrigin>) -> bool {
+    matches!(origin, Some(WorktreeOrigin::AutoFix))
+}
+
 /// Create a worktree from an existing branch (runs in background)
 ///
 /// This command is used when a branch already exists and the user wants to
@@ -1925,6 +1995,7 @@ pub async fn create_worktree_from_existing_branch(
         issue_number: issue_context.as_ref().map(|ctx| ctx.number as u64),
         security_alert_number: security_context.as_ref().map(|ctx| ctx.number as u64),
         advisory_ghsa_id: advisory_context.as_ref().map(|ctx| ctx.ghsa_id.clone()),
+        origin: None,
         auto_open_in_jean,
     };
     if let Err(e) = app.emit_all("worktree:creating", &creating_event) {
@@ -1972,6 +2043,7 @@ pub async fn create_worktree_from_existing_branch(
         pr_push_remote: None,
         pr_push_branch: None,
         order: 0, // Placeholder, actual order is set in background thread
+        origin: None,
         archived_at: None,
         labels: Vec::new(),
         label: None,
@@ -2038,6 +2110,7 @@ pub async fn create_worktree_from_existing_branch(
                     issue_context: issue_context_clone.clone(),
                     security_context: security_context_clone.clone(),
                     advisory_context: advisory_context_clone.clone(),
+                    origin: None,
                 };
                 if let Err(e) = app_clone.emit_all("worktree:path_exists", &path_exists_event) {
                     log::error!("Failed to emit worktree:path_exists event: {e}");
@@ -2360,6 +2433,7 @@ pub async fn create_worktree_from_existing_branch(
                     pr_push_remote: None,
                     pr_push_branch: None,
                     order: max_order + 1,
+                    origin: None,
                     archived_at: None,
                     labels: Vec::new(),
                     label: None,
@@ -2551,6 +2625,7 @@ pub async fn checkout_pr(
         issue_number: None,
         security_alert_number: None,
         advisory_ghsa_id: None,
+        origin: None,
         auto_open_in_jean: true,
     };
     if let Err(e) = app.emit_all("worktree:creating", &creating_event) {
@@ -2595,6 +2670,7 @@ pub async fn checkout_pr(
         pr_push_remote: None,
         pr_push_branch: None,
         order: 0, // Will be updated in background thread
+        origin: None,
         archived_at: None,
         labels: Vec::new(),
         label: None,
@@ -2919,6 +2995,7 @@ pub async fn checkout_pr(
                     pr_push_remote: None,
                     pr_push_branch: None,
                     order: max_order + 1,
+                    origin: None,
                     archived_at: None,
                     labels: Vec::new(),
                     label: None,
@@ -3257,6 +3334,7 @@ pub async fn create_base_session(app: AppHandle, project_id: String) -> Result<W
         pr_push_remote: None,
         pr_push_branch: None,
         order: 0, // Base sessions are always first
+        origin: None,
         archived_at: None,
         labels: Vec::new(),
         label: None,
@@ -3671,6 +3749,7 @@ pub async fn import_worktree(
         pr_push_remote: None,
         pr_push_branch: None,
         order: max_order + 1,
+        origin: None,
         archived_at: None,
         labels: Vec::new(),
         label: None,
@@ -4715,6 +4794,7 @@ pub async fn update_project_settings(
     linear_api_key: Option<String>,
     linear_team_id: Option<String>,
     linked_project_ids: Option<Vec<String>>,
+    auto_fix_settings: Option<Option<ProjectAutoFixSettings>>,
 ) -> Result<Project, String> {
     log::trace!("Updating settings for project: {project_id}");
 
@@ -4792,6 +4872,11 @@ pub async fn update_project_settings(
         } else {
             Some(team_id)
         };
+    }
+
+    if let Some(settings) = auto_fix_settings {
+        log::trace!("Updating Mr. Robot settings: {settings:?}");
+        project.auto_fix_settings = settings;
     }
 
     // Handle linked_project_ids with bidirectional sync
@@ -5016,9 +5101,8 @@ pub async fn get_review_prompt(
     let current_branch = git::get_current_branch(&worktree_path)?;
 
     // Get the full git diff (origin/target...HEAD)
-    let diff_output = silent_command("git")
+    let diff_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["diff", &format!("origin/{target_branch}...HEAD")])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run git diff: {e}"))?;
 
@@ -5030,13 +5114,12 @@ pub async fn get_review_prompt(
     };
 
     // Get the commit history (origin/target..HEAD)
-    let log_output = silent_command("git")
+    let log_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args([
             "log",
             &format!("origin/{target_branch}..HEAD"),
             "--pretty=format:%h %s",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run git log: {e}"))?;
 
@@ -5048,9 +5131,8 @@ pub async fn get_review_prompt(
     };
 
     // Get uncommitted changes (staged + unstaged for tracked files)
-    let uncommitted_output = silent_command("git")
+    let uncommitted_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["diff", "HEAD"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run git diff HEAD: {e}"))?;
 
@@ -5061,9 +5143,8 @@ pub async fn get_review_prompt(
     };
 
     // Get list of untracked files
-    let untracked_output = silent_command("git")
+    let untracked_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to list untracked files: {e}"))?;
 
@@ -5293,7 +5374,7 @@ pub async fn link_worktree_pr(
     log::trace!("Linking PR #{pr_number} to worktree {worktree_id}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
@@ -5301,7 +5382,6 @@ pub async fn link_worktree_pr(
             "--json",
             "number,url,title",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -5359,7 +5439,7 @@ pub async fn detect_open_pr_for_branch(
     let current_branch = git::get_current_branch(&worktree_path)?;
     let repo = get_repo_identifier(&worktree_path)?;
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args([
             "api",
             "--method",
@@ -5372,7 +5452,6 @@ pub async fn detect_open_pr_for_branch(
             "-f",
             "per_page=1",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -5416,9 +5495,8 @@ pub async fn detect_and_link_pr(
     log::trace!("Detecting PR for worktree {worktree_id} at {worktree_path}");
 
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args(["pr", "view", "--json", "number,url,title"])
-        .current_dir(&worktree_path)
         .output();
 
     if let Ok(view_out) = view_output {
@@ -5490,6 +5568,7 @@ fn append_coderabbit_review_label(labels: &mut Vec<LabelData>) {
     labels.push(LabelData {
         name: CODERABBIT_REVIEW_LABEL_NAME.to_string(),
         color: CODERABBIT_REVIEW_LABEL_COLOR.to_string(),
+        pinned: false,
     });
 }
 
@@ -5506,7 +5585,7 @@ pub async fn trigger_coderabbit_pr_review(
     let gh = resolve_gh_binary(&app);
     let target_pr_number =
         pr_number.ok_or_else(|| "Open or link a PR in Jean first".to_string())?;
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
@@ -5514,7 +5593,6 @@ pub async fn trigger_coderabbit_pr_review(
             "--json",
             "number,url",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -5528,7 +5606,7 @@ pub async fn trigger_coderabbit_pr_review(
     let pr_url = view_json["url"].as_str().unwrap_or("").to_string();
 
     let comment_body = "@coderabbitai review".to_string();
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "comment",
@@ -5536,7 +5614,6 @@ pub async fn trigger_coderabbit_pr_review(
             "--body",
             &comment_body,
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr comment: {e}"))?;
 
@@ -5740,16 +5817,15 @@ pub async fn revert_file(
     file_path: String,
     file_status: String,
 ) -> Result<(), String> {
-    use crate::platform::silent_command;
+    use crate::platform::wsl_aware_command;
 
     log::trace!("Reverting file {file_path} (status: {file_status}) in {worktree_path}");
 
     match file_status.as_str() {
         "modified" | "deleted" => {
             // Restore file to HEAD state (unstage + restore working tree)
-            let output = silent_command("git")
+            let output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
                 .args(["checkout", "HEAD", "--", &file_path])
-                .current_dir(&worktree_path)
                 .output()
                 .map_err(|e| format!("Failed to run git checkout: {e}"))?;
 
@@ -5760,9 +5836,8 @@ pub async fn revert_file(
         }
         "added" => {
             // Remove untracked/newly-added file; also unstage if staged
-            let _ = silent_command("git")
+            let _ = wsl_aware_command("git", Some(Path::new(&worktree_path)))
                 .args(["reset", "HEAD", "--", &file_path])
-                .current_dir(&worktree_path)
                 .output();
 
             let target = std::path::Path::new(&worktree_path).join(&file_path);
@@ -5774,17 +5849,15 @@ pub async fn revert_file(
             // For renamed files, restore the old path and remove the new one
             // The file_path for renamed files is the new path
             // First, try to restore via checkout which handles the rename
-            let output = silent_command("git")
+            let output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
                 .args(["checkout", "HEAD", "--", &file_path])
-                .current_dir(&worktree_path)
                 .output()
                 .map_err(|e| format!("Failed to run git checkout: {e}"))?;
 
             if !output.status.success() {
                 // If checkout fails (new name doesn't exist at HEAD), reset index
-                let _ = silent_command("git")
+                let _ = wsl_aware_command("git", Some(Path::new(&worktree_path)))
                     .args(["reset", "HEAD", "--", &file_path])
-                    .current_dir(&worktree_path)
                     .output();
 
                 let target = std::path::Path::new(&worktree_path).join(&file_path);
@@ -5957,6 +6030,154 @@ fn extract_structured_output(output: &str) -> Result<String, String> {
     Err("No structured output found in Claude response".to_string())
 }
 
+fn extract_claude_stream_error(stdout: &str) -> Option<String> {
+    let mut assistant_text = String::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parsed: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if parsed.get("type").and_then(|t| t.as_str()) == Some("result")
+            && parsed.get("is_error").and_then(|v| v.as_bool()) == Some(true)
+        {
+            if parsed.get("subtype").and_then(|v| v.as_str()) == Some("error_max_turns") {
+                return Some("reached max turns before producing structured output".to_string());
+            }
+
+            if let Some(result) = parsed.get("result").and_then(|v| v.as_str()) {
+                let result = result.trim();
+                if !result.is_empty() {
+                    return Some(result.to_string());
+                }
+            }
+        }
+
+        if parsed.get("type").and_then(|t| t.as_str()) == Some("assistant") {
+            if let Some(content) = parsed
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+            {
+                for block in content {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                            assistant_text.push_str(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let assistant_text = assistant_text.trim();
+    let lower = assistant_text.to_lowercase();
+    let looks_like_error = lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("authenticate")
+        || lower.contains("unauthorized");
+
+    if assistant_text.is_empty() || !looks_like_error {
+        None
+    } else {
+        Some(assistant_text.to_string())
+    }
+}
+
+fn truncate_error_context(value: &str) -> String {
+    const MAX_ERROR_CHARS: usize = 600;
+    let value = value.trim();
+    if value.chars().count() <= MAX_ERROR_CHARS {
+        value.to_string()
+    } else {
+        format!(
+            "{}…",
+            value.chars().take(MAX_ERROR_CHARS).collect::<String>()
+        )
+    }
+}
+
+fn format_claude_cli_failure(stderr: &str, stdout: &str) -> String {
+    if let Some(error) = extract_claude_stream_error(stdout) {
+        return format!("Claude CLI failed: {error}");
+    }
+
+    let stderr = stderr.trim();
+    if !stderr.is_empty() {
+        return format!("Claude CLI failed: {}", truncate_error_context(stderr));
+    }
+
+    let stdout = stdout.trim();
+    if !stdout.is_empty() {
+        return format!("Claude CLI failed: {}", truncate_error_context(stdout));
+    }
+
+    "Claude CLI failed with no output".to_string()
+}
+
+/// Extract the first complete, balanced top-level JSON object from arbitrary
+/// text (PI/other CLIs may wrap JSON in prose). Brace-counts while respecting
+/// string literals and escapes, so braces inside strings don't break bounds.
+fn extract_json_object_from_text(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("Empty response from backend".to_string());
+    }
+
+    let mut start: Option<usize> = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in trimmed.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(idx);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth == 0 {
+                    continue;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    let s = start.ok_or_else(|| "Invalid JSON object start".to_string())?;
+                    let candidate = &trimmed[s..=idx];
+                    if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
+                        return Ok(candidate.to_string());
+                    }
+                    return Err("Found JSON-like object but failed to parse".to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Err("No valid JSON object found in response".to_string())
+}
+
 fn build_claude_structured_output_args(model: &str, tools: &str, schema: &str) -> Vec<String> {
     vec![
         "--print".to_string(),
@@ -5970,12 +6191,12 @@ fn build_claude_structured_output_args(model: &str, tools: &str, schema: &str) -
         "--no-session-persistence".to_string(),
         "--tools".to_string(),
         tools.to_string(),
+        "--tools".to_string(),
+        "default".to_string(),
         "--max-turns".to_string(),
-        "2".to_string(),
+        "3".to_string(),
         "--json-schema".to_string(),
         schema.to_string(),
-        "--permission-mode".to_string(),
-        "plan".to_string(),
     ]
 }
 
@@ -6014,13 +6235,12 @@ fn truncate_diff_at_file_boundaries(diff: &str, max_chars: usize) -> String {
 
 /// Get git diff between current branch and target branch
 fn get_branch_diff(repo_path: &str, target_branch: &str, head_ref: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "diff",
             "-U10",
             &format!("origin/{target_branch}...{head_ref}"),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get git diff: {e}"))?;
 
@@ -6040,13 +6260,12 @@ fn get_branch_commits(
     target_branch: &str,
     head_ref: &str,
 ) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "log",
             "--oneline",
             &format!("origin/{target_branch}..{head_ref}"),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get git log: {e}"))?;
 
@@ -6064,13 +6283,12 @@ fn count_branch_commits(
     target_branch: &str,
     head_ref: &str,
 ) -> Result<u32, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "rev-list",
             "--count",
             &format!("origin/{target_branch}..{head_ref}"),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to count commits: {e}"))?;
 
@@ -6247,9 +6465,8 @@ pub async fn create_pr_with_ai_content(
             }
         };
 
-        let commit_output = silent_command("git")
+        let commit_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
             .args(["commit", "-m", &commit_msg])
-            .current_dir(&worktree_path)
             .output()
             .map_err(|e| format!("Failed to commit: {e}"))?;
 
@@ -6264,9 +6481,8 @@ pub async fn create_pr_with_ai_content(
 
     // Push the branch
     log::trace!("Pushing branch to remote");
-    let push_output = silent_command("git")
+    let push_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["push", "-u", "origin", "HEAD"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to push: {e}"))?;
 
@@ -6279,9 +6495,8 @@ pub async fn create_pr_with_ai_content(
 
     // Check if a PR already exists for this branch before spending time/tokens on AI generation
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args(["pr", "view", "--json", "number,url,title"])
-        .current_dir(&worktree_path)
         .output();
 
     if let Ok(view_out) = view_output {
@@ -6414,7 +6629,7 @@ pub async fn create_pr_with_ai_content(
 
     // Create the PR using gh CLI
     log::trace!("Creating PR with gh CLI");
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "create",
@@ -6425,7 +6640,6 @@ pub async fn create_pr_with_ai_content(
             "--body",
             &pr_content.body,
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr create: {e}"))?;
 
@@ -6433,9 +6647,8 @@ pub async fn create_pr_with_ai_content(
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("already exists") {
             // Try to look up the existing PR and link it to the worktree
-            let view_output = silent_command(&gh)
+            let view_output = gh_command(&gh, &worktree_path)
                 .args(["pr", "view", "--json", "number,url,title"])
-                .current_dir(&worktree_path)
                 .output();
 
             if let Ok(view_out) = view_output {
@@ -6511,14 +6724,13 @@ pub async fn merge_github_pr(
     let gh = resolve_gh_binary(&app);
 
     // 1. Check PR status and mergeability
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
             "--json",
             "number,state,mergeable,mergeStateStatus,url,title",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -6549,9 +6761,8 @@ pub async fn merge_github_pr(
     let title = pr_info["title"].as_str().unwrap_or("").to_string();
 
     // 2. Merge the PR
-    let merge_output = silent_command(&gh)
+    let merge_output = gh_command(&gh, &worktree_path)
         .args(["pr", "merge", "--merge"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr merge: {e}"))?;
 
@@ -6665,6 +6876,42 @@ fn generate_pr_content_from_inputs(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating PR content with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(repo_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: PrContentResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI PR content JSON: {e}, content: {json_str}");
+            format!("Failed to parse PR content: {e}")
+        })?;
+        response.body = augment_pr_references_in_body(&response.body, related_pr_issue_refs);
+        return Ok(response);
+    }
+
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating PR content with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(repo_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: PrContentResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok PR content JSON: {e}, content: {json_str}");
+            format!("Failed to parse PR content: {e}")
+        })?;
+        response.body = augment_pr_references_in_body(&response.body, related_pr_issue_refs);
+        return Ok(response);
+    }
+
     log::trace!("Generating PR content with Claude CLI (JSON schema)");
 
     let cli_path = resolve_cli_binary(app);
@@ -6672,7 +6919,7 @@ fn generate_pr_content_from_inputs(
         return Err("Claude CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
@@ -6715,11 +6962,7 @@ fn generate_pr_content_from_inputs(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -6741,18 +6984,20 @@ fn generate_pr_content_from_inputs(
 // =============================================================================
 
 /// JSON schema for structured commit message generation
-const COMMIT_MESSAGE_SCHEMA: &str = r#"{"type":"object","properties":{"message":{"type":"string","description":"Commit message using Conventional Commits format. First line: type(scope): description (max 72 chars). Types: feat, fix, docs, style, refactor, perf, test, chore. Followed by blank line and optional body explaining what and why."}},"required":["message"],"additionalProperties":false}"#;
+const COMMIT_MESSAGE_SCHEMA: &str = r#"{"type":"object","properties":{"message":{"type":"string","description":"Commit message using Conventional Commits format. First line: type(scope): description (max 72 chars). Types: feat, fix, docs, style, refactor, perf, test, chore, ci. Followed by blank line and optional body explaining what and why."}},"required":["message"],"additionalProperties":false}"#;
 
 /// Prompt template for commit message generation
 const COMMIT_MESSAGE_PROMPT: &str = r#"Generate a conventional commit message for these staged changes.
 
 Rules:
-- Output a commit message about the actual staged code changes only.
-- Do not describe this prompt, commit-message guidance, instructions, inspection, or the act of generating a commit message.
-- Avoid vague subjects like "update files", "inspect changes", "adjust code", or "misc changes".
+- Output only the commit message text.
+- Describe the actual staged code changes only.
+- Base the subject on the staged diff and file summary, not on recent commits, repository instructions, agent skills, or this prompt.
+- Do not describe prompt text, commit-message guidance, instructions, inspection, skills, or the act of generating a commit message.
+- Avoid vague/meta subjects like "update files", "inspect changes", "inspect staged changes", "inspect commit-message skill", "generate commit message", "adjust code", or "misc changes".
 - Use a specific Conventional Commits subject: type(optional-scope): concrete behavior changed.
 - First line must be 72 characters or fewer.
-- If prompt/config files changed, name the product behavior affected, not "guidance".
+- If prompt/config files changed, name the user-facing behavior affected, not "guidance" or "prompt".
 
 Files changed:
 {diff_stat}
@@ -6760,10 +7005,10 @@ Files changed:
 Git status:
 {status}
 
-Diff:
+Staged diff:
 {diff}
 
-Recent commits (style reference):
+Recent commits (style reference only — do not summarize these commits):
 {recent_commits}"#;
 
 /// Structured response from commit message generation
@@ -6774,6 +7019,17 @@ struct CommitMessageResponse {
 
 fn commit_message_subject(message: &str) -> &str {
     message.lines().next().unwrap_or("").trim()
+}
+
+fn normalize_commit_subject_for_meta_checks(subject: &str) -> String {
+    subject
+        .to_lowercase()
+        .chars()
+        .map(|c| if c == '-' || c == '_' { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn validate_commit_message(message: &str, _diff_stat: &str, _status: &str) -> Result<(), String> {
@@ -6787,7 +7043,7 @@ fn validate_commit_message(message: &str, _diff_stat: &str, _status: &str) -> Re
     }
 
     static CONVENTIONAL_COMMIT_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(feat|fix|docs|style|refactor|perf|test|chore)(\([a-z0-9._-]+\))?!?: .+")
+        Regex::new(r"^[a-z][a-z0-9-]*(\([a-z0-9._-]+\))?!?: .+")
             .expect("valid conventional commit regex")
     });
     if !CONVENTIONAL_COMMIT_RE.is_match(subject) {
@@ -6795,15 +7051,27 @@ fn validate_commit_message(message: &str, _diff_stat: &str, _status: &str) -> Re
     }
 
     let lower_subject = subject.to_lowercase();
+    let normalized_subject = normalize_commit_subject_for_meta_checks(subject);
+    let normalized_description = normalized_subject
+        .split_once(": ")
+        .map(|(_, description)| description)
+        .unwrap_or(normalized_subject.as_str());
     let meta_terms = [
         "commit message guidance",
         "commit guidance",
         "message guidance",
         "commit message prompt",
+        "commit message skill",
         "prompt instructions",
         "inspect commit message",
+        "inspect staged changes",
+        "staged changes for commit message",
+        "generate commit message",
     ];
-    if meta_terms.iter().any(|term| lower_subject.contains(term)) {
+    if meta_terms
+        .iter()
+        .any(|term| normalized_subject.contains(term))
+    {
         return Err(
             "commit message is meta/generic instead of describing staged changes".to_string(),
         );
@@ -6812,7 +7080,27 @@ fn validate_commit_message(message: &str, _diff_stat: &str, _status: &str) -> Re
     let prompt_like_terms = ["guidance", "prompt", "instructions"];
     if prompt_like_terms
         .iter()
-        .any(|term| lower_subject.contains(term))
+        .any(|term| normalized_subject.contains(term))
+    {
+        return Err(
+            "commit message is meta/generic instead of describing staged changes".to_string(),
+        );
+    }
+
+    let meta_actions = ["inspect", "review", "summarize", "describe", "generate"];
+    let meta_objects = [
+        "commit message",
+        "staged changes",
+        "diff",
+        "prompt",
+        "skill",
+    ];
+    if meta_actions
+        .iter()
+        .any(|action| normalized_description.starts_with(action))
+        && meta_objects
+            .iter()
+            .any(|object| normalized_description.contains(object))
     {
         return Err(
             "commit message is meta/generic instead of describing staged changes".to_string(),
@@ -6861,9 +7149,8 @@ pub struct CreateCommitResponse {
 /// Check if there are unpushed commits (commits ahead of upstream).
 /// Returns true if there are unpushed commits OR if there's no upstream (safe fallback).
 fn has_unpushed_commits(repo_path: &str) -> Result<bool, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-list", "--count", "@{u}..HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to check unpushed commits: {e}"))?;
 
@@ -6879,9 +7166,8 @@ fn has_unpushed_commits(repo_path: &str) -> Result<bool, String> {
 
 /// Get git status output
 fn get_git_status(repo_path: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["status", "--short"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get git status: {e}"))?;
 
@@ -6890,9 +7176,8 @@ fn get_git_status(repo_path: &str) -> Result<String, String> {
 
 /// Get compact diff stat summary (e.g. "src/main.rs | 5 ++--")
 fn get_staged_diff_stat(repo_path: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["diff", "--cached", "--stat"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get staged diff stat: {e}"))?;
 
@@ -6910,9 +7195,8 @@ const DIFF_MAX_CHARS: usize = 15_000;
 /// lines of hunk content per file, and stops adding files once DIFF_MAX_CHARS
 /// is reached.
 fn get_staged_diff(repo_path: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["diff", "--cached"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get staged diff: {e}"))?;
 
@@ -6986,9 +7270,8 @@ fn get_staged_diff(repo_path: &str) -> Result<String, String> {
 
 /// Get recent commit messages for style reference
 fn get_recent_commits(repo_path: &str, count: u32) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["log", "--oneline", &format!("-{count}")])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get recent commits: {e}"))?;
 
@@ -6998,9 +7281,8 @@ fn get_recent_commits(repo_path: &str, count: u32) -> Result<String, String> {
 /// Stage only specific files. Resets the index first to ensure a clean state.
 fn stage_specific_files(repo_path: &str, files: &[String]) -> Result<(), String> {
     // Reset staging area to ensure only the specified files are staged
-    let reset_output = silent_command("git")
+    let reset_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["reset", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to reset staging area: {e}"))?;
 
@@ -7018,9 +7300,8 @@ fn stage_specific_files(repo_path: &str, files: &[String]) -> Result<(), String>
         args.push(f.as_str());
     }
 
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(&args)
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to stage files: {e}"))?;
 
@@ -7034,9 +7315,8 @@ fn stage_specific_files(repo_path: &str, files: &[String]) -> Result<(), String>
 
 /// Stage all changes
 fn stage_all_changes(repo_path: &str) -> Result<(), String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["add", "-A"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to stage changes: {e}"))?;
 
@@ -7050,9 +7330,8 @@ fn stage_all_changes(repo_path: &str) -> Result<(), String> {
 
 /// Create a git commit with the given message
 fn create_git_commit(repo_path: &str, message: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["commit", "-m", message])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to create commit: {e}"))?;
 
@@ -7062,9 +7341,8 @@ fn create_git_commit(repo_path: &str, message: &str) -> Result<String, String> {
     }
 
     // Get the commit hash
-    let hash_output = silent_command("git")
+    let hash_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get commit hash: {e}"))?;
 
@@ -7076,9 +7354,8 @@ fn create_git_commit(repo_path: &str, message: &str) -> Result<String, String> {
 /// Push to remote
 fn push_to_remote(repo_path: &str, remote: Option<&str>) -> Result<(), String> {
     let remote = remote.unwrap_or("origin");
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["push", "-u", remote, "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to push: {e}"))?;
 
@@ -7151,13 +7428,36 @@ fn generate_commit_message(
                 magic_backend,
                 reasoning_effort,
             )?;
-            validate_commit_message(&retry_response.message, prompt, prompt).map_err(|reason| {
-                format!(
-                    "AI generated invalid commit message twice. Last rejection: {reason}. Message: {}",
-                    commit_message_subject(&retry_response.message)
-                )
-            })?;
-            Ok(retry_response)
+            match validate_commit_message(&retry_response.message, prompt, prompt) {
+                Ok(()) => Ok(retry_response),
+                Err(second_reason) => {
+                    // Never block the commit on validation — keep whatever the
+                    // model produced and commit it anyway.
+                    log::warn!(
+                        "Commit message still invalid after retry ({second_reason}); committing it anyway: {}",
+                        commit_message_subject(&retry_response.message)
+                    );
+                    Ok(pick_fallback_commit_message(response, retry_response))
+                }
+            }
+        }
+    }
+}
+
+/// Choose a usable commit message when validation failed but we still want to
+/// commit. Never fails — prefers the most recent non-empty message and only
+/// synthesizes a default if both attempts have an empty subject.
+fn pick_fallback_commit_message(
+    first: CommitMessageResponse,
+    retry: CommitMessageResponse,
+) -> CommitMessageResponse {
+    if !commit_message_subject(&retry.message).is_empty() {
+        retry
+    } else if !commit_message_subject(&first.message).is_empty() {
+        first
+    } else {
+        CommitMessageResponse {
+            message: "chore: commit staged changes".to_string(),
         }
     }
 }
@@ -7221,6 +7521,38 @@ fn generate_commit_message_once(
         });
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating commit message with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI commit message JSON: {e}, content: {json_str}");
+            format!("Failed to parse commit message: {e}")
+        });
+    }
+
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating commit message with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok commit message JSON: {e}, content: {json_str}");
+            format!("Failed to parse commit message: {e}")
+        });
+    }
+
     log::trace!("Generating commit message with Claude CLI (JSON schema)");
 
     let cli_path = resolve_cli_binary(app);
@@ -7228,7 +7560,7 @@ fn generate_commit_message_once(
         return Err("Claude CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
@@ -7264,11 +7596,7 @@ fn generate_commit_message_once(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7561,7 +7889,8 @@ fn build_codex_review_args(
         "--json".into(),
         "--model".into(),
         actual_model.into(),
-        "--full-auto".into(),
+        "--sandbox".into(),
+        "workspace-write".into(),
         "--output-schema".into(),
         schema_file.as_os_str().to_os_string(),
     ];
@@ -7586,7 +7915,7 @@ fn execute_codex_review(
     working_dir: Option<&std::path::Path>,
     review_run_id: Option<&str>,
 ) -> Result<String, String> {
-    let cli_path = resolve_codex_cli_binary(app);
+    let cli_path = resolve_codex_cli_binary(app)?;
     if !cli_path.exists() {
         return Err("Codex CLI not installed".to_string());
     }
@@ -7604,16 +7933,13 @@ fn execute_codex_review(
         working_dir
     );
 
-    let mut cmd = crate::platform::silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), working_dir);
     cmd.args(build_codex_review_args(
         actual_model,
         is_fast,
         &schema_file,
         working_dir,
     ));
-    if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
-    }
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -7725,6 +8051,38 @@ fn generate_review(
         });
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Running code review with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI review JSON: {e}, content: {json_str}");
+            format!("Failed to parse review: {e}")
+        });
+    }
+
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Running code review with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok review JSON: {e}, content: {json_str}");
+            format!("Failed to parse review: {e}")
+        });
+    }
+
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
         return Err("Claude CLI not installed".to_string());
@@ -7732,7 +8090,7 @@ fn generate_review(
 
     log::trace!("Running code review with Claude CLI (JSON schema)");
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
@@ -7784,11 +8142,7 @@ fn generate_review(
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7839,9 +8193,8 @@ pub async fn run_review_with_ai(
     let commits = get_branch_commits(&worktree_path, target_branch, "HEAD").unwrap_or_default();
 
     // Get uncommitted changes (staged + unstaged for tracked files)
-    let uncommitted_output = silent_command("git")
+    let uncommitted_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["diff", "HEAD"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to get uncommitted diff: {e}"))?;
 
@@ -7853,9 +8206,8 @@ pub async fn run_review_with_ai(
     };
 
     // Get untracked files
-    let untracked_output = silent_command("git")
+    let untracked_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to list untracked files: {e}"))?;
 
@@ -8232,7 +8584,10 @@ pub async fn run_coderabbit_review(
         return Err("CodeRabbit CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&binary_path);
+    let mut cmd = crate::platform::cli_command(
+        &binary_path.to_string_lossy(),
+        Some(std::path::Path::new(&worktree_path)),
+    );
     cmd.args(["review", "--agent", "--dir", &worktree_path]);
     if let Some(review_type) = review_type
         .as_deref()
@@ -8240,9 +8595,7 @@ pub async fn run_coderabbit_review(
     {
         cmd.args(["--type", review_type]);
     }
-    cmd.current_dir(&worktree_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let child = cmd
         .spawn()
@@ -8374,6 +8727,14 @@ mod codex_review_args_tests {
                     working_dir.as_os_str().to_os_string(),
                 ]
         }));
+        assert!(args.windows(2).any(|window| {
+            window
+                == [
+                    OsString::from("--sandbox"),
+                    OsString::from("workspace-write"),
+                ]
+        }));
+        assert!(!args.iter().any(|arg| arg == "--full-auto"));
         assert_eq!(args.last(), Some(&OsString::from("-")));
     }
 }
@@ -8585,7 +8946,7 @@ pub async fn list_github_releases(
     log::trace!("Listing GitHub releases for: {project_path}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "release",
             "list",
@@ -8594,7 +8955,6 @@ pub async fn list_github_releases(
             "--limit",
             "30",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh CLI: {e}"))?;
 
@@ -8672,9 +9032,8 @@ fn generate_release_notes_content(
     reasoning_effort: Option<&str>,
 ) -> Result<ReleaseNotesResponse, String> {
     // Fetch tags to ensure we have the tag locally
-    let fetch_output = silent_command("git")
+    let fetch_output = wsl_aware_command("git", Some(Path::new(project_path)))
         .args(["fetch", "--tags", "--force"])
-        .current_dir(project_path)
         .output()
         .map_err(|e| format!("Failed to fetch tags: {e}"))?;
 
@@ -8684,14 +9043,13 @@ fn generate_release_notes_content(
     }
 
     // Get commits since the tag
-    let commits_output = silent_command("git")
+    let commits_output = wsl_aware_command("git", Some(Path::new(project_path)))
         .args([
             "log",
             &format!("{tag}..HEAD"),
             "--format=%h %s%n%b---",
             "--no-merges",
         ])
-        .current_dir(project_path)
         .output()
         .map_err(|e| format!("Failed to get commits: {e}"))?;
 
@@ -8797,6 +9155,44 @@ fn generate_release_notes_content(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Pi {
+        log::trace!("Generating release notes with PI");
+        let json_str = crate::chat::pi::execute_one_shot_pi(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(project_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: ReleaseNotesResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse PI release notes JSON: {e}, content: {json_str}");
+            format!("Failed to parse release notes: {e}")
+        })?;
+        response.body =
+            augment_pr_references_in_body(&response.body, &release_notes_context.pr_issue_refs);
+        return Ok(response);
+    }
+
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating release notes with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(project_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: ReleaseNotesResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok release notes JSON: {e}, content: {json_str}");
+            format!("Failed to parse release notes: {e}")
+        })?;
+        response.body =
+            augment_pr_references_in_body(&response.body, &release_notes_context.pr_issue_refs);
+        return Ok(response);
+    }
+
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
         return Err("Claude CLI not installed".to_string());
@@ -8804,7 +9200,7 @@ fn generate_release_notes_content(
 
     log::trace!("Generating release notes with Claude CLI (JSON schema)");
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
@@ -8840,11 +9236,7 @@ fn generate_release_notes_content(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -9279,9 +9671,8 @@ pub async fn get_merge_conflicts(
         .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?;
 
     // Get list of files with unresolved conflicts (unmerged paths)
-    let conflict_output = silent_command("git")
+    let conflict_output = wsl_aware_command("git", Some(Path::new(&worktree.path)))
         .args(["diff", "--name-only", "--diff-filter=U"])
-        .current_dir(&worktree.path)
         .output()
         .map_err(|e| format!("Failed to check conflicts: {e}"))?;
 
@@ -9300,9 +9691,8 @@ pub async fn get_merge_conflicts(
     }
 
     // Get the diff with conflict markers
-    let diff_output = silent_command("git")
+    let diff_output = wsl_aware_command("git", Some(Path::new(&worktree.path)))
         .args(["diff"])
-        .current_dir(&worktree.path)
         .output()
         .map_err(|e| format!("Failed to get conflict diff: {e}"))?;
 
@@ -9339,9 +9729,8 @@ pub async fn fetch_and_merge_base(
     let worktree_path = &worktree.path;
 
     // Fetch the latest base branch from origin
-    let fetch_output = silent_command("git")
+    let fetch_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["fetch", "origin", base_branch])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to fetch origin: {e}"))?;
 
@@ -9351,9 +9740,8 @@ pub async fn fetch_and_merge_base(
     }
 
     // Merge origin/<base_branch> into current branch
-    let merge_output = silent_command("git")
+    let merge_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["merge", &format!("origin/{base_branch}")])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to merge: {e}"))?;
 
@@ -9367,9 +9755,8 @@ pub async fn fetch_and_merge_base(
     }
 
     // Merge failed — check for conflict files
-    let conflict_output = silent_command("git")
+    let conflict_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["diff", "--name-only", "--diff-filter=U"])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to check conflicts: {e}"))?;
 
@@ -9386,9 +9773,8 @@ pub async fn fetch_and_merge_base(
     }
 
     // Get the diff with conflict markers
-    let diff_output = silent_command("git")
+    let diff_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["diff"])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to get conflict diff: {e}"))?;
 
@@ -9849,6 +10235,7 @@ pub async fn create_folder(
         linear_api_key: None,
         linear_team_id: None,
         linked_project_ids: Vec::new(),
+        auto_fix_settings: None,
     };
 
     data.add_project(folder.clone());
@@ -10100,19 +10487,46 @@ pub async fn fetch_worktrees_status(app: AppHandle, project_id: String) -> Resul
         project_id
     );
 
-    // Spawn threads to fetch status for each worktree in parallel
-    // Using std::thread since get_branch_status is synchronous (uses Command)
+    // Fetch status with a bounded worker pool. get_branch_status runs ~8-10 git
+    // subcommands (each a child process needing pipe fds); spawning one thread per
+    // worktree unbounded would, with 100+ worktrees, exhaust the process fd table
+    // (EMFILE) and silently break both git status and coinciding claude CLI spawns.
+    // Cap concurrency so fd usage stays flat regardless of worktree count.
     let base_branch = project.default_branch.clone();
+    let worker_count = worktrees.len().clamp(1, 8);
 
+    // Shared job queue: workers pull worktrees until the receiver is drained.
+    let (tx, rx) = mpsc::channel::<Worktree>();
     for worktree in worktrees {
+        // Send cannot fail: receiver lives until all workers finish below.
+        let _ = tx.send(worktree);
+    }
+    drop(tx); // Close the channel so workers exit once the queue is empty.
+
+    let rx = std::sync::Arc::new(Mutex::new(rx));
+
+    for _ in 0..worker_count {
         let app_clone = app.clone();
         let base_branch_clone = base_branch.clone();
+        let rx = std::sync::Arc::clone(&rx);
 
-        thread::spawn(move || {
+        thread::spawn(move || loop {
+            // Pull the next worktree job (lock only while dequeuing).
+            let worktree = {
+                let guard = match rx.lock() {
+                    Ok(g) => g,
+                    Err(_) => break,
+                };
+                match guard.recv() {
+                    Ok(w) => w,
+                    Err(_) => break, // Channel drained — worker done.
+                }
+            };
+
             let info = ActiveWorktreeInfo {
                 worktree_id: worktree.id.clone(),
                 worktree_path: worktree.path.clone(),
-                base_branch: base_branch_clone,
+                base_branch: base_branch_clone.clone(),
                 pr_number: worktree.pr_number,
                 pr_url: worktree.pr_url.clone(),
                 pr_push_remote: worktree.pr_push_remote.clone(),
@@ -10170,9 +10584,11 @@ pub async fn fetch_worktrees_status(app: AppHandle, project_id: String) -> Resul
         });
     }
 
-    // Don't wait for threads - fire and forget
+    // Don't wait for workers - fire and forget
     // Status updates will be emitted via events as they complete
-    log::trace!("[fetch_worktrees_status] Spawned status fetch threads for project: {project_id}");
+    log::trace!(
+        "[fetch_worktrees_status] Spawned {worker_count} status workers for project: {project_id}"
+    );
     Ok(())
 }
 
@@ -10577,7 +10993,7 @@ fn opencode_config_dir(home: &std::path::Path) -> std::path::PathBuf {
         if let Ok(app_data) = std::env::var("APPDATA") {
             return std::path::PathBuf::from(app_data).join("opencode");
         }
-        return home.join("AppData").join("Roaming").join("opencode");
+        home.join("AppData").join("Roaming").join("opencode")
     }
 
     #[cfg(not(windows))]
@@ -10927,9 +11343,8 @@ pub async fn revert_last_local_commit(
     worktree_path: String,
 ) -> Result<RevertCommitResponse, String> {
     // Get the current HEAD commit hash and message before reverting
-    let log_output = silent_command("git")
+    let log_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["log", "-1", "--format=%H%n%s"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to get current commit: {e}"))?;
 
@@ -10948,9 +11363,8 @@ pub async fn revert_last_local_commit(
     }
 
     // Reset soft: undo the commit but keep changes staged
-    let reset_output = silent_command("git")
+    let reset_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["reset", "--soft", "HEAD~1"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to revert commit: {e}"))?;
 
@@ -10968,6 +11382,72 @@ pub async fn revert_last_local_commit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_worktree_origin_preserves_manual_origin() {
+        assert_eq!(
+            parse_worktree_origin(Some("manual")),
+            Ok(Some(WorktreeOrigin::Manual))
+        );
+    }
+
+    #[test]
+    fn auto_fix_origin_auto_resolves_worktree_conflicts() {
+        assert!(should_auto_resolve_worktree_conflict(&Some(
+            WorktreeOrigin::AutoFix
+        )));
+        assert!(!should_auto_resolve_worktree_conflict(&Some(
+            WorktreeOrigin::Manual
+        )));
+        assert!(!should_auto_resolve_worktree_conflict(&None));
+    }
+
+    #[test]
+    fn extract_json_object_plain() {
+        let out = extract_json_object_from_text(r#"{"title":"a","body":"b"}"#).unwrap();
+        assert_eq!(out, r#"{"title":"a","body":"b"}"#);
+    }
+
+    #[test]
+    fn extract_json_object_prose_wrapped() {
+        let text = "Sure, here is the JSON:\n{\"title\":\"a\"}\nHope that helps!";
+        assert_eq!(
+            extract_json_object_from_text(text).unwrap(),
+            r#"{"title":"a"}"#
+        );
+    }
+
+    #[test]
+    fn extract_json_object_with_braces_inside_strings() {
+        let text = r#"prefix {"body":"use {braces} and a \" quote"} suffix"#;
+        assert_eq!(
+            extract_json_object_from_text(text).unwrap(),
+            r#"{"body":"use {braces} and a \" quote"}"#
+        );
+    }
+
+    #[test]
+    fn extract_json_object_returns_first_of_multiple() {
+        let text = r#"{"a":1} then {"b":2}"#;
+        assert_eq!(extract_json_object_from_text(text).unwrap(), r#"{"a":1}"#);
+    }
+
+    #[test]
+    fn extract_json_object_nested() {
+        let text = r#"noise {"outer":{"inner":[1,2]}} noise"#;
+        assert_eq!(
+            extract_json_object_from_text(text).unwrap(),
+            r#"{"outer":{"inner":[1,2]}}"#
+        );
+    }
+
+    #[test]
+    fn extract_json_object_malformed_errors() {
+        assert!(extract_json_object_from_text("no json here").is_err());
+        assert!(extract_json_object_from_text("").is_err());
+        // Unbalanced — never closes the top-level object.
+        assert!(extract_json_object_from_text(r#"{"a":1"#).is_err());
+    }
 
     #[test]
     fn test_sanitize_folder_name() {
@@ -11099,6 +11579,7 @@ mod tests {
             linear_api_key: None,
             linear_team_id: None,
             linked_project_ids: Vec::new(),
+            auto_fix_settings: None,
         };
 
         attach_default_avatar(&mut project);
@@ -11222,6 +11703,35 @@ Body
     }
 
     #[test]
+    fn format_claude_cli_failure_extracts_stream_json_auth_error() {
+        let stdout = r#"{"type":"system","subtype":"hook_response","output":"startup hook"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 Invalid authentication credentials"}]},"error":"authentication_failed"}
+{"type":"result","is_error":true,"result":"Failed to authenticate. API Error: 401 Invalid authentication credentials"}"#;
+
+        let result = format_claude_cli_failure("", stdout);
+
+        assert_eq!(
+            result,
+            "Claude CLI failed: Failed to authenticate. API Error: 401 Invalid authentication credentials"
+        );
+        assert!(!result.contains("hook_response"));
+    }
+
+    #[test]
+    fn format_claude_cli_failure_does_not_report_max_turns_summary_as_error() {
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}]}}
+{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}"#;
+
+        let result = format_claude_cli_failure("", stdout);
+
+        assert_eq!(
+            result,
+            "Claude CLI failed: reached max turns before producing structured output"
+        );
+        assert!(!result.contains("Looking at the diff"));
+    }
+
+    #[test]
     fn validate_commit_message_rejects_commit_guidance_meta_subject() {
         let result = validate_commit_message(
             "chore: inspect commit message guidance",
@@ -11246,6 +11756,41 @@ Body
     }
 
     #[test]
+    fn validate_commit_message_rejects_scoped_commit_message_skill_subject() {
+        let result = validate_commit_message(
+            "chore(commit): inspect commit-message skill",
+            "src-tauri/src/chat/codex.rs | 10 ++++++++++",
+            "M  src-tauri/src/chat/codex.rs",
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("meta"));
+    }
+
+    #[test]
+    fn validate_commit_message_rejects_staged_changes_inspection_subject() {
+        let result = validate_commit_message(
+            "chore: inspect staged changes for commit message",
+            "src-tauri/src/chat/claude.rs | 10 ++++++++++",
+            "M  src-tauri/src/chat/claude.rs",
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("meta"));
+    }
+
+    #[test]
+    fn validate_commit_message_allows_user_facing_commit_message_feature() {
+        let result = validate_commit_message(
+            "fix(commit): reject generic AI commit subjects",
+            "src-tauri/src/projects/commands.rs | 35 +++++++++++++++++++++++++",
+            "M  src-tauri/src/projects/commands.rs",
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn validate_commit_message_accepts_specific_conventional_commit() {
         let result = validate_commit_message(
             "fix(chat): preserve mobile toolbar actions",
@@ -11254,6 +11799,54 @@ Body
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_commit_message_accepts_non_default_conventional_types() {
+        let ci_result = validate_commit_message(
+            "ci(nightly): drop macOS amd64 build artifacts",
+            ".github/workflows/release.yml | 10 ++++------",
+            "M  .github/workflows/release.yml",
+        );
+        assert!(ci_result.is_ok());
+
+        let build_result = validate_commit_message(
+            "build(release): assert package version before publishing",
+            "scripts/assert-release-version.js | 20 ++++++++++++++++++++",
+            "A  scripts/assert-release-version.js",
+        );
+        assert!(build_result.is_ok());
+    }
+
+    #[test]
+    fn pick_fallback_prefers_retry_then_first_then_default() {
+        let first = CommitMessageResponse {
+            message: "fix: first".into(),
+        };
+        let retry = CommitMessageResponse {
+            message: "ci(nightly): retry".into(),
+        };
+        assert_eq!(
+            pick_fallback_commit_message(first, retry).message,
+            "ci(nightly): retry"
+        );
+
+        let first = CommitMessageResponse {
+            message: "fix: first".into(),
+        };
+        let empty = CommitMessageResponse { message: "".into() };
+        assert_eq!(
+            pick_fallback_commit_message(first, empty).message,
+            "fix: first"
+        );
+
+        let empty1 = CommitMessageResponse { message: "".into() };
+        let empty2 = CommitMessageResponse {
+            message: "   ".into(),
+        };
+        assert!(pick_fallback_commit_message(empty1, empty2)
+            .message
+            .starts_with("chore:"));
     }
 
     #[test]
@@ -11269,12 +11862,13 @@ Body
     }
 
     #[test]
-    fn test_build_claude_structured_output_args_uses_two_turns_and_plan_mode() {
+    fn test_build_claude_structured_output_args_includes_default_tools_without_plan_mode() {
         let args = build_claude_structured_output_args("sonnet", "none", REVIEW_SCHEMA);
 
-        assert!(args.windows(2).any(|w| w == ["--max-turns", "2"]));
-        assert!(args.windows(2).any(|w| w == ["--permission-mode", "plan"]));
+        assert!(args.windows(2).any(|w| w == ["--max-turns", "3"]));
+        assert!(!args.iter().any(|arg| arg == "--permission-mode"));
         assert!(args.windows(2).any(|w| w == ["--tools", "none"]));
+        assert!(args.windows(2).any(|w| w == ["--tools", "default"]));
         assert!(args.windows(2).any(|w| w == ["--model", "sonnet"]));
         assert!(args
             .windows(2)

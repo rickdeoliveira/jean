@@ -2,7 +2,6 @@
 
 use super::types::{ContentBlock, ToolCall, UsageData};
 use crate::http_server::EmitExt;
-use crate::platform::silent_command;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
@@ -15,6 +14,8 @@ struct ChunkEvent {
     session_id: String,
     worktree_id: String,
     content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -636,7 +637,7 @@ fn has_plan_tool(tool_calls: &[ToolCall]) -> bool {
         .any(|tool| tool.name == CURSOR_SYNTHETIC_PLAN_TOOL_NAME)
 }
 
-fn emit_chunk(app: &AppHandle, session_id: &str, worktree_id: &str, chunk: &str) {
+fn emit_chunk(app: &AppHandle, session_id: &str, worktree_id: &str, run_id: &str, chunk: &str) {
     if chunk.is_empty() {
         return;
     }
@@ -647,6 +648,7 @@ fn emit_chunk(app: &AppHandle, session_id: &str, worktree_id: &str, chunk: &str)
             session_id: session_id.to_string(),
             worktree_id: worktree_id.to_string(),
             content: chunk.to_string(),
+            run_id: Some(run_id.to_string()),
         },
     );
 }
@@ -817,6 +819,7 @@ fn parse_cursor_stream(
     app: &AppHandle,
     session_id: &str,
     worktree_id: &str,
+    run_id: &str,
     reader: impl BufRead,
     initial_chat_id: Option<&str>,
     is_plan_mode: bool,
@@ -825,7 +828,7 @@ fn parse_cursor_stream(
         reader,
         initial_chat_id,
         is_plan_mode,
-        |chunk| emit_chunk(app, session_id, worktree_id, chunk),
+        |chunk| emit_chunk(app, session_id, worktree_id, run_id, chunk),
         |tool_call| emit_tool_use(app, session_id, worktree_id, tool_call),
         |tool_use_id, output| emit_tool_result(app, session_id, worktree_id, tool_use_id, output),
     )
@@ -1039,6 +1042,7 @@ pub fn execute_cursor(
     app: &AppHandle,
     session_id: &str,
     worktree_id: &str,
+    run_id: &str,
     working_dir: &Path,
     existing_chat_id: Option<&str>,
     model: Option<&str>,
@@ -1063,7 +1067,7 @@ pub fn execute_cursor(
     let enabled_mcp_names = parse_enabled_mcp_names(mcp_config);
     crate::cursor_cli::mcp::sync_cursor_mcp_approvals(app, working_dir, &enabled_mcp_names)?;
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     cmd.arg("--print")
         .args(["--output-format", "stream-json"])
         .arg("--trust")
@@ -1141,6 +1145,7 @@ pub fn execute_cursor(
         app,
         session_id,
         worktree_id,
+        run_id,
         BufReader::new(stdout),
         chat_id.as_deref(),
         effective_mode == "plan",
@@ -1208,7 +1213,7 @@ pub fn execute_one_shot_cursor(
     }
 
     let dir = working_dir.unwrap_or_else(|| Path::new("."));
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     cmd.arg("--print")
         .args(["--output-format", "stream-json"])
         .arg("--trust")

@@ -4,7 +4,6 @@
 //! based on the first message in a session.
 
 use crate::claude_cli::resolve_cli_binary;
-use crate::platform::silent_command;
 use crate::projects::git;
 use crate::projects::storage::{load_projects_data, save_projects_data};
 
@@ -361,6 +360,9 @@ fn generate_names(app: &AppHandle, request: &NamingRequest) -> Result<NamingOutp
     if backend == super::types::Backend::Cursor {
         return generate_names_cursor(app, &prompt, &request.model, request);
     }
+    if backend == super::types::Backend::Pi {
+        return generate_names_pi(app, &prompt, &request.model, request);
+    }
 
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
@@ -373,7 +375,7 @@ fn generate_names(app: &AppHandle, request: &NamingRequest) -> Result<NamingOutp
         "Generating names with Claude CLI using model {model_alias}, has_images: {has_images}, has_text_files: {has_text_files}, has_file_mentions: {has_file_mentions}"
     );
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(
         &mut cmd,
         request.custom_profile_name.as_deref(),
@@ -385,6 +387,8 @@ fn generate_names(app: &AppHandle, request: &NamingRequest) -> Result<NamingOutp
         "--output-format",
         "stream-json",
         "--verbose",
+        "--tools",
+        "default",
         "--model",
         model_alias,
         "--no-session-persistence",
@@ -437,8 +441,6 @@ fn generate_names(app: &AppHandle, request: &NamingRequest) -> Result<NamingOutp
         // 3 turns: tool call + tool result + final response
         cmd.arg("--max-turns").arg("3");
     } else {
-        // No tools needed for text-only messages
-        cmd.arg("--tools").arg("");
         cmd.arg("--max-turns").arg("1");
     }
 
@@ -543,7 +545,25 @@ fn generate_names_codex(
         .map_err(|e| format!("Failed to parse Codex naming JSON: {e}, raw: {json_str}"))
 }
 
-/// Generate names using Cursor Agent in one-shot mode.
+/// Generate names using PI in one-shot mode.
+fn generate_names_pi(
+    app: &AppHandle,
+    prompt: &str,
+    model: &str,
+    request: &NamingRequest,
+) -> Result<NamingOutput, String> {
+    let text = super::pi::execute_one_shot_pi(
+        app,
+        prompt,
+        model,
+        Some(std::path::Path::new(&request.worktree_path)),
+        None,
+    )?;
+    let json = extract_json_object(&text)
+        .ok_or_else(|| "No JSON object found in PI naming response".to_string())?;
+    serde_json::from_str(json).map_err(|e| format!("Failed to parse PI naming JSON: {e}"))
+}
+
 fn generate_names_cursor(
     app: &tauri::AppHandle,
     prompt: &str,

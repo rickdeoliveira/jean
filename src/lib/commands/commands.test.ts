@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { CommandContext, AppCommand } from './types'
+import { useUIStore } from '@/store/ui-store'
 
 const { registerCommands, getAllCommands, executeCommand, clearRegistry } =
   await import('./registry')
@@ -71,7 +72,6 @@ const createMockContext = (): CommandContext => ({
 
   // Projects
   addProject: vi.fn(),
-  initProject: vi.fn(),
   removeProject: vi.fn(),
   openProjectSettings: vi.fn(),
 
@@ -152,14 +152,6 @@ describe('Command System', () => {
       expect(result.success).toBe(true)
       expect(mockContext.addProject).toHaveBeenCalled()
     })
-
-    it('executes init-project command correctly', async () => {
-      const result = await executeCommand('init-project', mockContext)
-
-      expect(result.success).toBe(true)
-      expect(mockContext.initProject).toHaveBeenCalled()
-    })
-
     it('handles non-existent command', async () => {
       const result = await executeCommand('non-existent-command', mockContext)
 
@@ -193,13 +185,19 @@ describe('Project Commands', () => {
     clearRegistry()
     mockContext = createMockContext()
     registerCommands(projectCommands)
+    useUIStore.setState({
+      featureTourOpen: false,
+      onboardingOpen: false,
+      onboardingManuallyTriggered: false,
+      onboardingDismissed: true,
+    })
   })
 
   it('registers all project commands', () => {
     const commands = getAllCommands(mockContext)
-    const projectIds = ['add-project', 'init-project']
+    const projectIds = ['add-project']
     const found = commands.filter(cmd => projectIds.includes(cmd.id))
-    expect(found.length).toBe(2)
+    expect(found.length).toBe(1)
   })
 
   it('add-project is always available', () => {
@@ -207,19 +205,21 @@ describe('Project Commands', () => {
     const addCmd = commands.find(c => c.id === 'add-project')
     expect(addCmd).toBeDefined()
   })
-
-  it('init-project is always available', () => {
-    const commands = getAllCommands(mockContext)
-    const initCmd = commands.find(c => c.id === 'init-project')
-    expect(initCmd).toBeDefined()
-  })
-
   it('copy debug details command uses clipboard action', async () => {
     const result = await executeCommand('toggle-debug-mode', mockContext)
 
     expect(result.success).toBe(true)
     expect(mockContext.copySessionDebugDetails).toHaveBeenCalled()
     expect(mockContext.toggleDebugMode).not.toHaveBeenCalled()
+  })
+
+  it('feature tour command replays the product tour directly', async () => {
+    const result = await executeCommand('help.feature-tour', mockContext)
+
+    expect(result.success).toBe(true)
+    expect(useUIStore.getState().featureTourOpen).toBe(true)
+    expect(useUIStore.getState().onboardingOpen).toBe(false)
+    expect(useUIStore.getState().onboardingManuallyTriggered).toBe(false)
   })
 })
 

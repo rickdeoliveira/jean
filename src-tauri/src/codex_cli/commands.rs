@@ -10,6 +10,7 @@ use tauri::AppHandle;
 use super::config::{ensure_cli_dir, get_cli_binary_path, get_cli_dir, resolve_cli_binary};
 use crate::gh_cli::resolve_github_api_token;
 use crate::http_server::EmitExt;
+#[cfg(target_os = "macos")]
 use crate::platform::silent_command;
 
 /// GitHub API URL for Codex CLI releases
@@ -82,6 +83,7 @@ pub struct CodexUsageSnapshot {
     pub weekly: Option<CodexUsageWindowSnapshot>,
     pub reviews: Option<CodexUsageWindowSnapshot>,
     pub credits_remaining: Option<f64>,
+    pub rate_limit_reached_type: Option<String>,
     pub model_limits: Vec<CodexAdditionalUsageLimit>,
     pub fetched_at: u64,
 }
@@ -133,6 +135,19 @@ struct GitHubRelease {
 struct GitHubAsset {
     name: String,
     browser_download_url: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexArchiveFormat {
+    TarGz,
+    Zip,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexAssetCandidate {
+    name: String,
+    binary_target: String,
+    format: CodexArchiveFormat,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -229,6 +244,45 @@ struct CodexUsageApiResponse {
     credits: Option<CodexCredits>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAppServerRateLimitsParams {
+    rate_limits: CodexAppServerRateLimitSnapshot,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAppServerRateLimitSnapshot {
+    #[serde(default)]
+    plan_type: Option<String>,
+    #[serde(default)]
+    primary: Option<CodexAppServerRateLimitWindow>,
+    #[serde(default)]
+    secondary: Option<CodexAppServerRateLimitWindow>,
+    #[serde(default)]
+    credits: Option<CodexAppServerCredits>,
+    #[serde(default)]
+    rate_limit_reached_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAppServerRateLimitWindow {
+    #[serde(default, deserialize_with = "de_opt_f64")]
+    used_percent: Option<f64>,
+    #[serde(default, deserialize_with = "de_opt_u64")]
+    resets_at: Option<u64>,
+    #[serde(default, deserialize_with = "de_opt_u64")]
+    window_duration_mins: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAppServerCredits {
+    #[serde(default, deserialize_with = "de_opt_f64")]
+    balance: Option<f64>,
+}
+
 fn de_opt_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -282,52 +336,22 @@ pub async fn detect_codex_in_path(app: AppHandle) -> Result<CodexPathDetection, 
     let jean_managed_path = get_cli_binary_path(&app)
         .ok()
         .and_then(|p| std::fs::canonicalize(&p).ok());
+    let wsl = crate::platform::get_wsl_config();
+    let jean_managed_wsl = if wsl.enabled {
+        super::config::get_wsl_cli_binary_path(&wsl.distro).ok()
+    } else {
+        None
+    };
     log::debug!("detect_codex_in_path: jean_managed_path={jean_managed_path:?}");
 
-    let which_cmd = if cfg!(target_os = "windows") {
-        "where"
-    } else {
-        "which"
-    };
+    let detection = crate::platform::detect_cli_in_path(
+        "codex",
+        jean_managed_path.as_deref(),
+        jean_managed_wsl.as_deref(),
+    );
 
-    let output = match silent_command(which_cmd).arg("codex").output() {
-        Ok(output) if output.status.success() => {
-            // On Windows, `where` can return multiple paths; take only the first line
-            let raw = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            log::debug!("detect_codex_in_path: `{which_cmd} codex` found: {raw:?}");
-            raw
-        }
-        Ok(output) => {
-            log::debug!(
-                "detect_codex_in_path: `{which_cmd} codex` exited with status={}, stderr={:?}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-            return Ok(CodexPathDetection {
-                found: false,
-                path: None,
-                version: None,
-                package_manager: None,
-            });
-        }
-        Err(e) => {
-            log::debug!("detect_codex_in_path: `{which_cmd} codex` failed to execute: {e}");
-            return Ok(CodexPathDetection {
-                found: false,
-                path: None,
-                version: None,
-                package_manager: None,
-            });
-        }
-    };
-
-    if output.is_empty() {
-        log::debug!("detect_codex_in_path: which returned empty output");
+    if !detection.found {
+        log::debug!("detect_codex_in_path: not found");
         return Ok(CodexPathDetection {
             found: false,
             path: None,
@@ -336,64 +360,32 @@ pub async fn detect_codex_in_path(app: AppHandle) -> Result<CodexPathDetection, 
         });
     }
 
-    let found_path = std::path::PathBuf::from(&output);
-
-    // Exclude Jean-managed binary
-    if let Some(ref jean_path) = jean_managed_path {
-        if let Ok(canonical_found) = std::fs::canonicalize(&found_path) {
-            if canonical_found == *jean_path {
-                log::debug!("detect_codex_in_path: found path is jean-managed binary, excluding");
-                return Ok(CodexPathDetection {
-                    found: false,
-                    path: None,
-                    version: None,
-                    package_manager: None,
-                });
-            }
-        }
-    }
-
-    let version = match silent_command(&found_path).arg("--version").output() {
-        Ok(ver_output) if ver_output.status.success() => {
-            let ver_str = String::from_utf8_lossy(&ver_output.stdout)
-                .trim()
-                .to_string();
-            log::debug!("detect_codex_in_path: raw --version output={ver_str:?}");
-            let cleaned = ver_str
-                .split_whitespace()
-                .last()
-                .unwrap_or(&ver_str)
-                .trim_start_matches('v')
-                .to_string();
-            if cleaned.is_empty() {
-                None
-            } else {
-                Some(cleaned)
-            }
-        }
-        Ok(ver_output) => {
-            log::debug!(
-                "detect_codex_in_path: --version failed, status={}, stderr={:?}",
-                ver_output.status,
-                String::from_utf8_lossy(&ver_output.stderr).trim()
-            );
+    let version = detection.version.and_then(|ver_str| {
+        let cleaned = ver_str
+            .split_whitespace()
+            .last()
+            .unwrap_or(&ver_str)
+            .trim_start_matches('v')
+            .to_string();
+        if cleaned.is_empty() {
             None
+        } else {
+            Some(cleaned)
         }
-        Err(e) => {
-            log::debug!("detect_codex_in_path: --version command error: {e}");
-            None
-        }
-    };
+    });
 
-    let package_manager = crate::platform::detect_package_manager(&found_path);
-
-    log::debug!("detect_codex_in_path: result path={output} version={version:?} pkg_mgr={package_manager:?}");
+    log::debug!(
+        "detect_codex_in_path: result path={:?} version={:?} pkg_mgr={:?}",
+        detection.path,
+        version,
+        detection.package_manager
+    );
 
     Ok(CodexPathDetection {
         found: true,
-        path: Some(output),
+        path: detection.path,
         version,
-        package_manager,
+        package_manager: detection.package_manager,
     })
 }
 
@@ -423,22 +415,116 @@ fn build_usage_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Failed to create usage HTTP client: {e}"))
 }
 
-fn get_codex_auth_paths() -> Vec<PathBuf> {
-    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
-        let trimmed = codex_home.trim();
-        if !trimmed.is_empty() {
-            return vec![PathBuf::from(trimmed).join("auth.json")];
+fn push_codex_home_auth_path(
+    paths: &mut Vec<PathBuf>,
+    codex_home: Option<&str>,
+    in_wsl: bool,
+    distro: &str,
+) {
+    let Some(codex_home) = codex_home else {
+        return;
+    };
+    let trimmed = codex_home.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    let auth_path = PathBuf::from(trimmed).join("auth.json");
+    if in_wsl {
+        if trimmed.starts_with('/') {
+            paths.push(PathBuf::from(crate::platform::wsl_to_win_path(
+                &auth_path.to_string_lossy(),
+                distro,
+            )));
         }
+    } else {
+        paths.push(auth_path);
+    }
+}
+
+fn push_host_codex_auth_paths(
+    paths: &mut Vec<PathBuf>,
+    host_home: Option<PathBuf>,
+    codex_home: Option<&str>,
+) {
+    push_codex_home_auth_path(paths, codex_home, false, "");
+
+    if let Some(home) = host_home {
+        paths.push(home.join(".config").join("codex").join("auth.json"));
+        paths.push(home.join(".codex").join("auth.json"));
+    }
+}
+
+fn push_wsl_codex_auth_paths(
+    paths: &mut Vec<PathBuf>,
+    wsl_home: Option<&str>,
+    codex_home: Option<&str>,
+    distro: &str,
+) {
+    push_codex_home_auth_path(paths, codex_home, true, distro);
+
+    let Some(wsl_home) = wsl_home else {
+        return;
+    };
+    let trimmed_home = wsl_home.trim();
+    if trimmed_home.is_empty() {
+        return;
     }
 
-    if let Some(home) = dirs::home_dir() {
-        return vec![
-            home.join(".config").join("codex").join("auth.json"),
-            home.join(".codex").join("auth.json"),
-        ];
+    for unix_path in [
+        format!("{trimmed_home}/.config/codex/auth.json"),
+        format!("{trimmed_home}/.codex/auth.json"),
+    ] {
+        paths.push(PathBuf::from(crate::platform::wsl_to_win_path(
+            &unix_path, distro,
+        )));
+    }
+}
+
+fn should_prefer_wsl_codex_auth(wsl_enabled: bool, binary_path: Option<&str>) -> bool {
+    wsl_enabled
+        && binary_path
+            .map(|path| path.starts_with('/'))
+            .unwrap_or(true)
+}
+
+fn build_codex_auth_paths(
+    codex_home: Option<&str>,
+    host_home: Option<PathBuf>,
+    wsl_home: Option<&str>,
+    wsl_enabled: bool,
+    distro: &str,
+    binary_path: Option<&str>,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if should_prefer_wsl_codex_auth(wsl_enabled, binary_path) {
+        push_wsl_codex_auth_paths(&mut paths, wsl_home, codex_home, distro);
     }
 
-    Vec::new()
+    push_host_codex_auth_paths(&mut paths, host_home, codex_home);
+    paths.dedup();
+    paths
+}
+
+fn get_codex_auth_paths(binary_path: Option<&str>) -> Vec<PathBuf> {
+    let codex_home = std::env::var("CODEX_HOME").ok();
+    let host_home = dirs::home_dir();
+    let wsl = crate::platform::get_wsl_config();
+    let wsl_home = if wsl.enabled {
+        crate::platform::get_wsl_home_dir(&wsl.distro).ok()
+    } else {
+        None
+    };
+
+    build_codex_auth_paths(
+        codex_home.as_deref(),
+        host_home,
+        wsl_home.as_deref(),
+        wsl.enabled,
+        &wsl.distro,
+        binary_path,
+    )
 }
 
 fn get_usage_cache_dir() -> Option<PathBuf> {
@@ -517,8 +603,10 @@ fn load_codex_auth_from_keychain() -> Option<CodexAuthFile> {
     parse_auth_payload(&payload)
 }
 
-fn load_codex_auth() -> Result<(CodexAuthSource, CodexAuthFile), String> {
-    let auth_paths = get_codex_auth_paths();
+fn load_codex_auth_for_binary(
+    binary_path: Option<&str>,
+) -> Result<(CodexAuthSource, CodexAuthFile), String> {
+    let auth_paths = get_codex_auth_paths(binary_path);
 
     for path in auth_paths {
         if !path.exists() {
@@ -544,6 +632,11 @@ fn load_codex_auth() -> Result<(CodexAuthSource, CodexAuthFile), String> {
     }
 
     Err("Codex auth not found. Run `codex` to authenticate.".to_string())
+}
+
+#[allow(dead_code)]
+fn load_codex_auth() -> Result<(CodexAuthSource, CodexAuthFile), String> {
+    load_codex_auth_for_binary(None)
 }
 
 fn persist_codex_auth(source: &CodexAuthSource, auth: &CodexAuthFile) -> Result<(), String> {
@@ -623,6 +716,58 @@ fn map_usage_window(
         resets_at: resolve_reset_timestamp(now_secs, window),
         limit_window_seconds: window.limit_window_seconds,
     })
+}
+
+fn current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn map_app_server_rate_limit_window(
+    window: Option<CodexAppServerRateLimitWindow>,
+) -> Option<CodexUsageWindowSnapshot> {
+    let window = window?;
+    let used_percent = window.used_percent?;
+
+    Some(CodexUsageWindowSnapshot {
+        used_percent,
+        resets_at: window.resets_at,
+        limit_window_seconds: window
+            .window_duration_mins
+            .map(|mins| mins.saturating_mul(60)),
+    })
+}
+
+pub(crate) fn codex_usage_snapshot_from_app_server_rate_limits(
+    params: &Value,
+    fetched_at: u64,
+) -> Result<CodexUsageSnapshot, String> {
+    let notification = serde_json::from_value::<CodexAppServerRateLimitsParams>(params.clone())
+        .map_err(|e| format!("Failed to parse Codex rate limits notification payload: {e}"))?;
+    let rate_limits = notification.rate_limits;
+
+    Ok(CodexUsageSnapshot {
+        plan_type: rate_limits.plan_type,
+        session: map_app_server_rate_limit_window(rate_limits.primary),
+        weekly: map_app_server_rate_limit_window(rate_limits.secondary),
+        reviews: None,
+        credits_remaining: rate_limits.credits.and_then(|credits| credits.balance),
+        rate_limit_reached_type: rate_limits.rate_limit_reached_type,
+        model_limits: Vec::new(),
+        fetched_at,
+    })
+}
+
+pub(crate) fn update_codex_usage_from_app_server_rate_limits(
+    app: &AppHandle,
+    params: &Value,
+) -> Result<CodexUsageSnapshot, String> {
+    let snapshot = codex_usage_snapshot_from_app_server_rate_limits(params, current_unix_secs())?;
+    save_cached_codex_usage(&snapshot, snapshot.fetched_at);
+    let _ = app.emit_all("codex-cli:usage-updated", &snapshot);
+    Ok(snapshot)
 }
 
 async fn refresh_codex_access_token(
@@ -727,9 +872,12 @@ async fn refresh_codex_access_token(
 }
 
 pub async fn refresh_codex_app_server_auth_tokens(
+    app: AppHandle,
     previous_account_id: Option<String>,
 ) -> Result<CodexAppServerAuthTokens, String> {
-    let (auth_source, mut auth) = load_codex_auth()?;
+    let binary_path = resolve_cli_binary(&app)?;
+    let binary_str = binary_path.to_string_lossy();
+    let (auth_source, mut auth) = load_codex_auth_for_binary(Some(&binary_str))?;
     let client = build_usage_client()?;
     let refreshed = refresh_codex_access_token(&client, &auth_source, &mut auth).await?;
     if refreshed.is_none() {
@@ -763,11 +911,46 @@ pub async fn refresh_codex_app_server_auth_tokens(
 pub async fn check_codex_cli_installed(app: AppHandle) -> Result<CodexCliStatus, String> {
     log::debug!("check_codex_cli_installed: starting");
 
-    let binary_path = resolve_cli_binary(&app);
+    let wsl = crate::platform::get_wsl_config();
+    let binary_path = resolve_cli_binary(&app)?;
     log::debug!(
         "check_codex_cli_installed: resolved binary_path={:?}",
         binary_path
     );
+
+    if wsl.enabled {
+        let tool = binary_path.to_string_lossy().to_string();
+        let installed = if tool.starts_with('/') {
+            crate::platform::wsl_file_executable(&wsl.distro, &tool)
+        } else {
+            crate::platform::check_wsl_tool(&wsl.distro, &tool)
+        };
+        if !installed {
+            return Ok(CodexCliStatus {
+                installed: false,
+                version: None,
+                path: None,
+            });
+        }
+        let version = crate::platform::wsl_tool_version(&wsl.distro, &tool).and_then(|v| {
+            let cleaned = v
+                .split_whitespace()
+                .last()
+                .unwrap_or(&v)
+                .trim_start_matches('v')
+                .to_string();
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned)
+            }
+        });
+        return Ok(CodexCliStatus {
+            installed: true,
+            version,
+            path: Some(tool),
+        });
+    }
 
     if !binary_path.exists() {
         log::debug!(
@@ -782,7 +965,10 @@ pub async fn check_codex_cli_installed(app: AppHandle) -> Result<CodexCliStatus,
     }
 
     // Get version
-    let version = match silent_command(&binary_path).arg("--version").output() {
+    let version = match crate::platform::cli_command(&binary_path.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+    {
         Ok(output) if output.status.success() => {
             let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             log::debug!(
@@ -835,17 +1021,32 @@ pub async fn check_codex_cli_installed(app: AppHandle) -> Result<CodexCliStatus,
 pub async fn check_codex_cli_auth(app: AppHandle) -> Result<CodexAuthStatus, String> {
     log::trace!("Checking Codex CLI authentication status");
 
-    let binary_path = resolve_cli_binary(&app);
+    let wsl = crate::platform::get_wsl_config();
+    let binary_path = resolve_cli_binary(&app)?;
 
-    if !binary_path.exists() {
+    if !wsl.enabled && !binary_path.exists() {
         return Ok(CodexAuthStatus {
             authenticated: false,
             error: Some("Codex CLI not installed".to_string()),
         });
     }
+    if wsl.enabled {
+        let tool = binary_path.to_string_lossy().to_string();
+        let installed = if tool.starts_with('/') {
+            crate::platform::wsl_file_executable(&wsl.distro, &tool)
+        } else {
+            crate::platform::check_wsl_tool(&wsl.distro, &tool)
+        };
+        if !installed {
+            return Ok(CodexAuthStatus {
+                authenticated: false,
+                error: Some("Codex CLI not installed inside WSL".to_string()),
+            });
+        }
+    }
 
-    // Run `codex login status` to check authentication
-    let output = silent_command(&binary_path)
+    let binary_str = binary_path.to_string_lossy().to_string();
+    let output = crate::platform::wsl_aware_command(&binary_str, None)
         .args(["login", "status"])
         .output()
         .map_err(|e| format!("Failed to execute Codex CLI: {e}"))?;
@@ -873,16 +1074,15 @@ pub async fn check_codex_cli_auth(app: AppHandle) -> Result<CodexAuthStatus, Str
 
 /// Get current Codex usage for authenticated users.
 #[tauri::command]
-pub async fn get_codex_usage() -> Result<CodexUsageSnapshot, String> {
-    let now_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+pub async fn get_codex_usage(app: AppHandle) -> Result<CodexUsageSnapshot, String> {
+    let now_secs = current_unix_secs();
     if let Some(cached) = load_cached_codex_usage(now_secs) {
         return Ok(cached);
     }
 
-    let (auth_source, mut auth) = load_codex_auth()?;
+    let binary_path = resolve_cli_binary(&app)?;
+    let binary_str = binary_path.to_string_lossy();
+    let (auth_source, mut auth) = load_codex_auth_for_binary(Some(&binary_str))?;
     let usage_client = build_usage_client()?;
 
     let mut access_token = auth
@@ -1054,6 +1254,7 @@ pub async fn get_codex_usage() -> Result<CodexUsageSnapshot, String> {
         weekly,
         reviews,
         credits_remaining,
+        rate_limit_reached_type: None,
         model_limits,
         fetched_at: now_secs,
     };
@@ -1169,9 +1370,21 @@ async fn fetch_codex_versions_from_api(app: &AppHandle) -> Result<Vec<CodexRelea
         .await
         .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
 
-    let versions: Vec<CodexReleaseInfo> = releases
+    let target = resolve_codex_runtime_target()?;
+    let asset_names = codex_asset_name_candidates(target);
+    let versions = codex_versions_from_releases(releases, &asset_names);
+
+    log::trace!("Found {} Codex CLI versions from API", versions.len());
+    Ok(versions)
+}
+
+fn codex_versions_from_releases(
+    releases: Vec<GitHubRelease>,
+    asset_names: &[String],
+) -> Vec<CodexReleaseInfo> {
+    releases
         .into_iter()
-        .filter(|r| !r.prerelease && !r.assets.is_empty())
+        .filter(|r| !r.prerelease && find_matching_asset_url(r, asset_names).is_some())
         .take(5)
         .map(|r| CodexReleaseInfo {
             version: extract_version_from_tag(&r.tag_name),
@@ -1179,10 +1392,7 @@ async fn fetch_codex_versions_from_api(app: &AppHandle) -> Result<Vec<CodexRelea
             published_at: r.published_at,
             prerelease: r.prerelease,
         })
-        .collect();
-
-    log::trace!("Found {} Codex CLI versions from API", versions.len());
-    Ok(versions)
+        .collect()
 }
 
 /// Get the Codex target triple for the current platform
@@ -1199,12 +1409,12 @@ fn get_codex_target() -> Result<&'static str, String> {
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        return Ok("x86_64-unknown-linux-gnu");
+        return Ok("x86_64-unknown-linux-musl");
     }
 
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     {
-        return Ok("aarch64-unknown-linux-gnu");
+        return Ok("aarch64-unknown-linux-musl");
     }
 
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
@@ -1219,6 +1429,56 @@ fn get_codex_target() -> Result<&'static str, String> {
 
     #[allow(unreachable_code)]
     Err("Unsupported platform".to_string())
+}
+
+fn resolve_codex_runtime_target() -> Result<&'static str, String> {
+    let wsl = crate::platform::get_wsl_config();
+    if wsl.enabled {
+        wsl_codex_target(&wsl.distro)
+    } else {
+        get_codex_target()
+    }
+}
+
+fn codex_asset_candidates(target: &str) -> Vec<CodexAssetCandidate> {
+    let tar_gz = |binary_target: &str| CodexAssetCandidate {
+        name: format!("codex-{binary_target}.tar.gz"),
+        binary_target: binary_target.to_string(),
+        format: CodexArchiveFormat::TarGz,
+    };
+    let zip = |binary_target: &str| CodexAssetCandidate {
+        name: format!("codex-{binary_target}.exe.zip"),
+        binary_target: binary_target.to_string(),
+        format: CodexArchiveFormat::Zip,
+    };
+
+    match target {
+        "x86_64-unknown-linux-musl" => vec![
+            tar_gz("x86_64-unknown-linux-musl"),
+            tar_gz("x86_64-unknown-linux-gnu"),
+        ],
+        "aarch64-unknown-linux-musl" => vec![
+            tar_gz("aarch64-unknown-linux-musl"),
+            tar_gz("aarch64-unknown-linux-gnu"),
+        ],
+        "x86_64-unknown-linux-gnu" => vec![
+            tar_gz("x86_64-unknown-linux-gnu"),
+            tar_gz("x86_64-unknown-linux-musl"),
+        ],
+        "aarch64-unknown-linux-gnu" => vec![
+            tar_gz("aarch64-unknown-linux-gnu"),
+            tar_gz("aarch64-unknown-linux-musl"),
+        ],
+        "x86_64-pc-windows-msvc" | "aarch64-pc-windows-msvc" => vec![zip(target)],
+        _ => vec![tar_gz(target)],
+    }
+}
+
+fn codex_asset_name_candidates(target: &str) -> Vec<String> {
+    codex_asset_candidates(target)
+        .into_iter()
+        .map(|candidate| candidate.name)
+        .collect()
 }
 
 /// Fetch the latest Codex CLI version from GitHub API.
@@ -1244,8 +1504,9 @@ async fn fetch_latest_codex_version(app: &AppHandle) -> Result<String, String> {
     if let Ok(resp) = request.send().await {
         if resp.status().is_success() {
             if let Ok(releases) = resp.json::<Vec<GitHubRelease>>().await {
-                if let Some(release) = releases.first() {
-                    let version = extract_version_from_tag(&release.tag_name);
+                let target = resolve_codex_runtime_target()?;
+                let asset_names = codex_asset_name_candidates(target);
+                if let Some(version) = latest_codex_version_from_releases(releases, &asset_names) {
                     log::trace!("Latest Codex CLI version: {version}");
                     return Ok(version);
                 }
@@ -1262,12 +1523,22 @@ async fn fetch_latest_codex_version(app: &AppHandle) -> Result<String, String> {
     Ok(FALLBACK_CODEX_VERSION.to_string())
 }
 
+fn latest_codex_version_from_releases(
+    releases: Vec<GitHubRelease>,
+    asset_names: &[String],
+) -> Option<String> {
+    releases
+        .into_iter()
+        .find(|release| find_matching_asset_url(release, asset_names).is_some())
+        .map(|release| extract_version_from_tag(&release.tag_name))
+}
+
 /// Find the download URL for a specific asset by searching recent releases
 async fn find_asset_url(
     app: &AppHandle,
     version: &str,
-    asset_name: &str,
-) -> Result<String, String> {
+    candidates: &[CodexAssetCandidate],
+) -> Result<(String, CodexAssetCandidate), String> {
     let client = build_github_client()?;
     let token = resolve_github_api_token(app);
     let mut request = client
@@ -1294,13 +1565,16 @@ async fn find_asset_url(
     for release in &releases {
         let release_version = extract_version_from_tag(&release.tag_name);
         if release_version == version {
-            for asset in &release.assets {
-                if asset.name == asset_name {
-                    return Ok(asset.browser_download_url.clone());
-                }
+            if let Some((url, candidate)) = find_matching_candidate_asset(release, candidates) {
+                return Ok((url, candidate));
             }
+            let asset_names: Vec<&str> = candidates
+                .iter()
+                .map(|candidate| candidate.name.as_str())
+                .collect();
             return Err(format!(
-                "Asset {asset_name} not found in release {}",
+                "Assets [{}] not found in release {}",
+                asset_names.join(", "),
                 release.tag_name
             ));
         }
@@ -1309,13 +1583,57 @@ async fn find_asset_url(
     Err(format!("Release for version {version} not found"))
 }
 
+fn find_matching_candidate_asset(
+    release: &GitHubRelease,
+    candidates: &[CodexAssetCandidate],
+) -> Option<(String, CodexAssetCandidate)> {
+    for candidate in candidates {
+        for asset in &release.assets {
+            if asset.name == candidate.name {
+                return Some((asset.browser_download_url.clone(), candidate.clone()));
+            }
+        }
+    }
+    None
+}
+
+fn find_matching_asset_url(release: &GitHubRelease, asset_names: &[String]) -> Option<String> {
+    for asset_name in asset_names {
+        for asset in &release.assets {
+            if asset.name == *asset_name {
+                return Some(asset.browser_download_url.clone());
+            }
+        }
+    }
+    None
+}
+
+/// Pick the codex target triple for a WSL distro given the host install.
+fn wsl_codex_target(distro: &str) -> Result<&'static str, String> {
+    resolve_codex_runtime_target_for_wsl_arch(true, crate::platform::wsl_detect_arch(distro))
+}
+
+fn resolve_codex_runtime_target_for_wsl_arch(
+    wsl_enabled: bool,
+    wsl_arch: Option<&str>,
+) -> Result<&'static str, String> {
+    if !wsl_enabled {
+        return get_codex_target();
+    }
+
+    match wsl_arch {
+        Some("linux-x64") => Ok("x86_64-unknown-linux-musl"),
+        Some("linux-arm64") => Ok("aarch64-unknown-linux-musl"),
+        _ => Err("Unsupported WSL architecture (expected x86_64 or aarch64)".to_string()),
+    }
+}
+
 /// Install Codex CLI by downloading from GitHub releases
 #[tauri::command]
 pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Result<(), String> {
     log::trace!("Installing Codex CLI, version: {:?}", version);
 
-    let _cli_dir = ensure_cli_dir(&app)?;
-    let binary_path = get_cli_binary_path(&app)?;
+    let wsl = crate::platform::get_wsl_config();
 
     // Emit progress: starting
     emit_progress(&app, "starting", "Preparing installation...", 0);
@@ -1326,17 +1644,14 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
         None => fetch_latest_codex_version(&app).await?,
     };
 
-    let target = get_codex_target()?;
+    // Target triple differs for native host vs WSL.
+    let target: &str = resolve_codex_runtime_target()?;
     log::trace!("Installing version {version} for target {target}");
 
-    // Build asset name to search for in release assets
-    #[cfg(target_os = "windows")]
-    let (asset_name, is_zip) = (format!("codex-{target}.exe.zip"), true);
-    #[cfg(not(target_os = "windows"))]
-    let (asset_name, is_zip) = (format!("codex-{target}.tar.gz"), false);
+    let candidates = codex_asset_candidates(target);
 
     // Find the download URL from the release assets
-    let download_url = find_asset_url(&app, &version, &asset_name).await?;
+    let (download_url, asset_candidate) = find_asset_url(&app, &version, &candidates).await?;
     log::trace!("Downloading from: {download_url}");
 
     // Emit progress: downloading
@@ -1371,6 +1686,32 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
     // Emit progress: extracting
     emit_progress(&app, "extracting", "Extracting archive...", 45);
 
+    // Extract the binary bytes in-memory so native and WSL can share the flow.
+    let binary_bytes = match asset_candidate.format {
+        CodexArchiveFormat::Zip => {
+            extract_zip_binary_bytes(&archive_content, &asset_candidate.binary_target)?
+        }
+        CodexArchiveFormat::TarGz => {
+            extract_tar_gz_binary_bytes(&archive_content, &asset_candidate.binary_target)?
+        }
+    };
+
+    if wsl.enabled {
+        // WSL branch: stream the binary into the distro and make it executable.
+        let unix_path = super::config::get_wsl_cli_binary_path(&wsl.distro)?;
+        emit_progress(&app, "installing", "Installing Codex CLI into WSL...", 65);
+        log::trace!("Writing codex binary into WSL at {unix_path}");
+        crate::platform::wsl_write_bytes(&wsl.distro, &unix_path, &binary_bytes)
+            .map_err(|e| format!("Failed to write binary into WSL: {e}"))?;
+        crate::platform::wsl_chmod_exec(&wsl.distro, &unix_path)?;
+        emit_progress(&app, "complete", "Installation complete!", 100);
+        log::trace!("Codex CLI installed successfully at WSL:{unix_path}");
+        return Ok(());
+    }
+
+    let _cli_dir = ensure_cli_dir(&app)?;
+    let binary_path = get_cli_binary_path(&app)?;
+
     // On Windows, a running codex.exe holds a file lock that prevents overwriting.
     // Rename the old binary out of the way before extracting the new one.
     #[cfg(windows)]
@@ -1379,7 +1720,6 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
         let _ = std::fs::remove_file(&old_path); // Clean up previous .old if any
         if let Err(e) = std::fs::rename(&binary_path, &old_path) {
             log::warn!("Could not rename existing binary (may be unlocked): {e}");
-            // Try removing directly as a fallback
             if let Err(e2) = std::fs::remove_file(&binary_path) {
                 return Err(format!(
                     "Cannot replace existing Codex CLI binary — it may be in use by another process. \
@@ -1389,11 +1729,8 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
         }
     }
 
-    if is_zip {
-        extract_zip_binary(&archive_content, &binary_path, target)?;
-    } else {
-        extract_tar_gz_binary(&archive_content, &binary_path, target)?;
-    }
+    crate::platform::write_binary_file(&binary_path, &binary_bytes)
+        .map_err(|e| format!("Failed to write Codex CLI binary: {e}"))?;
 
     // Emit progress: installing
     emit_progress(&app, "installing", "Installing Codex CLI...", 65);
@@ -1423,7 +1760,7 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
     emit_progress(&app, "verifying", "Verifying installation...", 80);
 
     // Verify the binary works
-    let version_output = silent_command(&binary_path)
+    let version_output = crate::platform::cli_command(&binary_path.to_string_lossy(), None)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to verify Codex CLI: {e}"))?;
@@ -1470,6 +1807,14 @@ pub async fn uninstall_codex_cli(app: AppHandle) -> Result<(), String> {
         ));
     }
 
+    let wsl = crate::platform::get_wsl_config();
+    if wsl.enabled {
+        let unix_path = super::config::get_wsl_cli_binary_path(&wsl.distro)?;
+        crate::platform::wsl_remove_path(&wsl.distro, &unix_path)
+            .map_err(|e| format!("Failed to remove Codex CLI from WSL: {e}"))?;
+        log::info!("Removed Jean-managed Codex CLI at WSL:{unix_path}");
+    }
+
     let cli_dir = get_cli_dir(&app)?;
     if cli_dir.exists() {
         std::fs::remove_dir_all(&cli_dir)
@@ -1479,12 +1824,8 @@ pub async fn uninstall_codex_cli(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Extract the codex binary from a tar.gz archive
-fn extract_tar_gz_binary(
-    archive_content: &[u8],
-    binary_path: &std::path::Path,
-    target: &str,
-) -> Result<(), String> {
+/// Extract the codex binary bytes from a tar.gz archive (Linux/macOS release).
+fn extract_tar_gz_binary_bytes(archive_content: &[u8], target: &str) -> Result<Vec<u8>, String> {
     use flate2::read::GzDecoder;
     use std::io::{Cursor, Read};
     use tar::Archive;
@@ -1512,11 +1853,7 @@ fn extract_tar_gz_binary(
                 entry
                     .read_to_end(&mut content)
                     .map_err(|e| format!("Failed to read binary from archive: {e}"))?;
-
-                crate::platform::write_binary_file(binary_path, &content)
-                    .map_err(|e| format!("Failed to write binary: {e}"))?;
-
-                return Ok(());
+                return Ok(content);
             }
         }
     }
@@ -1526,16 +1863,12 @@ fn extract_tar_gz_binary(
     ))
 }
 
-/// Extract the codex binary from a zip archive (Windows)
+/// Extract the codex binary bytes from a zip archive (Windows release).
 ///
 /// The Windows zip may contain helper binaries (codex-command-runner.exe,
 /// codex-windows-sandbox-setup.exe) bundled for WinGet. We must extract only
 /// the main codex binary matching the expected target name.
-fn extract_zip_binary(
-    archive_content: &[u8],
-    binary_path: &std::path::Path,
-    target: &str,
-) -> Result<(), String> {
+fn extract_zip_binary_bytes(archive_content: &[u8], target: &str) -> Result<Vec<u8>, String> {
     use std::io::{Cursor, Read};
 
     let cursor = Cursor::new(archive_content);
@@ -1558,11 +1891,7 @@ fn extract_zip_binary(
                 let mut content = Vec::new();
                 file.read_to_end(&mut content)
                     .map_err(|e| format!("Failed to read binary from archive: {e}"))?;
-
-                crate::platform::write_binary_file(binary_path, &content)
-                    .map_err(|e| format!("Failed to write binary: {e}"))?;
-
-                return Ok(());
+                return Ok(content);
             }
         }
     }
@@ -1570,4 +1899,267 @@ fn extract_zip_binary(
     Err(format!(
         "Codex binary '{expected_name}' not found in zip archive"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_auth_paths_prefer_wsl_home_when_wsl_binary_is_unix_path() {
+        let paths = build_codex_auth_paths(
+            None,
+            Some(PathBuf::from(r"C:\Users\alice")),
+            Some("/home/alice"),
+            true,
+            "Ubuntu",
+            Some("/home/alice/.local/share/jean/codex-cli/codex"),
+        );
+
+        assert_eq!(
+            paths[0],
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\alice\.config\codex\auth.json")
+        );
+        assert_eq!(
+            paths[1],
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\alice\.codex\auth.json")
+        );
+        assert!(paths.contains(
+            &PathBuf::from(r"C:\Users\alice")
+                .join(".codex")
+                .join("auth.json")
+        ));
+    }
+
+    #[test]
+    fn codex_auth_paths_use_host_paths_when_wsl_binary_is_not_unix_path() {
+        let paths = build_codex_auth_paths(
+            None,
+            Some(PathBuf::from(r"C:\Users\alice")),
+            Some("/home/alice"),
+            true,
+            "Ubuntu",
+            Some(r"C:\Users\alice\AppData\Local\jean\codex-cli\codex.exe"),
+        );
+
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from(r"C:\Users\alice")
+                    .join(".config")
+                    .join("codex")
+                    .join("auth.json"),
+                PathBuf::from(r"C:\Users\alice")
+                    .join(".codex")
+                    .join("auth.json"),
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_asset_candidates_use_musl_for_linux_x64() {
+        assert_eq!(
+            codex_asset_name_candidates("x86_64-unknown-linux-musl"),
+            vec![
+                "codex-x86_64-unknown-linux-musl.tar.gz".to_string(),
+                "codex-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_asset_candidates_use_musl_for_linux_arm64() {
+        assert_eq!(
+            codex_asset_name_candidates("aarch64-unknown-linux-musl"),
+            vec![
+                "codex-aarch64-unknown-linux-musl.tar.gz".to_string(),
+                "codex-aarch64-unknown-linux-gnu.tar.gz".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_release_asset_filter_accepts_matching_platform_asset_only() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "rust-v0.130.0".to_string(),
+                published_at: "2026-05-08T23:09:55Z".to_string(),
+                prerelease: false,
+                assets: vec![GitHubAsset {
+                    name: "codex-x86_64-unknown-linux-musl.tar.gz".to_string(),
+                    browser_download_url: "https://example.com/codex-linux-musl.tar.gz".to_string(),
+                }],
+            },
+            GitHubRelease {
+                tag_name: "rust-v0.129.0".to_string(),
+                published_at: "2026-05-01T23:09:55Z".to_string(),
+                prerelease: false,
+                assets: vec![GitHubAsset {
+                    name: "codex-aarch64-apple-darwin.tar.gz".to_string(),
+                    browser_download_url: "https://example.com/codex-mac.tar.gz".to_string(),
+                }],
+            },
+        ];
+
+        let versions = codex_versions_from_releases(
+            releases,
+            &codex_asset_name_candidates("x86_64-unknown-linux-musl"),
+        );
+
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, "0.130.0");
+        assert_eq!(versions[0].tag_name, "rust-v0.130.0");
+    }
+
+    #[test]
+    fn codex_release_asset_lookup_prefers_first_matching_candidate() {
+        let release = GitHubRelease {
+            tag_name: "rust-v0.130.0".to_string(),
+            published_at: "2026-05-08T23:09:55Z".to_string(),
+            prerelease: false,
+            assets: vec![
+                GitHubAsset {
+                    name: "codex-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+                    browser_download_url: "https://example.com/codex-linux-gnu.tar.gz".to_string(),
+                },
+                GitHubAsset {
+                    name: "codex-x86_64-unknown-linux-musl.tar.gz".to_string(),
+                    browser_download_url: "https://example.com/codex-linux-musl.tar.gz".to_string(),
+                },
+            ],
+        };
+
+        let url = find_matching_asset_url(
+            &release,
+            &codex_asset_name_candidates("x86_64-unknown-linux-musl"),
+        );
+
+        assert_eq!(
+            url,
+            Some("https://example.com/codex-linux-musl.tar.gz".to_string())
+        );
+    }
+
+    #[test]
+    fn latest_codex_version_skips_releases_without_platform_asset() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "rust-v0.131.0".to_string(),
+                published_at: "2026-05-15T23:09:55Z".to_string(),
+                prerelease: false,
+                assets: vec![GitHubAsset {
+                    name: "codex-aarch64-apple-darwin.tar.gz".to_string(),
+                    browser_download_url: "https://example.com/codex-mac.tar.gz".to_string(),
+                }],
+            },
+            GitHubRelease {
+                tag_name: "rust-v0.130.0".to_string(),
+                published_at: "2026-05-08T23:09:55Z".to_string(),
+                prerelease: false,
+                assets: vec![GitHubAsset {
+                    name: "codex-x86_64-unknown-linux-musl.tar.gz".to_string(),
+                    browser_download_url: "https://example.com/codex-linux-musl.tar.gz".to_string(),
+                }],
+            },
+        ];
+
+        let version = latest_codex_version_from_releases(
+            releases,
+            &codex_asset_name_candidates("x86_64-unknown-linux-musl"),
+        );
+
+        assert_eq!(version, Some("0.130.0".to_string()));
+    }
+
+    #[test]
+    fn latest_codex_version_uses_wsl_linux_target_for_asset_filtering() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "rust-v0.131.0".to_string(),
+                published_at: "2026-05-15T23:09:55Z".to_string(),
+                prerelease: false,
+                assets: vec![GitHubAsset {
+                    name: "codex-x86_64-pc-windows-msvc.exe.zip".to_string(),
+                    browser_download_url: "https://example.com/codex-windows.zip".to_string(),
+                }],
+            },
+            GitHubRelease {
+                tag_name: "rust-v0.130.0".to_string(),
+                published_at: "2026-05-08T23:09:55Z".to_string(),
+                prerelease: false,
+                assets: vec![GitHubAsset {
+                    name: "codex-x86_64-unknown-linux-musl.tar.gz".to_string(),
+                    browser_download_url: "https://example.com/codex-linux-musl.tar.gz".to_string(),
+                }],
+            },
+        ];
+
+        let target = resolve_codex_runtime_target_for_wsl_arch(true, Some("linux-x64")).unwrap();
+        let version =
+            latest_codex_version_from_releases(releases, &codex_asset_name_candidates(target));
+
+        assert_eq!(target, "x86_64-unknown-linux-musl");
+        assert_eq!(version, Some("0.130.0".to_string()));
+    }
+
+    #[test]
+    fn app_server_rate_limits_map_to_usage_snapshot() {
+        let params = serde_json::json!({
+            "rateLimits": {
+                "limitId": "codex",
+                "limitName": null,
+                "primary": {
+                    "usedPercent": 23,
+                    "windowDurationMins": 300,
+                    "resetsAt": 1_771_456_509
+                },
+                "secondary": {
+                    "usedPercent": 15,
+                    "windowDurationMins": 10080,
+                    "resetsAt": 1_772_023_891
+                },
+                "credits": {
+                    "hasCredits": true,
+                    "unlimited": false,
+                    "balance": "12.5"
+                },
+                "planType": "plus",
+                "rateLimitReachedType": "rate_limit_reached"
+            }
+        });
+
+        let snapshot = codex_usage_snapshot_from_app_server_rate_limits(&params, 1_771_450_000)
+            .expect("rate limits snapshot should parse");
+
+        assert_eq!(snapshot.plan_type.as_deref(), Some("plus"));
+        assert_eq!(
+            snapshot.session.as_ref().map(|w| w.used_percent),
+            Some(23.0)
+        );
+        assert_eq!(
+            snapshot.session.as_ref().and_then(|w| w.resets_at),
+            Some(1_771_456_509)
+        );
+        assert_eq!(
+            snapshot
+                .session
+                .as_ref()
+                .and_then(|w| w.limit_window_seconds),
+            Some(18_000)
+        );
+        assert_eq!(snapshot.weekly.as_ref().map(|w| w.used_percent), Some(15.0));
+        assert_eq!(
+            snapshot
+                .weekly
+                .as_ref()
+                .and_then(|w| w.limit_window_seconds),
+            Some(604_800)
+        );
+        assert_eq!(snapshot.credits_remaining, Some(12.5));
+        assert_eq!(
+            snapshot.rate_limit_reached_type.as_deref(),
+            Some("rate_limit_reached")
+        );
+        assert_eq!(snapshot.fetched_at, 1_771_450_000);
+    }
 }

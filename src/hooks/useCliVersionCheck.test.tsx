@@ -7,6 +7,25 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { setWsConnected } from '@/lib/environment'
 import { useCliVersionCheck } from './useCliVersionCheck'
 
+const mockState = {
+  preferences: {
+    auto_update_ai_backends: true,
+    claude_cli_source: 'jean',
+    codex_cli_source: 'jean',
+    opencode_cli_source: 'path',
+    pi_cli_source: 'jean',
+    gh_cli_source: 'jean',
+    coderabbit_cli_source: 'jean',
+  },
+  piStatus: { installed: true, version: '1.0.0', path: '/jean/bin/pi' },
+  piPathInfo: {
+    found: false,
+    version: null as string | null,
+    path: null as string | null,
+    package_manager: null as string | null,
+  },
+}
+
 vi.mock('@/lib/transport', () => ({
   invoke: vi.fn().mockResolvedValue({}),
 }))
@@ -31,13 +50,7 @@ vi.mock('@/lib/logger', () => ({
 
 vi.mock('@/services/preferences', () => ({
   usePreferences: () => ({
-    data: {
-      auto_update_ai_backends: true,
-      claude_cli_source: 'jean',
-      codex_cli_source: 'jean',
-      opencode_cli_source: 'path',
-      gh_cli_source: 'jean',
-    },
+    data: mockState.preferences,
     isLoading: false,
   }),
 }))
@@ -98,12 +111,47 @@ vi.mock('@/services/opencode-cli', () => ({
   }),
 }))
 
+vi.mock('@/services/pi-cli', () => ({
+  piCliQueryKeys: { all: ['pi-cli'] },
+  usePiCliStatus: () => ({
+    data: mockState.piStatus,
+    isLoading: false,
+  }),
+  useAvailablePiVersions: () => ({
+    data: [{ version: '1.1.0', prerelease: false }],
+    isLoading: false,
+  }),
+  usePiPathDetection: () => ({
+    data: mockState.piPathInfo,
+  }),
+}))
+
 describe('useCliVersionCheck', () => {
   let queryClient: QueryClient
 
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    mockState.preferences = {
+      auto_update_ai_backends: true,
+      claude_cli_source: 'jean',
+      codex_cli_source: 'jean',
+      opencode_cli_source: 'path',
+      pi_cli_source: 'jean',
+      gh_cli_source: 'jean',
+      coderabbit_cli_source: 'jean',
+    }
+    mockState.piStatus = {
+      installed: true,
+      version: '1.0.0',
+      path: '/jean/bin/pi',
+    }
+    mockState.piPathInfo = {
+      found: false,
+      version: null,
+      path: null,
+      package_manager: null,
+    }
     queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -140,6 +188,62 @@ describe('useCliVersionCheck', () => {
       command: '/usr/bin/opencode',
       args: ['upgrade'],
       cliType: 'opencode',
+    })
+    expect(tauriInvoke).not.toHaveBeenCalled()
+  })
+
+  it('runs Jean-managed PI updates through the shared transport invoke', async () => {
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+
+    renderHook(() => useCliVersionCheck(), { wrapper })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000)
+    })
+    await Promise.resolve()
+
+    expect(transportInvoke).toHaveBeenCalledWith('install_pi_cli', {
+      version: '1.1.0',
+    })
+    expect(tauriInvoke).not.toHaveBeenCalled()
+  })
+
+  it('runs PI PATH updates through the PI self-update command', async () => {
+    mockState.preferences.pi_cli_source = 'path'
+    mockState.piStatus = {
+      installed: true,
+      version: '1.0.0',
+      path: '/opt/homebrew/bin/pi',
+    }
+    mockState.piPathInfo = {
+      found: true,
+      version: '1.0.0',
+      path: '/opt/homebrew/bin/pi',
+      package_manager: 'homebrew',
+    }
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+
+    renderHook(() => useCliVersionCheck(), { wrapper })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000)
+    })
+    await Promise.resolve()
+
+    expect(transportInvoke).toHaveBeenCalledWith('run_cli_path_update', {
+      command: '/opt/homebrew/bin/pi',
+      args: ['update', '--self'],
+      cliType: 'pi',
     })
     expect(tauriInvoke).not.toHaveBeenCalled()
   })

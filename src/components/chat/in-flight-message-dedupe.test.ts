@@ -132,6 +132,49 @@ describe('dedupeInFlightAssistantMessage', () => {
     ).toEqual(messages)
   })
 
+  it('keeps a meaningful running snapshot when streaming buffers are empty', () => {
+    // Resumed-after-restart scenario: session is sending but the streaming
+    // buffers are empty (or were cleared by a session switch). The persisted
+    // running- snapshot is the only content available — it must stay visible.
+    const messages = [
+      createMessage({ id: 'user-1', role: 'user', content: 'Prompt' }),
+      createMessage({
+        id: 'running-123',
+        role: 'assistant',
+        content: 'Partial response from disk',
+      }),
+    ]
+
+    expect(
+      dedupeInFlightAssistantMessage(messages, {
+        isSending: true,
+        streamingContent: '',
+        streamingContentBlocks: [],
+        streamingToolCalls: [],
+      })
+    ).toEqual(messages)
+  })
+
+  it('hides an empty running snapshot when no live stream exists', () => {
+    const messages = [
+      createMessage({ id: 'user-1', role: 'user', content: 'Prompt' }),
+      createMessage({
+        id: 'running-123',
+        role: 'assistant',
+        content: '',
+      }),
+    ]
+
+    expect(
+      dedupeInFlightAssistantMessage(messages, {
+        isSending: true,
+        streamingContent: '',
+        streamingContentBlocks: [],
+        streamingToolCalls: [],
+      })
+    ).toEqual([messages[0]])
+  })
+
   it('still hides an empty trailing assistant when no live stream exists', () => {
     const messages = [
       createMessage({ id: 'user-1', role: 'user', content: 'Prompt' }),
