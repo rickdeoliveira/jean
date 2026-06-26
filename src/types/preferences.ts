@@ -450,7 +450,7 @@ Investigate the loaded Linear {linearWord} ({linearRefs})
 
 <instructions>
 
-1. Read the Linear issue context above carefully to understand the full problem description and comments
+1. Read the Linear issue context above carefully to understand the full problem description and comments. Analyze the attached images to compliment the full problem description, use Linear API to be able to access the images.
 2. Analyze the problem:
    - What is the expected vs actual behavior?
    - Are there error messages, stack traces, or reproduction steps?
